@@ -1,0 +1,23 @@
+{
+  "handshake_hash_hex" : "c8e5f64e846193be2a834104c2a009868d6c9f3bd3c186299888b488b2f1f58e",
+  "handshake_messages" : [
+    {
+      "ciphertext_hex" : "ca35def5ae56cec33dc2036731ab14896bc4c75dbb07a61f879f8e3afa4c79444c756477696720766f6e204d69736573",
+      "direction" : "initiator-to-responder",
+      "message_number" : 1,
+      "payload_hex" : "4c756477696720766f6e204d69736573"
+    },
+    {
+      "ciphertext_hex" : "95ebc60d2b1fa672c1f46a8aa265ef51bfe38e7ccb39ec5be34069f14480884381cbad1f276e038c48378ffce2b65285e08d6b68aaa3629a5a8639392490e5b9bd5269c2f1e4f488ed8831161f19b7815528f8982ffe09be9b5c412f8a0db50f8814c7194e83f23dbd8d162c9326ad",
+      "direction" : "responder-to-initiator",
+      "message_number" : 2,
+      "payload_hex" : "4d757272617920526f746862617264"
+    },
+    {
+      "ciphertext_hex" : "c7195ffacac1307ff99046f219750fc47693e23c3cb08b89c2af808b444850a80ae475b9df0f169ae80a89be0865b57f58c9fea0d4ec82a286427402f113e4b6ae769a1d95941d49b25030",
+      "direction" : "initiator-to-responder",
+      "message_number" : 3,
+      "payload_hex" : "462e20412e20486179656b"
+    }
+  ]
+}

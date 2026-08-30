@@ -1,0 +1,6 @@
+{
+  "hmac" : "HMAC-SHA256",
+  "hmac_key" : "recipient Noise static public key bytes",
+  "hmac_message" : "tag context UTF-8 || epoch day UInt32 big-endian",
+  "truncation" : "first 16 bytes"
+}

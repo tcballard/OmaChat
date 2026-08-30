@@ -1,0 +1,5 @@
+{
+  "candidate_algorithm" : "HMAC-SHA256(key=device seed, message=candidate input)",
+  "selected_iteration" : 0,
+  "selected_iteration_endianness" : "big-endian"
+}

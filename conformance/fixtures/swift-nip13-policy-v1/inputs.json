@@ -1,0 +1,18 @@
+{
+  "base_tags" : [
+    [
+      "g",
+      "zzzzzz"
+    ],
+    [
+      "n",
+      "synthetic"
+    ]
+  ],
+  "content" : "omachat synthetic pow message",
+  "created_at" : 1700000123,
+  "created_at_unit" : "whole seconds since Unix epoch",
+  "deterministic_capture_start_nonce" : "0000000000000000",
+  "kind" : 20000,
+  "pubkey_hex" : "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+}

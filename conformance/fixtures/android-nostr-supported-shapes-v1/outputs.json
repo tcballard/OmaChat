@@ -1,0 +1,45 @@
+{
+  "accepted_shapes": [
+    {
+      "name": "released-swift-tagless-inner",
+      "inner_tags": [],
+      "accepted": true,
+      "content": "omachat synthetic tagless message",
+      "authenticated_sender_pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+      "true_created_at": 1700000000
+    },
+    {
+      "name": "current-android-recipient-p-tag-inner",
+      "inner_tags": [
+        [
+          "p",
+          "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+        ]
+      ],
+      "accepted": true,
+      "content": "omachat synthetic android-shape message",
+      "authenticated_sender_pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+      "true_created_at": 1700000000
+    }
+  ],
+  "current_android_created_inner_event": {
+    "id": "07fb6a48a191f5a5e7b19d0e9d8f040fed4d590ec101ceb78e1b0e29c013d7ab",
+    "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    "created_at": 1700000000,
+    "kind": 14,
+    "tags": [
+      [
+        "p",
+        "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+      ]
+    ],
+    "content": "omachat synthetic android-created rumor"
+  },
+  "current_android_creation_shape": {
+    "kind": 14,
+    "recipient_tag_location": "exactly one inner p tag",
+    "inner_event_id": "computed before encryption",
+    "signature": "absent; sender authentication comes from the signed seal"
+  },
+  "byte_order": "Nostr fields are JSON; encrypted octet strings remain in the Swift fixture's exact wire order"
+}

@@ -1,0 +1,133 @@
+name: Capture crypto conformance vectors
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/capture-crypto-vectors.yml
+      - conformance/fixtures/**
+      - conformance/harnesses/**
+      - conformance/manifest.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crypto-capture-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SWIFT_REVISION: 9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa
+  ANDROID_REVISION: 93e9594bad3e537b4ec6fd096c0fde7533f22e74
+
+jobs:
+  swift:
+    name: Swift capture (two identical runs)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out OmaChat
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Fetch pinned Swift implementation
+        shell: bash
+        run: |
+          git init "$RUNNER_TEMP/bitchat-swift"
+          git -C "$RUNNER_TEMP/bitchat-swift" remote add origin https://github.com/permissionlesstech/bitchat.git
+          git -C "$RUNNER_TEMP/bitchat-swift" fetch --depth 1 origin "$SWIFT_REVISION"
+          git -C "$RUNNER_TEMP/bitchat-swift" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/bitchat-swift" rev-parse HEAD)" = "$SWIFT_REVISION"
+
+      - name: Capture replica A
+        run: conformance/harnesses/capture-swift.sh "$RUNNER_TEMP/bitchat-swift" "$RUNNER_TEMP/swift-capture-a"
+
+      - name: Capture replica B
+        run: conformance/harnesses/capture-swift.sh "$RUNNER_TEMP/bitchat-swift" "$RUNNER_TEMP/swift-capture-b"
+
+      - name: Compare replicas byte for byte
+        run: diff -ru "$RUNNER_TEMP/swift-capture-a" "$RUNNER_TEMP/swift-capture-b"
+
+      - name: Compare committed Swift fixtures when present
+        shell: bash
+        run: |
+          fixtures=(
+            swift-geohash-identity-v1
+            swift-nip13-policy-v1
+            swift-nostr-private-envelope-key-schedule-v1
+            swift-nostr-private-envelope-tagless-v1
+            swift-nostr-private-envelope-android-shape-v1
+            swift-noise-xx-transcript-v1
+            swift-courier-static-v1
+            swift-courier-prekey-v2
+            swift-courier-day-tags-v1
+          )
+          for fixture in "${fixtures[@]}"; do
+            committed="conformance/fixtures/$fixture"
+            if [[ -d "$committed" ]]; then
+              diff -ru "$committed" "$RUNNER_TEMP/swift-capture-a/$fixture"
+            fi
+          done
+
+      - name: Upload deterministic Swift capture
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: swift-crypto-capture
+          path: ${{ runner.temp }}/swift-capture-a
+          if-no-files-found: error
+
+  android:
+    name: Android shape acceptance (two identical runs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: swift
+    steps:
+      - name: Check out OmaChat
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up pinned JDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: 21.0.11+10.0.LTS
+
+      - name: Set up and validate Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      - name: Download Swift capture
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: swift-crypto-capture
+          path: ${{ runner.temp }}/swift-capture
+
+      - name: Fetch pinned Android implementation
+        shell: bash
+        run: |
+          git init "$RUNNER_TEMP/bitchat-android"
+          git -C "$RUNNER_TEMP/bitchat-android" remote add origin https://github.com/permissionlesstech/bitchat-android.git
+          git -C "$RUNNER_TEMP/bitchat-android" fetch --depth 1 origin "$ANDROID_REVISION"
+          git -C "$RUNNER_TEMP/bitchat-android" checkout --detach FETCH_HEAD
+          test "$(git -C "$RUNNER_TEMP/bitchat-android" rev-parse HEAD)" = "$ANDROID_REVISION"
+
+      - name: Capture replica A
+        run: conformance/harnesses/capture-android.sh "$RUNNER_TEMP/bitchat-android" "$RUNNER_TEMP/swift-capture" "$RUNNER_TEMP/android-capture-a"
+
+      - name: Capture replica B
+        run: conformance/harnesses/capture-android.sh "$RUNNER_TEMP/bitchat-android" "$RUNNER_TEMP/swift-capture" "$RUNNER_TEMP/android-capture-b"
+
+      - name: Compare replicas byte for byte
+        run: diff -ru "$RUNNER_TEMP/android-capture-a" "$RUNNER_TEMP/android-capture-b"
+
+      - name: Compare committed Android fixture when present
+        shell: bash
+        run: |
+          committed=conformance/fixtures/android-nostr-supported-shapes-v1
+          if [[ -d "$committed" ]]; then
+            diff -ru "$committed" "$RUNNER_TEMP/android-capture-a/android-nostr-supported-shapes-v1"
+          fi
+
+      - name: Upload deterministic Android capture
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-crypto-capture
+          path: ${{ runner.temp }}/android-capture-a
+          if-no-files-found: error

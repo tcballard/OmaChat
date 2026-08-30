@@ -1,0 +1,6 @@
+{
+  "noise_ciphertext_hex" : "883186b800b41d5cf0429695da9b3cc4f328ebcd184a6e482fa578c103f06c77e9bbdd29655f1acd58be78c3795f21073e112a26f49236a00d93b400e5aba4933242c6b56ec2daf21c3a5484e99f9863bfc544d0963db792e081edd6824575a3fb10cefd47c51e859b043c51b29e9d940fb3243510656302421af29d7b3f5841139a7e",
+  "noise_pattern" : "X",
+  "recipient_tag_hex" : "4e6207017b791f7431c47012eed740f4",
+  "recipient_tag_key" : "recipient long-term Noise static public key, not one-time prekey"
+}

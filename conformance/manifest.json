@@ -23,7 +23,9 @@
           "host": "platform-independent",
           "target": "platform-independent",
           "configuration": "hand-authored ASCII and JSON",
-          "command": ["documented-manual-construction"]
+          "command": [
+            "documented-manual-construction"
+          ]
         }
       },
       "artifacts": [
@@ -44,6 +46,560 @@
           "path": "fixtures/schema-smoke-v1/output.json",
           "bytes": 69,
           "sha256": "af85af825a2322ebf210d137ba4fd9fad958c7cd8f9b770a4434d86cf54be8ed"
+        }
+      ]
+    },
+    {
+      "id": "android-nostr-supported-shapes-v1",
+      "protocol_area": "nostr-private-envelope",
+      "description": "Pinned Android production-path acceptance of the released Swift tagless rumor and current recipient-p rumor shapes, plus Android's current inner-event creation shape.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Android release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat-android",
+        "release": "v2.0.1",
+        "commit": "93e9594bad3e537b4ec6fd096c0fde7533f22e74",
+        "captured_at_utc": "2026-08-30T14:35:30Z",
+        "build": {
+          "toolchain": "Temurin 21.0.11+10.0.LTS with Gradle 9.6.1",
+          "host": "GitHub Actions Ubuntu 24.04.4 LTS, ubuntu-24.04 image 20260823.283.1, x86_64",
+          "target": ":app:testDebugUnitTest on x86_64-linux",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only JVM test injected into the pinned upstream app; no build cache; every task forced to execute; two output trees byte-compared; consumes the Swift envelopes from the same run",
+          "command": [
+            "./gradlew",
+            "--project-dir",
+            "<pinned-bitchat-android-checkout>",
+            "--no-daemon",
+            "--no-build-cache",
+            "--rerun-tasks",
+            ":app:testDebugUnitTest",
+            "--tests",
+            "com.bitchat.android.nostr.OmaChatNostrShapeCaptureTest"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/android-nostr-supported-shapes-v1/inputs.json",
+          "bytes": 3308,
+          "sha256": "6961f0b7c1bf3dbf0d473e0cf50ebf46d9b93307d67231dcd6c874e7d44c4204"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/android-nostr-supported-shapes-v1/outputs.json",
+          "bytes": 1561,
+          "sha256": "b49c98b6ad0f83a463f9cdd52687d25afd3140484200db516e3f478f6f2cc61a"
+        }
+      ]
+    },
+    {
+      "id": "swift-courier-day-tags-v1",
+      "protocol_area": "courier-day-tags",
+      "description": "Courier previous/current/next rotating day tags with the exact HMAC input layout and UInt32 big-endian epoch days.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-day-tags-v1/inputs.json",
+          "bytes": 322,
+          "sha256": "c1bcaf42a0e77d7ba90bd4df3ba490931aa137a0cc909e6cfbd0ab85ad0635f4"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-day-tags-v1/intermediates.json",
+          "bytes": 193,
+          "sha256": "a7580b172a1f2dd14ba6c83c3e3c38e00c27e53e0801070e7567dc5fbffdef20"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-day-tags-v1/outputs.json",
+          "bytes": 319,
+          "sha256": "22be7e9ad679469aeb3ca2a16416d2954a4f8bedef9301161ddec09a42d99f80"
+        }
+      ]
+    },
+    {
+      "id": "swift-courier-prekey-v2",
+      "protocol_area": "courier-v2",
+      "description": "Courier v2 prekey Noise X seal and TLV envelope with a reproducible route tag, copy budget, UInt64 big-endian expiry, and UInt32 big-endian prekey ID.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-prekey-v2/inputs.json",
+          "bytes": 1032,
+          "sha256": "2a4f32f5b6570435eabca6062fa9f808b561aa41f988f09b4c4d2c662e29a11d"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-prekey-v2/intermediates.json",
+          "bytes": 473,
+          "sha256": "ba8f989378fac8030de3390266573a1582ac45babb5f6866c77d1f57b5987c14"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-prekey-v2/outputs.json",
+          "bytes": 749,
+          "sha256": "e62fe3950782c431314f3e637db6f54e5dc3c6c99e44bd9f36ebf5b34d1408ae"
+        }
+      ]
+    },
+    {
+      "id": "swift-courier-static-v1",
+      "protocol_area": "courier-v1",
+      "description": "Courier v1 static-key Noise X seal and TLV envelope with a reproducible route tag, default copy budget, and UInt64 big-endian expiry.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-static-v1/inputs.json",
+          "bytes": 755,
+          "sha256": "b298e6398ab6c3bdf8f532c2b2ca786aa403a9114923b40fba84286c2d08ad11"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-static-v1/intermediates.json",
+          "bytes": 502,
+          "sha256": "5d87e2a144126a4d002e1e0ef700aced9f2e29f1d4f1067069c849824e9535e4"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-courier-static-v1/outputs.json",
+          "bytes": 697,
+          "sha256": "b2fd6f2dbd1331a0df493a1e3d6e0e54b6197038f6359c15a5b467cc6148ac73"
+        }
+      ]
+    },
+    {
+      "id": "swift-geohash-identity-v1",
+      "protocol_area": "nostr-geohash-identity",
+      "description": "Per-geohash Nostr identity derivation from a synthetic device seed, including candidate input layout, selected iteration, private key, and npub.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-geohash-identity-v1/inputs.json",
+          "bytes": 284,
+          "sha256": "9b4402e63b58d0392c2872a7155d275f3c9437c456094e6f59c9623d07756afd"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-geohash-identity-v1/intermediates.json",
+          "bytes": 164,
+          "sha256": "12de2a5d5d7336f2fed9c4a55c6236b24b1ce74a78563407e736d9798d41e1ba"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-geohash-identity-v1/outputs.json",
+          "bytes": 266,
+          "sha256": "24959f1951cf4aca146ebe744c5dac1fe73d3f1a9b0d7c6435b29e73f6f4f43e"
+        }
+      ]
+    },
+    {
+      "id": "swift-nip13-policy-v1",
+      "protocol_area": "nostr-nip13",
+      "description": "Active Swift NIP-13 mining and inbound scoring policy with deterministic nonce search and canonical event serialization.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-nip13-policy-v1/inputs.json",
+          "bytes": 401,
+          "sha256": "210f958798f2418f9d1eb5902d76740b6186aed63d72033b2a3dea7b419232fd"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-nip13-policy-v1/intermediates.json",
+          "bytes": 549,
+          "sha256": "2cc62cc1f45ac59727a10a72296baa83bf55bad95cf68acb98961917c0af2fa3"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-nip13-policy-v1/outputs.json",
+          "bytes": 776,
+          "sha256": "289a9eb92d2d751a06a3624924f97c4654e0d785c43ef4d634ec573239ed0855"
+        }
+      ]
+    },
+    {
+      "id": "swift-noise-xx-transcript-v1",
+      "protocol_area": "noise-xx",
+      "description": "Noise XX handshake transcript and transport cipher counters reproduced through the pinned implementation from its embedded Cacophony vector.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-noise-xx-transcript-v1/inputs.json",
+          "bytes": 629,
+          "sha256": "7292c67992d153241701ce9042f26795df038974debe9bacd746b89499c365b2"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-noise-xx-transcript-v1/intermediates.json",
+          "bytes": 1102,
+          "sha256": "c7d720e3b3db23ee824c2354a14026e7f0ecc2fe6877a2a8dcda58285e15a460"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-noise-xx-transcript-v1/outputs.json",
+          "bytes": 1262,
+          "sha256": "8bf4b460da931d717782f83f39b25a2ee32573f1f334ebe00002475684f3e06e"
+        }
+      ]
+    },
+    {
+      "id": "swift-nostr-private-envelope-android-shape-v1",
+      "protocol_area": "nostr-private-envelope",
+      "description": "Current Android-compatible kind-14 rumor with one recipient p tag through the signed kind-13 seal and kind-1059 gift wrap, opened by the Swift production decryptor.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-android-shape-v1/inputs.json",
+          "bytes": 1107,
+          "sha256": "d52fc06aad4b6d64f581cf7eed8efc71e4ab138a93ba8bb94e96e450c4e43db6"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-android-shape-v1/intermediates.json",
+          "bytes": 3875,
+          "sha256": "eeef8879cb31b4a1c53ebaf9a2ac0e36598e1f96b276bf59e4732fcb17bd8caa"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-android-shape-v1/outputs.json",
+          "bytes": 1788,
+          "sha256": "668afa4b5b50521fa74000b3122177b5b1fb0568a6b886529520fcf47bf56002"
+        }
+      ]
+    },
+    {
+      "id": "swift-nostr-private-envelope-key-schedule-v1",
+      "protocol_area": "nostr-private-envelope-key-schedule",
+      "description": "Private-envelope key schedule using the full 33-byte compressed secp256k1 ECDH point and HKDF-SHA256 with nip44-v2 info.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-key-schedule-v1/inputs.json",
+          "bytes": 594,
+          "sha256": "55f3490831f1c4271513ba6cd3c8519d50d69a7267c0baa0e252554050b51f42"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-key-schedule-v1/intermediates.json",
+          "bytes": 347,
+          "sha256": "b4fa7b71ca78bd47ab36923666ea3c9d4177db78df54add3438ee8e278e66dfe"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-key-schedule-v1/outputs.json",
+          "bytes": 202,
+          "sha256": "bb339241b21075f5e1f335f24e51111d996833b0be04e6b62ddb50c207761d5c"
+        }
+      ]
+    },
+    {
+      "id": "swift-nostr-private-envelope-tagless-v1",
+      "protocol_area": "nostr-private-envelope",
+      "description": "Released Swift tagless kind-14 rumor through the signed kind-13 seal and kind-1059 gift wrap, opened by the Swift production decryptor.",
+      "producer": {
+        "kind": "captured-upstream",
+        "implementation": "bitchat Swift release implementation",
+        "repository": "https://github.com/permissionlesstech/bitchat",
+        "release": "v1.7.1",
+        "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+        "captured_at_utc": "2026-08-30T14:30:08Z",
+        "build": {
+          "toolchain": "Xcode 26.6 (17F113) with SwiftPM",
+          "host": "GitHub Actions macOS 26.5.2 (25F84), macos-26-arm64 image 20260728.0273.1",
+          "target": "arm64e-apple-macos14.0",
+          "configuration": "GitHub Actions run 33316827557; OmaChat harness head b7c7a06856c3ed0fe4179dbfa3fe4db9eb6f7e50; capture-only test injected into the pinned upstream package; BITCHAT_SKIP_PERF_BASELINES=1; two separate processes byte-compared",
+          "command": [
+            "swift",
+            "test",
+            "--package-path",
+            "<pinned-bitchat-swift-checkout>",
+            "--filter",
+            "OmaChatCryptoCaptureTests.captureDeterministicCryptoVectors"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-tagless-v1/inputs.json",
+          "bytes": 1006,
+          "sha256": "3338f90b441e88b17954211881827b09b6bcff53ab63f24b60f311af7929c381"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-tagless-v1/intermediates.json",
+          "bytes": 3298,
+          "sha256": "81c362f2888e69a3ec82a9905bd08018983c37e2f92c84105afc1d3803f3ebb9"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/swift-nostr-private-envelope-tagless-v1/outputs.json",
+          "bytes": 1644,
+          "sha256": "3404273aa8ed8d1b1f28191d2214829754d96a50e9ece8c6ae1e24b70f2bb194"
         }
       ]
     }

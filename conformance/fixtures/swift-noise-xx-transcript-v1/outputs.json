@@ -1,0 +1,33 @@
+{
+  "final_send_counters" : {
+    "initiator" : 1,
+    "responder" : 2
+  },
+  "transport_ciphertext_layout" : "ciphertext || Poly1305 tag16; no explicit counter prefix",
+  "transport_messages" : [
+    {
+      "ciphertext_hex" : "96763ed773f8e47bb3712f0e29b3060ffc956ffc146cee53d5e1df",
+      "counter_before" : 0,
+      "counter_encoding" : "Noise 96-bit nonce: 4 zero bytes || UInt64 little-endian",
+      "direction" : "responder-to-initiator",
+      "message_number" : 4,
+      "payload_hex" : "4361726c204d656e676572"
+    },
+    {
+      "ciphertext_hex" : "3e40f15f6f3a46ae446b253bf8b1d9ffb6ed9b174d272328ff91a7e2e5c79c07f5",
+      "counter_before" : 0,
+      "counter_encoding" : "Noise 96-bit nonce: 4 zero bytes || UInt64 little-endian",
+      "direction" : "initiator-to-responder",
+      "message_number" : 5,
+      "payload_hex" : "4a65616e2d426170746973746520536179"
+    },
+    {
+      "ciphertext_hex" : "eb3f3515110702e047a6c9da4478b6ead94873c11c0f2d710ddb3f09fce024b3a58502ae3f",
+      "counter_before" : 1,
+      "counter_encoding" : "Noise 96-bit nonce: 4 zero bytes || UInt64 little-endian",
+      "direction" : "responder-to-initiator",
+      "message_number" : 6,
+      "payload_hex" : "457567656e2042f6686d20766f6e2042617765726b"
+    }
+  ]
+}
