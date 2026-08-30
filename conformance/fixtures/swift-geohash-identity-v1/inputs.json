@@ -1,0 +1,6 @@
+{
+  "candidate_input_layout" : "geohash UTF-8 || iteration UInt32 big-endian",
+  "device_seed_hex" : "4444444444444444444444444444444444444444444444444444444444444444",
+  "geohash_disclosure" : "synthetic sentinel; not derived from a physical location",
+  "geohash_utf8" : "zzzzzz"
+}

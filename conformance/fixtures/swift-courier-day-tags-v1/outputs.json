@@ -1,0 +1,13 @@
+{
+  "candidate_order" : [
+    "previous",
+    "current",
+    "next"
+  ],
+  "current_day" : 20000,
+  "current_tag_hex" : "4e6207017b791f7431c47012eed740f4",
+  "next_day" : 20001,
+  "next_tag_hex" : "5faca8ed50c4b992eb0ba9d0524dad94",
+  "previous_day" : 19999,
+  "previous_tag_hex" : "ca25192d8def0d1b668af9400e8bc6fc"
+}

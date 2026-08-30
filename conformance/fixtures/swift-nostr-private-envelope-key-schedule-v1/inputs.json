@@ -1,0 +1,8 @@
+{
+  "recipient_private_key_hex" : "2222222222222222222222222222222222222222222222222222222222222222",
+  "recipient_sec1_lift_hex" : "02466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+  "recipient_sec1_lift_rule" : "x-only key lifted with even-Y compressed prefix 0x02",
+  "recipient_xonly_public_key_hex" : "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27",
+  "sender_private_key_hex" : "1111111111111111111111111111111111111111111111111111111111111111",
+  "sender_xonly_public_key_hex" : "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa"
+}

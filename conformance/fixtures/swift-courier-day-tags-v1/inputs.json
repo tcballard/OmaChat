@@ -1,0 +1,8 @@
+{
+  "epoch_day" : 20000,
+  "epoch_day_endianness" : "UInt32 big-endian",
+  "recipient_noise_static_public_hex" : "5869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67b",
+  "tag_context_utf8" : "bitchat-courier-tag-v1",
+  "timestamp_seconds" : 1728043210,
+  "timestamp_unit" : "whole seconds since Unix epoch"
+}

@@ -1,6 +1,7 @@
 # Conformance fixture contract
 
-Tracks: [OC-003](https://github.com/tcballard/OmaChat/issues/4)
+Tracks: [OC-003](https://github.com/tcballard/OmaChat/issues/4) and
+[OC-004](https://github.com/tcballard/OmaChat/issues/5)
 
 This directory is the provenance boundary for every byte OmaChat calls a
 cross-implementation fixture. A fixture is trusted only when `manifest.json`
@@ -8,20 +9,28 @@ identifies where it came from, how its producer was built and invoked, which
 compatibility profile it targets, and the size and SHA-256 digest of every
 artifact.
 
-OC-003 defines the contract and includes one harmless schema smoke fixture. It
-does not contain or claim any real bitchat protocol vector.
+OC-003 defines the contract and includes one harmless schema smoke fixture.
+OC-004 adds captured release-critical vectors from the immutable Swift v1.7.1
+and Android v2.0.1 compatibility pins. The capture-only harnesses remain test
+adapters and are never linked into an OmaChat binary.
 
 ## Layout
 
 ```text
 conformance/
 ├── README.md
+├── harnesses/
+│   ├── README.md
+│   ├── android/
+│   └── swift/
 ├── loader.rs
 ├── manifest.json
 └── fixtures/
-    └── schema-smoke-v1/
-        ├── input.txt
-        └── output.json
+    ├── schema-smoke-v1/
+    └── <captured-fixture-id>/
+        ├── inputs.json
+        ├── intermediates.json
+        └── outputs.json
 ```
 
 `loader.rs` is test-only Rust support. The `omachat-proto` integration test
@@ -88,3 +97,18 @@ capture and regenerate it with newly created test-only keys.
 
 Fixture changes require review like protocol code. Replacing bytes without
 updating their provenance and digest is a test failure, not an accepted update.
+
+## OC-004 capture normalization
+
+The Swift capture uses fixed synthetic keys, timestamps, nonces, messages, and
+a sentinel geohash. Swift's `JSONEncoder` does not guarantee object-member
+order, so the capture adapter sorts only the nested rumor and seal JSON keys
+before encryption. JSON member order has no protocol meaning. Both pinned
+production decryptors must still accept the normalized envelopes, and CI runs
+each capture twice before comparing the output trees byte for byte.
+
+Android is an acceptance peer only. Its fixture records which deployed Nostr
+inner-event shapes the pinned Android build opens; no Android implementation
+code or constants are copied into OmaChat production code. Each Android
+replica forces an uncached Gradle test execution so a successful comparison
+cannot be satisfied by an `UP-TO-DATE` task with no newly written output.

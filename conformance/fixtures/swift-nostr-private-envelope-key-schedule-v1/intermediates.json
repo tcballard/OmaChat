@@ -1,0 +1,9 @@
+{
+  "ecdh_shared_point_bytes" : 33,
+  "ecdh_shared_point_compressed_hex" : "0277e0510d5042e2f5e9e59c977b81eeed590cf7d20c1c51da451a8eaa9fdc45ff",
+  "ecdh_shared_point_encoding" : "SEC1 compressed point: parity prefix || X coordinate",
+  "hkdf_hash" : "SHA-256",
+  "hkdf_info_utf8" : "nip44-v2",
+  "hkdf_output_bytes" : 32,
+  "hkdf_salt_hex" : ""
+}

@@ -1,0 +1,13 @@
+{
+  "ephemeral_private_hex" : "4142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60",
+  "epoch_day" : 20000,
+  "epoch_day_endianness" : "UInt32 big-endian in day-tag HMAC message",
+  "expiry_milliseconds" : 1700086400000,
+  "expiry_milliseconds_endianness" : "UInt64 big-endian in courier TLV",
+  "payload_utf8" : "omachat synthetic courier v1",
+  "prologue_utf8" : "bitchat-courier-v1",
+  "recipient_static_private_hex" : "2122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f40",
+  "recipient_static_public_hex" : "5869aff450549732cbaaed5e5df9b30a6da31cb0e5742bad5ad4a1a768f1a67b",
+  "sender_static_private_hex" : "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "tag_context_utf8" : "bitchat-courier-tag-v1"
+}

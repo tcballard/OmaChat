@@ -1,0 +1,6 @@
+{
+  "noise_ciphertext_hex" : "64b101b1d0be5a8704bd078f9895001fc03e8e9f9522f188dd128d9846d484664487d53040d22df42159b0e0cf249e5b9fdbec370329d14d2ed8a3dfcaddae7778137c2d58f2215271a593133dad7ca3d9b5d7da6ad48865e0dacee2820cbafe9f7480728113f484ed2b92a2957f27c7f03d37233b67e9e9294edd56",
+  "noise_pattern" : "X",
+  "recipient_tag_formula" : "HMAC-SHA256(key=recipient static public key, message=UTF8(bitchat-courier-tag-v1) || epochDayBE)[0..16]",
+  "recipient_tag_hex" : "4e6207017b791f7431c47012eed740f4"
+}
