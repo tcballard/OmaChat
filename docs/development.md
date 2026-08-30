@@ -40,3 +40,8 @@ CI additionally runs `cargo-audit` through the RustSec audit action and
 `cargo-deny` with the repository's minimal advisory, ban, license, and source
 policy. Dependencies must be recorded in `Cargo.lock`; wildcard requirements,
 yanked crates, unknown registries, and unknown Git sources are denied.
+
+The dependency policy permits 0BSD, Apache-2.0, MIT, Unicode-3.0, ISC, and the
+two- and three-clause BSD licenses. The BSD/ISC additions cover the pinned
+BlueR and Rustls probe stacks; they do not weaken the Android clean-room rule or
+allow copyleft source into OmaChat.

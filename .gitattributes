@@ -1,0 +1,2 @@
+# Content-addressed upstream snapshots must retain their exact CRLF bytes.
+conformance/georelays/snapshots/** binary
