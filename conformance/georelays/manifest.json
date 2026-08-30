@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "selection_per_snapshot": 5,
+    "maximum_simultaneous_geo_relays": 10,
+    "combination": "swift-first-bounded-union",
+    "runtime_directory_updates": false,
+    "review_cadence": "monthly-and-on-upstream-security-release"
+  },
+  "snapshots": [
+    {
+      "implementation": "swift",
+      "release": "v1.7.1",
+      "commit": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+      "source_path": "relays/online_relays_gps.csv",
+      "artifact_path": "conformance/georelays/snapshots/811523100064820b024714eaf3bbe0a9ba99a3c257e453e01bc1bc0f3bf8401a/online_relays_gps.csv",
+      "bytes": 17075,
+      "sha256": "811523100064820b024714eaf3bbe0a9ba99a3c257e453e01bc1bc0f3bf8401a",
+      "entries": 441,
+      "selection_oracle": "haversine distance ascending, then relay host ascending"
+    },
+    {
+      "implementation": "android",
+      "release": "v2.0.1",
+      "commit": "93e9594bad3e537b4ec6fd096c0fde7533f22e74",
+      "source_path": "app/src/main/assets/nostr_relays.csv",
+      "artifact_path": "conformance/georelays/snapshots/1cb6f457f790ecf45bd4285769168f289066426fa8152f01f3ecdccabaa91aa5/nostr_relays.csv",
+      "bytes": 15893,
+      "sha256": "1cb6f457f790ecf45bd4285769168f289066426fa8152f01f3ecdccabaa91aa5",
+      "entries": 413,
+      "selection_oracle": "haversine distance ascending with stable input-order ties"
+    }
+  ]
+}

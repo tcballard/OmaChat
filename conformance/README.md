@@ -1,7 +1,8 @@
 # Conformance fixture contract
 
-Tracks: [OC-003](https://github.com/tcballard/OmaChat/issues/4) and
-[OC-004](https://github.com/tcballard/OmaChat/issues/5)
+Tracks: [OC-003](https://github.com/tcballard/OmaChat/issues/4),
+[OC-004](https://github.com/tcballard/OmaChat/issues/5), and
+[OC-005](https://github.com/tcballard/OmaChat/issues/6)
 
 This directory is the provenance boundary for every byte OmaChat calls a
 cross-implementation fixture. A fixture is trusted only when `manifest.json`
@@ -14,11 +15,21 @@ OC-004 adds captured release-critical vectors from the immutable Swift v1.7.1
 and Android v2.0.1 compatibility pins. The capture-only harnesses remain test
 adapters and are never linked into an OmaChat binary.
 
+OC-005 adds exact content-addressed geo-relay snapshots under `georelays/`.
+Those public data files have a separate manifest because they are frozen
+compatibility-profile inputs rather than generated protocol vectors. Rust
+oracle tests verify their provenance, hashes, entry counts, selection behavior,
+and bounded union policy.
+
 ## Layout
 
 ```text
 conformance/
 ├── README.md
+├── georelays/
+│   ├── cases.json
+│   ├── manifest.json
+│   └── snapshots/<sha256>/
 ├── harnesses/
 │   ├── README.md
 │   ├── android/

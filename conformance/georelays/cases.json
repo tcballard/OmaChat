@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "geohash_cases": [
+    {
+      "id": "london-gcpvj",
+      "geohash": "gcpvj",
+      "expected_swift": [
+        "wss://relay.nearhood.co.uk",
+        "wss://nostr.chaima.info",
+        "wss://nostr.chaima.info:443",
+        "wss://relay.bornheimer.app",
+        "wss://relay.qstr.app"
+      ],
+      "expected_android": [
+        "wss://relay.nearhood.co.uk",
+        "wss://relay.staging.plebeian.market:443",
+        "wss://relay.staging.plebeian.market",
+        "wss://nostr.88mph.life",
+        "wss://relay.nmail.li"
+      ],
+      "expected_omachat": [
+        "wss://relay.nearhood.co.uk",
+        "wss://nostr.chaima.info",
+        "wss://nostr.chaima.info:443",
+        "wss://relay.bornheimer.app",
+        "wss://relay.qstr.app",
+        "wss://relay.staging.plebeian.market:443",
+        "wss://relay.staging.plebeian.market",
+        "wss://nostr.88mph.life",
+        "wss://relay.nmail.li"
+      ]
+    },
+    {
+      "id": "sydney-r3gx2",
+      "geohash": "r3gx2",
+      "expected_swift": [
+        "wss://chorus.mikedilger.com:444",
+        "wss://relay-arg.zombi.cloudrodion.com",
+        "wss://nostr-01.yakihonne.com",
+        "wss://nostr-01.yakihonne.com:443",
+        "wss://relay0.gfcom.info"
+      ],
+      "expected_android": [
+        "wss://relay.favillakey.io",
+        "wss://relay-arg.zombi.cloudrodion.com",
+        "wss://nostr-02.yakihonne.com",
+        "wss://nostr-01.yakihonne.com:443",
+        "wss://nostr-01.yakihonne.com"
+      ],
+      "expected_omachat": [
+        "wss://chorus.mikedilger.com:444",
+        "wss://relay-arg.zombi.cloudrodion.com",
+        "wss://nostr-01.yakihonne.com",
+        "wss://nostr-01.yakihonne.com:443",
+        "wss://relay0.gfcom.info",
+        "wss://relay.favillakey.io",
+        "wss://nostr-02.yakihonne.com"
+      ]
+    }
+  ],
+  "tie_cases": [
+    {
+      "id": "equal-distance-ordering",
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "count": 3,
+      "entries": [
+        { "endpoint": "tie-z.example", "latitude": 0.0, "longitude": 1.0 },
+        { "endpoint": "tie-a.example", "latitude": 0.0, "longitude": -1.0 },
+        { "endpoint": "near.example", "latitude": 0.1, "longitude": 0.0 }
+      ],
+      "expected_swift": ["wss://near.example", "wss://tie-a.example", "wss://tie-z.example"],
+      "expected_android": ["wss://near.example", "wss://tie-z.example", "wss://tie-a.example"]
+    }
+  ]
+}

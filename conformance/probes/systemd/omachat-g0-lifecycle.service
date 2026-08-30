@@ -1,0 +1,23 @@
+[Unit]
+Description=OmaChat G0 storage and lifecycle probe
+Documentation=https://github.com/tcballard/OmaChat
+
+[Service]
+Type=simple
+ExecStart=%h/.local/libexec/omachat-g0-storage-probe --mode auto --serve
+RuntimeDirectory=omachat
+RuntimeDirectoryMode=0700
+StateDirectory=omachat-g0
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target
