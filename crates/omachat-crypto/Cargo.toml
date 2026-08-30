@@ -6,5 +6,17 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[dependencies]
+base64 = "=0.22.1"
+chacha20poly1305 = "=0.10.1"
+hex = "=0.4.3"
+hkdf = "=0.12.4"
+k256 = { version = "=0.13.4", default-features = false, features = ["arithmetic", "std"] }
+sha2 = "=0.10.9"
+
+[dev-dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
 [lints]
 workspace = true

@@ -7,7 +7,9 @@ Report date: 2026-08-30
 This report gathers evidence for OC-001 through OC-008 and replaces the
 original 225–350 hour whole-project draft with a spike-informed estimate. It
 does not close G0: the named Bluetooth-controller matrix, Omarchy lifecycle
-matrix, and live Tor observations remain required.
+matrix, and live Tor observations remain required. Those open observations
+block their explicit dependent subsystems rather than the dependency-clean
+Nostr protocol core.
 
 ## Evidence map
 
@@ -56,6 +58,8 @@ review/procurement/calendar delay and the unattended 72-hour G5 soak.
 
 ## Gate decision
 
-**G0 remains open.** Compatibility-critical product implementation remains
-blocked by [`upstream-validation.md`](../upstream-validation.md) until the live
-evidence sets above are reviewed.
+**G0 remains open.** Work may advance only where the explicit dependency graph
+permits it. OC-006 blocks BLE/G2 radio implementation, OC-007 blocks production
+key storage, and OC-008 blocks production relay/Tor support. The dependency-clean
+Nostr protocol core may proceed using the committed cross-implementation
+fixtures; none of the retained live gates is waived.

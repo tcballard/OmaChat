@@ -157,4 +157,10 @@ Waybar and Walker are stale targets. Omarchy 4 moved the shell to Quickshell. Sh
 | G4 — infrastructure | Courier v1/v2 with iOS; persisted quotas/spray/handover; two-hour gossip backfill; relay drop; current carrier/rendezvous bridge or narrower claim |
 | G5 — release | Clean Omarchy 4.0.1 install; validated optional widget; linger docs; hardened service; panic crypto-erasure proof; AUR/man/security artifacts; 72-hour soak |
 
-Do not begin compatibility-critical implementation until G0 closes. Workspace scaffolding and pure fixture harness work may proceed in parallel, but no crypto, BLE, gossip, or bridge PR is complete on self-generated Rust tests alone.
+Implementation may proceed when an issue's explicit prerequisites in
+[`build-backlog.md`](build-backlog.md) are closed. An open G0 evidence item
+blocks its dependent subsystem rather than unrelated work: OC-006 blocks BLE
+and G2 radio work, OC-007 blocks production key storage, and OC-008 blocks the
+production relay connection and Tor claim. No crypto, BLE, gossip, or bridge PR
+is complete on self-generated Rust tests alone; committed cross-implementation
+fixtures and the applicable live gate remain mandatory.

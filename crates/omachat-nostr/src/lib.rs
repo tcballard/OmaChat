@@ -1,4 +1,5 @@
-//! Nostr relay transport boundary.
-//!
-//! Relay defaults and envelope details remain absent until their extraction
-//! and conformance milestones are complete.
+//! Strict Nostr protocol types and relay transport boundaries.
+
+pub mod envelope;
+pub mod event;
+pub mod frame;

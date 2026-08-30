@@ -6,13 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[dependencies]
+hex = "=0.4.3"
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
+omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.11.0"
+
 [dev-dependencies]
 futures-util = "=0.3.34"
 rcgen = "=0.14.10"
 rustls = { version = "=0.23.35", default-features = false, features = ["ring", "std"] }
-serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
-sha2 = "=0.11.0"
 tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { version = "=0.26.4", default-features = false, features = ["ring"] }
 tokio-socks = "=0.5.3"

@@ -18,6 +18,8 @@ OC-064 and all prerequisite gates close.
 - One issue normally maps to one reviewable pull request. Adjacent issues may be bundled only when the owner explicitly approves the scope and the combined change remains reviewable.
 - Every PR names its upstream compatibility pin and includes tests or captured evidence for changed behavior.
 - Protocol and cryptographic PRs must consume committed cross-implementation fixtures; self-generated Rust round trips are necessary but not sufficient.
+- Implementation entry follows each issue's explicit dependency list. An open
+  evidence issue blocks the dependent subsystem, not unrelated later-gate work.
 - Android is an acceptance peer only for features present in Android v2.0.1. Courier, prekey, RSR, and current bridge acceptance use Swift/iOS.
 - No PR may silently adopt upstream `main`; pin changes require a dedicated drift review.
 - No merge is implied by this document. Opening issues, pushing branches, and merging remain separate repository actions.
@@ -113,7 +115,7 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 
 ### OC-010 — Implement master-key providers and sealed records
 
-- **Depends on:** `OC-007`, `OC-009`.
+- **Depends on:** `OC-007`.
 - **Deliverable:** Secret Service provider, mode-0600 file provider, versioned XChaCha20-Poly1305 record envelope, atomic writes, and zeroized key wrappers in `omachat-store`.
 - **Acceptance:** fallback is selected only on first run or explicit migration; a previously selected but locked/unavailable Secret Service fails closed instead of silently creating a new key or identity; tampering fails closed; status reports provider type without key material; crash-recovery tests cover interrupted writes.
 - **Excludes:** domain-specific outbox/courier schemas and panic.
@@ -134,10 +136,10 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 
 ### OC-013 — Implement canonical Nostr events and signatures
 
-- **Depends on:** `OC-004`, `OC-011`.
+- **Depends on:** `OC-004`, `OC-012`.
 - **Deliverable:** strict NIP-01 event ID serialization, x-only key handling, Schnorr sign/verify, size/time/tag limits, and relay frame codec.
 - **Acceptance:** canonical JSON/event-ID fixtures pass; duplicate/unknown fields follow documented policy; malformed hostile events never panic.
-- **Excludes:** proprietary encryption and relay sockets.
+- **Excludes:** persistent identity ownership (integrated by `OC-011`), proprietary encryption, and relay sockets.
 
 ### OC-014 — Implement proprietary private-envelope crypto
 
@@ -234,7 +236,7 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 
 ### OC-027 — Implement the bounded packet codec
 
-- **Depends on:** `OC-003`, `OC-009`.
+- **Depends on:** `OC-003`, `OC-006`, `OC-009`.
 - **Deliverable:** strict v1/v2 header/parser, full pinned outer enum, flags, recipient, source route, RSR, timestamp, signature fields, and safe unknown-type policy.
 - **Acceptance:** Swift/Android golden bytes round-trip canonically; every length calculation is checked; truncated/oversized input returns typed errors without allocation spikes.
 - **Excludes:** compression, signing, and padding policy.

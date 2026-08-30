@@ -1,7 +1,6 @@
-//! Pure protocol boundary and compatibility metadata.
-//!
-//! Wire constants and codecs are deliberately absent until their extraction
-//! work has conformance evidence.
+//! Pure protocol codecs and compatibility metadata.
+
+pub mod geohash;
 
 /// Frozen upstream compatibility profile identifier.
 pub const COMPATIBILITY_PROFILE: &str = "bitchat-swift-v1.7.1";
