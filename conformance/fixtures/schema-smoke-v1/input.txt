@@ -1,0 +1,1 @@
+OmaChat conformance schema smoke fixture.
