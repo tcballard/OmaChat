@@ -10,6 +10,7 @@ The current development version is **0.0.1**. The complete existing backlog, OC-
 - [0.0.1 compatibility profile](docs/compatibility-profile.md)
 - [Build backlog](docs/build-backlog.md)
 - [Development contract](docs/development.md)
+- [Conformance fixture contract](conformance/README.md)
 
 ## Development
 

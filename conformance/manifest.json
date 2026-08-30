@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "compatibility_profile": {
+    "id": "bitchat-swift-v1.7.1",
+    "swift_revision": "9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa",
+    "android_revision": "93e9594bad3e537b4ec6fd096c0fde7533f22e74",
+    "omarchy_revision": "13f18b2cb7286fb54f87daf571a031aa6af3d8f0"
+  },
+  "fixtures": [
+    {
+      "id": "schema-smoke-v1",
+      "protocol_area": "schema-only",
+      "description": "Harmless synthetic data proving manifest and artifact validation.",
+      "producer": {
+        "kind": "synthetic",
+        "implementation": "omachat-conformance-schema",
+        "repository": null,
+        "release": null,
+        "commit": null,
+        "captured_at_utc": "2026-08-30T11:26:46Z",
+        "build": {
+          "toolchain": "manual",
+          "host": "platform-independent",
+          "target": "platform-independent",
+          "configuration": "hand-authored ASCII and JSON",
+          "command": ["documented-manual-construction"]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "input-text",
+          "role": "input",
+          "disclosure": "public-committed",
+          "encoding": "utf-8",
+          "path": "fixtures/schema-smoke-v1/input.txt",
+          "bytes": 42,
+          "sha256": "8b67180d6a4843cabc23b68dc18fa81c1056cea3c717e363c5682dbfce19eb21"
+        },
+        {
+          "id": "output-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/schema-smoke-v1/output.json",
+          "bytes": 69,
+          "sha256": "af85af825a2322ebf210d137ba4fd9fad958c7cd8f9b770a4434d86cf54be8ed"
+        }
+      ]
+    }
+  ]
+}

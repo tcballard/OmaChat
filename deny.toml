@@ -3,12 +3,14 @@ yanked = "deny"
 
 [bans]
 multiple-versions = "warn"
+multiple-versions-include-dev = true
 wildcards = "deny"
 highlight = "all"
 
 [licenses]
 confidence-threshold = 0.93
-allow = ["0BSD"]
+include-dev = true
+allow = ["0BSD", "Apache-2.0", "MIT", "Unicode-3.0"]
 
 [sources]
 unknown-registry = "deny"
