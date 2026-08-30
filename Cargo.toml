@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/omachat-proto",
+    "crates/omachat-crypto",
+    "crates/omachat-mesh",
+    "crates/omachat-nostr",
+    "crates/omachat-store",
+    "crates/omachatd",
+    "crates/omachat-tui",
+    "crates/omachat-ctl",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.98"
+license = "0BSD"
+repository = "https://github.com/tcballard/OmaChat"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

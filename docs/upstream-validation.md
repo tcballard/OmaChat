@@ -34,7 +34,7 @@ The project must use this precedence:
 3. pinned Android only for features that release actually implements;
 4. prior Linux ports as non-authoritative BlueZ examples only.
 
-Swift's [`LICENSE`](https://github.com/permissionlesstech/bitchat/blob/9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa/LICENSE) is the Unlicense. Android v2.0.1 is inconsistent: its [`README`](https://github.com/permissionlesstech/bitchat-android/blob/93e9594bad3e537b4ec6fd096c0fde7533f22e74/README.md) says public domain while its bundled [`LICENSE.md`](https://github.com/permissionlesstech/bitchat-android/blob/93e9594bad3e537b4ec6fd096c0fde7533f22e74/LICENSE.md) contains GPL-3.0. Until upstream resolves that conflict, an MIT/0BSD OmaChat must derive code from the Swift/Unlicense implementation and use Android only for clean-room behavioral comparison and live tests. Do not line-port Kotlin.
+Swift's [`LICENSE`](https://github.com/permissionlesstech/bitchat/blob/9edb7c26ef7bdcf3bb29e7907b38997f8d5cd0fa/LICENSE) is the Unlicense. Android v2.0.1 is inconsistent: its [`README`](https://github.com/permissionlesstech/bitchat-android/blob/93e9594bad3e537b4ec6fd096c0fde7533f22e74/README.md) says public domain while its bundled [`LICENSE.md`](https://github.com/permissionlesstech/bitchat-android/blob/93e9594bad3e537b4ec6fd096c0fde7533f22e74/LICENSE.md) contains GPL-3.0. Until upstream resolves that conflict, 0BSD-licensed OmaChat must derive code from the Swift/Unlicense implementation and use Android only for clean-room behavioral comparison and live tests. Do not line-port Kotlin.
 
 The draft's low-effort name search is not legal clearance. Treat “OmaChat” as provisional unless a separate adoption-grade search is completed.
 

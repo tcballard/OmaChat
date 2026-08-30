@@ -1,0 +1,16 @@
+[advisories]
+yanked = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[licenses]
+confidence-threshold = 0.93
+allow = ["0BSD"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
