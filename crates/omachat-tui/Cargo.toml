@@ -1,0 +1,17 @@
+[package]
+name = "omachat-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "omachat"
+path = "src/main.rs"
+
+[dependencies]
+omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
+
+[lints]
+workspace = true

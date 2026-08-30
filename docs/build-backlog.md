@@ -6,9 +6,16 @@ Derived from: [`upstream-validation.md`](upstream-validation.md)
 
 Planning date: 2026-08-30
 
+Target release: `0.0.1`
+
+Every issue from OC-001 through OC-064 is part of the single 0.0.1 release
+train. Completing an issue or gate does not advance the product version, and no
+intermediate release is planned. Version 0.0.1 is eligible to ship only after
+OC-064 and all prerequisite gates close.
+
 ## Delivery rules
 
-- One issue maps to one reviewable pull request unless the issue explicitly says it is a bootstrap or test-run exception.
+- One issue normally maps to one reviewable pull request. Adjacent issues may be bundled only when the owner explicitly approves the scope and the combined change remains reviewable.
 - Every PR names its upstream compatibility pin and includes tests or captured evidence for changed behavior.
 - Protocol and cryptographic PRs must consume committed cross-implementation fixtures; self-generated Rust round trips are necessary but not sufficient.
 - Android is an acceptance peer only for features present in Android v2.0.1. Courier, prekey, RSR, and current bridge acceptance use Swift/iOS.
@@ -33,9 +40,8 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 ### BOOT-000 — Create the base branch
 
 - **Type:** repository bootstrap; not PR-able because no target branch exists.
-- **Current state:** the GitHub repository has no commits and its local clone reports no valid `origin/main`.
-- **Action:** the owner creates the initial `main` commit, preferably a minimal `README.md` plus chosen license, or explicitly authorizes a bootstrap commit.
-- **Done when:** `origin/main` exists, branch protection can be configured, and all following work can use pull requests.
+- **Status:** completed by authorised bootstrap commit [`49d43a8`](https://github.com/tcballard/OmaChat/commit/49d43a881b9aee1ca583d44726ad1f82149add04).
+- **Result:** `origin/main` exists and all subsequent work uses pull requests.
 - **Excludes:** project scaffolding, protocol design, or feature code.
 
 ## G0 — Source and feasibility
