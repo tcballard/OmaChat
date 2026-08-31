@@ -1368,6 +1368,9 @@ name = "omachat-ctl"
 version = "0.0.1"
 dependencies = [
  "omachat-proto",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -1433,7 +1436,10 @@ dependencies = [
 name = "omachat-tui"
 version = "0.0.1"
 dependencies = [
+ "omachat-ctl",
  "omachat-proto",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
