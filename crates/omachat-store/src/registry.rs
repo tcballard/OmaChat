@@ -46,7 +46,7 @@ impl RegistryVault {
             return Err(RegistryVaultError::UnsupportedVersion(snapshot.version));
         }
 
-        let mut encoded = Zeroizing::new([0_u8; MAX_REGISTRY_RECORD_PLAINTEXT_BYTES]);
+        let mut encoded = Zeroizing::new(vec![0_u8; MAX_REGISTRY_RECORD_PLAINTEXT_BYTES]);
         let encoded_bytes = {
             let mut writer = Cursor::new(&mut encoded[..]);
             serde_json::to_writer(&mut writer, &snapshot)
