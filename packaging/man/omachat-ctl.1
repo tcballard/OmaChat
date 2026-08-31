@@ -7,7 +7,10 @@ omachat-ctl \- control an OmaChat daemon
 .SH COMMANDS
 .TP
 .B status [--json]
-Show daemon, relay, storage, join, and outbox state.
+Show daemon, relay, storage, join, outbox, and local account state, including
+account and device IDs, configured handle and display name, binding revision,
+and registry state. A configured handle is reported as local-only; it is not a
+claim that a live global registry has accepted the handle.
 .TP
 .B fingerprint
 Print the stable Noise fingerprint.

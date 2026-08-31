@@ -80,7 +80,9 @@ daemon foundations plus the first local account slice: independent account and
 recovery roots (currently co-resident), stable account/device IDs, strict
 candidate handles, signed device/profile bindings, sealed persistence, and
 truthful daemon status. A hermetic authoritative state machine enforces handle
-uniqueness, revision CAS, idempotency, permanent rename tombstones, and
-registry-signed hash-chained receipts. Registry persistence/deployment, the
-daemon client and verified cache, key transparency, and the workspace/channel
-product surface are not completed or live.
+uniqueness, revision CAS, idempotency, and registry-signed global and
+per-account hash-chained receipts. Handle rename and reuse remain deferred
+until service policy is specified; the state machine does not silently choose
+permanent tombstones. Registry persistence/deployment, the daemon client and
+verified cache, key transparency, and the workspace/channel product surface
+are not completed or live.
