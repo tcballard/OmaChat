@@ -1,5 +1,6 @@
 //! Strict Nostr protocol types and relay transport boundaries.
 
+pub mod auth;
 pub mod courier_drop;
 pub mod envelope;
 pub mod event;
