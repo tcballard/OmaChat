@@ -28,6 +28,16 @@ Use `omachat-ctl status`, launch `omachat`, and stop with
 `systemctl --user disable --now omachatd.service`. No install or removal action
 edits Hyprland, Waybar, shell.json, user config, polkit policy, or linger state.
 
+The JSON daemon config may set `account_handle` (for example `"@tom"`) and
+`account_display_name`. Both are sealed into a root-signed local binding and
+survive restart if later omitted from configuration. Until the central registry
+is implemented, status deliberately reports a configured handle as
+`local-only`; it has not proved global uniqueness. The separate `nickname`
+field remains the public, unlinkable geohash-chat nickname and is never filled
+from the account handle automatically. Omitting or setting either account field
+to JSON `null` preserves its sealed value in this first slice; replacement uses
+a new valid value, while clearing/tombstoning belongs to the registry workflow.
+
 ## Storage provider
 
 Automatic mode prefers Secret Service and otherwise chooses file mode on first

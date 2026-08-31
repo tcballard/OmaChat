@@ -21,18 +21,19 @@ Protocol behavior is not inferred from an unpinned `main` branch. A future pin
 change requires its own pull request, source-drift review, updated fixtures, and
 an explicit compatibility-profile decision.
 
-## 0.0.1 release boundary
+## 0.0.1 compatibility boundary
 
-The entire current backlog—OC-001 through OC-064, covering G0 through G5—is the
-scope of the single initial 0.0.1 release. Completing an issue or acceptance
-gate does not change `VERSION`, create an intermediate release, or imply that a
-partially built product is ready to ship.
+OC-001 through OC-064 preserve the original compatibility-led G0–G5 release
+train. [ADR 0002](adr/0002-account-registry-and-text-collaboration.md)
+changes the immediate product direction to persistent text collaboration and
+adds OC-065 for the account/registry foundation and OC-066 for the installed
+binary-size guard. Bluetooth G2 through G4 are retained but substantially
+deferred; this profile remains authoritative for those compatibility surfaces
+whenever they are shipped.
 
-Version 0.0.1 remains the development version until OC-064 and all of its
-prerequisites close. Removing or deferring an existing backlog item from 0.0.1
-requires an explicit scope-change pull request. Work added after the current
-backlog requires a separate decision about whether it blocks 0.0.1 or belongs
-to a later version.
+Version 0.0.1 remains a development version. The revised release gate must be
+made explicit before any tag or distribution; completing one issue or the local
+account slice does not imply that a partially built product is ready to ship.
 
 ## Authority order
 
