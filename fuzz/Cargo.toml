@@ -1,0 +1,24 @@
+[package]
+name = "omachat-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.10"
+omachat-mesh = { path = "../crates/omachat-mesh" }
+omachat-nostr = { path = "../crates/omachat-nostr" }
+omachat-proto = { path = "../crates/omachat-proto" }
+
+[[bin]]
+name = "hostile-codecs"
+path = "fuzz_targets/hostile_codecs.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
