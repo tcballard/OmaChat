@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod courier_drop;
+pub mod discovery;
 pub mod envelope;
 pub mod event;
 pub mod frame;
