@@ -89,7 +89,7 @@ fn initial_claim_accepts_a_later_local_binding_revision() {
         2
     );
 
-    let non_advancing = claim_with_binding_revision(&alice, 2, "alice_new", 1, 2);
+    let non_advancing = claim_with_binding_revision(&alice, 2, "alice", 1, 2);
     assert_eq!(
         registry.apply(non_advancing, 101),
         Err(RegistryError::StaleBindingRevision {
@@ -99,7 +99,7 @@ fn initial_claim_accepts_a_later_local_binding_revision() {
     );
     assert_eq!(registry.head(), Some(&first));
 
-    let advancing = claim_with_binding_revision(&alice, 3, "alice_new", 1, 4);
+    let advancing = claim_with_binding_revision(&alice, 3, "alice", 1, 4);
     let second = registry.apply(advancing, 102).unwrap();
     assert_eq!(second.account_revision, 2);
     assert_eq!(registry.account_revision(&second.account_id), Some(2));
@@ -219,8 +219,12 @@ fn claim_and_receipt_tampering_are_detected() {
 
     let mut registry = RegistryState::from_signing_seed([90; 32]);
     let pinned_key = registry.verifying_key();
+    let receipt_claim = original.clone();
     let receipt = registry.apply(original, 100).unwrap();
     receipt.verify_after(&pinned_key, None).unwrap();
+    receipt
+        .verify_for_claim(&pinned_key, &receipt_claim)
+        .unwrap();
 
     let mut changed_receipt = receipt.clone();
     changed_receipt.accepted_at += 1;
@@ -237,53 +241,98 @@ fn claim_and_receipt_tampering_are_detected() {
 }
 
 #[test]
-fn rename_tombstones_old_handle_and_receipts_chain() {
+fn receipt_verification_is_bound_to_the_exact_claim() {
+    let alice = account(1);
+    let bob = account(3);
+    let accepted_claim = claim(&alice, 1, "alice", 0);
+    let mut registry = RegistryState::from_signing_seed([90; 32]);
+    let pinned_key = registry.verifying_key();
+    let receipt = registry.apply(accepted_claim.clone(), 100).unwrap();
+
+    receipt
+        .verify_for_claim(&pinned_key, &accepted_claim)
+        .unwrap();
+
+    let wrong_command = claim(&alice, 2, "alice", 0);
+    let wrong_account = claim(&bob, 1, "bob", 0);
+    let wrong_handle = claim(&alice, 1, "alice_alt", 0);
+    let wrong_claim_hash = claim_with_binding_revision(&alice, 1, "alice", 0, 2);
+    for hostile_claim in [wrong_command, wrong_account, wrong_handle, wrong_claim_hash] {
+        assert_eq!(
+            receipt.verify_for_claim(&pinned_key, &hostile_claim),
+            Err(RegistryError::ReceiptClaimMismatch)
+        );
+    }
+}
+
+#[test]
+fn interleaved_receipts_preserve_global_and_per_account_chains() {
     let alice = account(1);
     let bob = account(3);
     let mut registry = RegistryState::from_signing_seed([90; 32]);
     let pinned_key = registry.verifying_key();
 
-    let first = registry.apply(claim(&alice, 1, "alice", 0), 100).unwrap();
-    let renamed = registry
-        .apply(claim(&alice, 2, "alice_new", 1), 101)
+    let alice_first = registry.apply(claim(&alice, 1, "alice", 0), 100).unwrap();
+    let bob_first = registry.apply(claim(&bob, 2, "bob", 0), 101).unwrap();
+    let alice_second = registry.apply(claim(&alice, 3, "alice", 1), 102).unwrap();
+
+    alice_first.verify_after(&pinned_key, None).unwrap();
+    bob_first
+        .verify_after(&pinned_key, Some(&alice_first))
+        .unwrap();
+    alice_second
+        .verify_after(&pinned_key, Some(&bob_first))
         .unwrap();
 
-    first.verify_after(&pinned_key, None).unwrap();
-    renamed.verify_after(&pinned_key, Some(&first)).unwrap();
-    assert_eq!(renamed.sequence, 2);
-    assert_eq!(renamed.account_revision, 2);
-    assert_eq!(renamed.previous_receipt_hash, first.receipt_hash());
+    alice_first.verify_account_after(&pinned_key, None).unwrap();
+    bob_first.verify_account_after(&pinned_key, None).unwrap();
+    alice_second
+        .verify_account_after(&pinned_key, Some(&alice_first))
+        .unwrap();
+    assert_eq!(alice_second.sequence, 3);
+    assert_eq!(alice_second.account_revision, 2);
+    assert_eq!(alice_second.previous_receipt_hash, bob_first.receipt_hash());
     assert_eq!(
-        renamed
-            .previous_handle
-            .as_ref()
-            .map(|handle| handle.as_str()),
-        Some("alice")
+        alice_second.previous_account_receipt_hash,
+        alice_first.receipt_hash()
     );
-    assert!(
-        registry
-            .handle_owner(&GlobalHandle::parse("alice").unwrap())
-            .is_none()
+    assert_eq!(
+        alice_second.verify_account_after(&pinned_key, Some(&bob_first)),
+        Err(RegistryError::InvalidAccountReceiptChain)
     );
-    assert!(
-        registry
-            .tombstone(&GlobalHandle::parse("alice").unwrap())
-            .is_some()
+    assert_eq!(
+        alice_second.verify_after(&pinned_key, Some(&alice_first)),
+        Err(RegistryError::InvalidReceiptChain)
     );
+}
+
+#[test]
+fn handle_rename_is_deferred_without_a_reuse_policy() {
+    let alice = account(1);
+    let bob = account(3);
+    let mut registry = RegistryState::from_signing_seed([90; 32]);
+    let first = registry.apply(claim(&alice, 1, "alice", 0), 100).unwrap();
 
     assert_eq!(
-        registry.apply(claim(&bob, 3, "alice", 0), 102),
-        Err(RegistryError::HandleTombstoned(
-            GlobalHandle::parse("alice").unwrap()
-        ))
+        registry.apply(claim(&alice, 2, "alice_new", 1), 101),
+        Err(RegistryError::HandleRenameDeferred)
     );
     assert_eq!(
-        registry.apply(claim(&alice, 4, "alice", 2), 103),
-        Err(RegistryError::HandleTombstoned(
+        registry.apply(claim(&bob, 3, "alice", 0), 102),
+        Err(RegistryError::HandleTaken(
             GlobalHandle::parse("alice").unwrap()
         ))
     );
-    assert_eq!(registry.head(), Some(&renamed));
+    assert_eq!(registry.head(), Some(&first));
+    assert_eq!(
+        registry.handle_owner(&GlobalHandle::parse("alice").unwrap()),
+        Some(&alice.public_identity().account_id)
+    );
+    assert!(
+        registry
+            .handle_owner(&GlobalHandle::parse("alice_new").unwrap())
+            .is_none()
+    );
 }
 
 #[test]

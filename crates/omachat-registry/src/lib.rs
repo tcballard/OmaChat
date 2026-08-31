@@ -1,8 +1,10 @@
 //! Transport-independent state machine for OmaChat's authoritative handle registry.
 //!
-//! Receipts form a publicly verifiable append-only hash chain when a client
-//! already has the registry key and a trusted prior receipt. This crate does
-//! not provide key transparency or protect a fresh client from a registry
+//! Receipts form a publicly verifiable global append-only hash chain when a
+//! client has the registry key and the immediately preceding global receipt.
+//! A second per-account predecessor lets a client validate its next account
+//! transition without downloading unrelated accounts' receipts. This crate
+//! does not provide key transparency or protect a fresh client from a registry
 //! presenting a consistent alternative history.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
@@ -160,7 +162,9 @@ impl HandleClaim {
         &self.proof
     }
 
-    fn proof_digest(&self) -> [u8; KEY_BYTES] {
+    /// Deterministic digest authorized by the account-root claim proof.
+    #[must_use]
+    pub fn proof_digest(&self) -> [u8; KEY_BYTES] {
         let mut hasher = Sha256::new();
         hasher.update(CLAIM_DOMAIN);
         hasher.update(self.version.to_be_bytes());
@@ -171,7 +175,9 @@ impl HandleClaim {
         hasher.finalize().into()
     }
 
-    fn hash(&self) -> [u8; KEY_BYTES] {
+    /// Hash the complete signed claim for binding into an acceptance receipt.
+    #[must_use]
+    pub fn claim_hash(&self) -> [u8; KEY_BYTES] {
         let mut hasher = Sha256::new();
         hasher.update(CLAIM_HASH_DOMAIN);
         hasher.update(self.proof_digest());
@@ -188,16 +194,23 @@ pub struct RegistryReceipt {
     pub command_id: CommandId,
     pub account_id: AccountId,
     pub handle: RegisteredHandle,
-    pub previous_handle: Option<RegisteredHandle>,
     pub account_revision: u64,
     pub claim_hash: [u8; KEY_BYTES],
+    /// Immediate predecessor in the registry-wide chain.
     pub previous_receipt_hash: [u8; KEY_BYTES],
+    /// Immediate predecessor for this account, regardless of intervening
+    /// receipts belonging to other accounts.
+    pub previous_account_receipt_hash: [u8; KEY_BYTES],
     pub accepted_at: u64,
     pub signature: [u8; SIGNATURE_BYTES],
 }
 
 impl RegistryReceipt {
-    /// Verify this receipt against a separately pinned registry public key.
+    /// Verify this receipt's structure and registry signature against a
+    /// separately pinned registry public key.
+    ///
+    /// This authenticates the receipt itself. Call [`Self::verify_for_claim`]
+    /// as well when proving that the registry accepted a particular claim.
     pub fn verify(&self, pinned_registry_key: &[u8; KEY_BYTES]) -> Result<(), RegistryError> {
         if self.version != RECEIPT_VERSION {
             return Err(RegistryError::UnsupportedReceiptVersion(self.version));
@@ -207,6 +220,11 @@ impl RegistryReceipt {
         }
         if (self.sequence == 1) != (self.previous_receipt_hash == GENESIS_HASH) {
             return Err(RegistryError::InvalidReceiptChain);
+        }
+        if self.account_revision == 0
+            || (self.account_revision == 1) != (self.previous_account_receipt_hash == GENESIS_HASH)
+        {
+            return Err(RegistryError::InvalidAccountReceiptChain);
         }
         VerifyingKey::from_bytes(pinned_registry_key)
             .map_err(|_| RegistryError::InvalidRegistryKey)?
@@ -243,6 +261,69 @@ impl RegistryReceipt {
         }
     }
 
+    /// Verify this receipt as the next transition after a trusted receipt for
+    /// the same account. Global sequence numbers may have gaps because other
+    /// accounts can have accepted transitions between the two receipts.
+    pub fn verify_account_after(
+        &self,
+        pinned_registry_key: &[u8; KEY_BYTES],
+        previous: Option<&Self>,
+    ) -> Result<(), RegistryError> {
+        self.verify(pinned_registry_key)?;
+        match previous {
+            None if self.account_revision == 1
+                && self.previous_account_receipt_hash == GENESIS_HASH =>
+            {
+                Ok(())
+            }
+            Some(previous) => {
+                previous.verify(pinned_registry_key)?;
+                let expected_revision = previous
+                    .account_revision
+                    .checked_add(1)
+                    .ok_or(RegistryError::InvalidAccountReceiptChain)?;
+                if self.account_id != previous.account_id
+                    || self.account_revision != expected_revision
+                    || self.sequence <= previous.sequence
+                    || self.previous_account_receipt_hash != previous.receipt_hash()
+                {
+                    return Err(RegistryError::InvalidAccountReceiptChain);
+                }
+                Ok(())
+            }
+            None => Err(RegistryError::InvalidAccountReceiptChain),
+        }
+    }
+
+    /// Verify that this receipt accepted exactly `claim`, not merely a claim
+    /// for a similarly named account or handle.
+    pub fn verify_for_claim(
+        &self,
+        pinned_registry_key: &[u8; KEY_BYTES],
+        claim: &HandleClaim,
+    ) -> Result<(), RegistryError> {
+        self.verify(pinned_registry_key)?;
+        claim.verify()?;
+        let handle = claim
+            .binding
+            .handle
+            .as_ref()
+            .ok_or(RegistryError::MissingHandle)?;
+        let expected_revision = claim
+            .expected_revision
+            .checked_add(1)
+            .ok_or(RegistryError::ReceiptClaimMismatch)?;
+        if self.command_id != claim.command_id
+            || self.account_id != claim.binding.account_id
+            || self.handle.as_global_handle() != handle
+            || self.account_revision != expected_revision
+            || self.claim_hash != claim.claim_hash()
+        {
+            return Err(RegistryError::ReceiptClaimMismatch);
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn receipt_hash(&self) -> [u8; KEY_BYTES] {
         let mut hasher = Sha256::new();
@@ -252,7 +333,9 @@ impl RegistryReceipt {
         hasher.finalize().into()
     }
 
-    fn signing_bytes(&self) -> Vec<u8> {
+    /// Deterministic domain-separated transcript covered by the registry key.
+    #[must_use]
+    pub fn signing_bytes(&self) -> Vec<u8> {
         let mut output = Vec::with_capacity(512);
         output.extend_from_slice(RECEIPT_DOMAIN);
         output.extend_from_slice(&self.version.to_be_bytes());
@@ -260,22 +343,13 @@ impl RegistryReceipt {
         output.extend_from_slice(self.command_id.as_bytes());
         push_vec_bytes(&mut output, self.account_id.as_str().as_bytes());
         push_vec_bytes(&mut output, self.handle.as_str().as_bytes());
-        push_optional_handle(&mut output, self.previous_handle.as_ref());
         output.extend_from_slice(&self.account_revision.to_be_bytes());
         output.extend_from_slice(&self.claim_hash);
         output.extend_from_slice(&self.previous_receipt_hash);
+        output.extend_from_slice(&self.previous_account_receipt_hash);
         output.extend_from_slice(&self.accepted_at.to_be_bytes());
         output
     }
-}
-
-/// Immutable marker preventing a retired handle from being reassigned.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HandleTombstone {
-    pub handle: RegisteredHandle,
-    pub account_id: AccountId,
-    pub retired_at_revision: u64,
-    pub receipt_hash: [u8; KEY_BYTES],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -295,12 +369,12 @@ struct AcceptedCommand {
 /// Single-authority in-memory registry state.
 ///
 /// `apply` validates every failure mode before committing maps, so a rejected
-/// command cannot partially reserve, release, or tombstone a handle.
+/// command cannot partially reserve or alter a handle. Rename and released-
+/// handle reuse are deliberately deferred until service policy is specified.
 pub struct RegistryState {
     signing_key: SigningKey,
     accounts: BTreeMap<AccountId, AccountRecord>,
     active_handles: BTreeMap<RegisteredHandle, AccountId>,
-    tombstones: BTreeMap<GlobalHandle, HandleTombstone>,
     commands: BTreeMap<CommandId, AcceptedCommand>,
     head: Option<RegistryReceipt>,
 }
@@ -312,7 +386,6 @@ impl RegistryState {
             signing_key: SigningKey::from_bytes(&seed),
             accounts: BTreeMap::new(),
             active_handles: BTreeMap::new(),
-            tombstones: BTreeMap::new(),
             commands: BTreeMap::new(),
             head: None,
         }
@@ -323,13 +396,13 @@ impl RegistryState {
         self.signing_key.verifying_key().to_bytes()
     }
 
-    /// Atomically accept an initial claim, profile update, or handle rename.
+    /// Atomically accept an initial claim or an update retaining its handle.
     pub fn apply(
         &mut self,
         claim: HandleClaim,
         accepted_at: u64,
     ) -> Result<RegistryReceipt, RegistryError> {
-        let claim_hash = claim.hash();
+        let claim_hash = claim.claim_hash();
         if let Some(accepted) = self.commands.get(&claim.command_id) {
             return if accepted.claim_hash == claim_hash {
                 Ok(accepted.receipt.clone())
@@ -364,15 +437,13 @@ impl RegistryState {
             .checked_add(1)
             .ok_or(RegistryError::RevisionExhausted)?;
 
-        let previous_handle = current.map(|record| record.registered_handle.clone());
-        let is_rename = previous_handle
-            .as_ref()
-            .is_some_and(|old| old.as_global_handle() != handle);
+        if let Some(current) = current
+            && current.registered_handle.as_global_handle() != handle
+        {
+            return Err(RegistryError::HandleRenameDeferred);
+        }
         let registered_handle = RegisteredHandle(handle.clone());
 
-        if self.tombstones.contains_key(handle) {
-            return Err(RegistryError::HandleTombstoned(handle.clone()));
-        }
         if let Some(owner) = self.active_handles.get(&registered_handle)
             && owner != &binding.account_id
         {
@@ -390,38 +461,24 @@ impl RegistryState {
             .head
             .as_ref()
             .map_or(GENESIS_HASH, RegistryReceipt::receipt_hash);
+        let previous_account_receipt_hash =
+            current.map_or(GENESIS_HASH, |record| record.last_receipt_hash);
         let mut receipt = RegistryReceipt {
             version: RECEIPT_VERSION,
             sequence,
             command_id: claim.command_id,
             account_id: binding.account_id.clone(),
             handle: registered_handle.clone(),
-            previous_handle: if is_rename {
-                previous_handle.clone()
-            } else {
-                None
-            },
             account_revision: next_registry_revision,
             claim_hash,
             previous_receipt_hash,
+            previous_account_receipt_hash,
             accepted_at,
             signature: [0_u8; SIGNATURE_BYTES],
         };
         receipt.signature = self.signing_key.sign(&receipt.signing_bytes()).to_bytes();
         let receipt_hash = receipt.receipt_hash();
 
-        if let Some(old_handle) = previous_handle.filter(|old| old.as_global_handle() != handle) {
-            self.active_handles.remove(&old_handle);
-            self.tombstones.insert(
-                old_handle.as_global_handle().clone(),
-                HandleTombstone {
-                    handle: old_handle,
-                    account_id: binding.account_id.clone(),
-                    retired_at_revision: next_registry_revision,
-                    receipt_hash,
-                },
-            );
-        }
         self.active_handles
             .insert(registered_handle.clone(), binding.account_id.clone());
         self.accounts.insert(
@@ -477,11 +534,6 @@ impl RegistryState {
     }
 
     #[must_use]
-    pub fn tombstone(&self, handle: &GlobalHandle) -> Option<&HandleTombstone> {
-        self.tombstones.get(handle)
-    }
-
-    #[must_use]
     pub const fn head(&self) -> Option<&RegistryReceipt> {
         self.head.as_ref()
     }
@@ -513,16 +565,6 @@ fn push_vec_bytes(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(value);
 }
 
-fn push_optional_handle(output: &mut Vec<u8>, handle: Option<&RegisteredHandle>) {
-    match handle {
-        Some(handle) => {
-            output.push(1);
-            push_vec_bytes(output, handle.as_str().as_bytes());
-        }
-        None => output.push(0),
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RegistryError {
     InvalidBinding(AccountError),
@@ -535,7 +577,7 @@ pub enum RegistryError {
     StaleRevision { expected: u64, current: u64 },
     CommandIdConflict,
     HandleTaken(GlobalHandle),
-    HandleTombstoned(GlobalHandle),
+    HandleRenameDeferred,
     SequenceExhausted,
     UnsupportedClaimVersion(u16),
     UnsupportedReceiptVersion(u16),
@@ -543,6 +585,8 @@ pub enum RegistryError {
     InvalidReceiptSequence,
     InvalidReceiptSignature,
     InvalidReceiptChain,
+    InvalidAccountReceiptChain,
+    ReceiptClaimMismatch,
 }
 
 impl fmt::Display for RegistryError {
@@ -573,9 +617,8 @@ impl fmt::Display for RegistryError {
                 formatter.write_str("command ID was already used for a different claim")
             }
             Self::HandleTaken(handle) => write!(formatter, "handle @{handle} is already claimed"),
-            Self::HandleTombstoned(handle) => {
-                write!(formatter, "handle @{handle} is permanently retired")
-            }
+            Self::HandleRenameDeferred => formatter
+                .write_str("handle rename is deferred until registry reuse policy is specified"),
             Self::SequenceExhausted => formatter.write_str("registry sequence is exhausted"),
             Self::UnsupportedClaimVersion(version) => {
                 write!(formatter, "unsupported handle claim version {version}")
@@ -591,6 +634,12 @@ impl fmt::Display for RegistryError {
                 formatter.write_str("invalid registry receipt signature")
             }
             Self::InvalidReceiptChain => formatter.write_str("invalid registry receipt hash chain"),
+            Self::InvalidAccountReceiptChain => {
+                formatter.write_str("invalid per-account registry receipt hash chain")
+            }
+            Self::ReceiptClaimMismatch => {
+                formatter.write_str("registry receipt does not match the exact handle claim")
+            }
         }
     }
 }
