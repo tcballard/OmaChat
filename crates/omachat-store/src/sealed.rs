@@ -66,7 +66,6 @@ impl MasterKey {
         &self.0
     }
 
-    #[allow(dead_code)]
     pub(crate) fn zeroize(&mut self) {
         self.0.zeroize();
     }
