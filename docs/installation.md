@@ -38,6 +38,13 @@ from the account handle automatically. Omitting or setting either account field
 to JSON `null` preserves its sealed value in this first slice; replacement uses
 a new valid value, while clearing/tombstoning belongs to the registry workflow.
 
+`dm_relays` is an opt-in list of `ws://` or `wss://` relay URLs for the standard
+NIP-17 private inbox. An empty list disables that inbox. Every configured relay
+must complete NIP-42 authentication for the persisted device Nostr principal
+before OmaChat sends its recipient-only kind-1059 subscription. Relay changes
+require a daemon restart. This setting is a reachability choice, not protocol
+authority, and no production OmaChat relay is implied by the default config.
+
 ## Storage provider
 
 Automatic mode prefers Secret Service and otherwise chooses file mode on first

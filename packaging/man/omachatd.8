@@ -18,6 +18,12 @@ values are sealed into a root-signed local account binding and survive restart.
 A configured handle is reported as local-only until a signed central-registry
 receipt proves global uniqueness. The separate nickname setting remains the
 public geohash-chat nickname and is never populated from the account handle.
+.SH PRIVATE RELAYS
+The optional dm_relays JSON array enables the standard NIP-17 private inbox.
+Each ws or wss relay must authenticate the persisted device Nostr principal
+with NIP-42 before receiving its recipient-only kind-1059 subscription. An
+empty array disables this inbox. Relay changes require a daemon restart. A
+configured relay provides reachability and is not treated as protocol authority.
 .SH STORAGE
 Secret Service is preferred. --file-key selects a 0600 master key in the
 0700 state directory. A missing selected key is fatal; it is never silently

@@ -1,11 +1,15 @@
 use crate::{
     config::DaemonConfig,
     core_error::CoreError,
+    dm_inbox_service::{DmInboxHandle, DmInboxService},
     ipc_server::{EventHub, RequestHandler},
     nostr_service::NostrHandle,
 };
 use omachat_crypto::{DisplayName, GlobalHandle, IdentitySecrets};
 use omachat_nostr::{
+    auth::RelayAuthSigner,
+    dm_inbox::DmInboxReceive,
+    dm_inbox_runtime::DmInboxRuntimeEvent,
     envelope::{CreateEnvelope, RumorShape, create as create_private_envelope},
     event::{EventLimits, SignedEvent, xonly_public_key},
     geochat::{ChatInput, ParsedGeoEvent, create_chat, parse_geo_event, subscription_filter},
@@ -156,6 +160,7 @@ struct CoreInner {
     outbox_drain: tokio::sync::Mutex<()>,
     panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
+    dm_inbox: Mutex<Option<DmInboxHandle>>,
     mailbox: Mutex<PrivateMailbox>,
     state: Mutex<RuntimeState>,
     config: Mutex<DaemonConfig>,
@@ -177,6 +182,7 @@ struct DaemonStatus<'a> {
     nostr_public_key: String,
     joined_geohashes: Vec<String>,
     relay_count: usize,
+    dm_relay_count: usize,
     outbox_pending: usize,
     outbox_failed: usize,
     account: AccountStatus,
@@ -247,6 +253,7 @@ impl DaemonCore {
                 outbox_drain: tokio::sync::Mutex::new(()),
                 panic: PanicLifecycle::default(),
                 nostr: Mutex::new(None),
+                dm_inbox: Mutex::new(None),
                 mailbox: Mutex::new(mailbox),
                 state: Mutex::new(RuntimeState { joined, blocked }),
                 config: Mutex::new(config),
@@ -298,6 +305,99 @@ impl DaemonCore {
                 .expect("Nostr handle mutex poisoned") = Some(handle);
             Ok(())
         })
+    }
+
+    pub async fn start_dm_inbox(
+        &self,
+        inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
+    ) -> Result<Option<DmInboxService>, CoreError> {
+        let _operation = self.inner.operations.read().await;
+        let bootstrap = self.with_active_transition(|| {
+            let relays = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .dm_relays
+                .clone();
+            if relays.is_empty() {
+                return Ok(None);
+            }
+
+            let recipient_secret_key = {
+                let identity = self.identity()?;
+                let nostr = identity
+                    .as_ref()
+                    .expect("checked identity")
+                    .device_nostr_identity()
+                    .map_err(CoreError::Identity)?;
+                *nostr.private_key()
+            };
+            let auth_signer = RelayAuthSigner::from_secret_key(recipient_secret_key)
+                .map_err(|_| CoreError::Nostr)?;
+            let blocked = self
+                .inner
+                .state
+                .lock()
+                .expect("runtime state mutex poisoned")
+                .blocked
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            Ok(Some((relays, auth_signer, recipient_secret_key, blocked)))
+        })?;
+        let Some((relays, auth_signer, recipient_secret_key, blocked)) = bootstrap else {
+            return Ok(None);
+        };
+
+        let service = DmInboxService::spawn(
+            &relays,
+            auth_signer,
+            recipient_secret_key,
+            &blocked,
+            inbound,
+        )
+        .await
+        .map_err(CoreError::DmInbox)?;
+        let handle = service.handle();
+        if let Err(error) = self.with_active_transition(move || {
+            *self
+                .inner
+                .dm_inbox
+                .lock()
+                .expect("DM inbox handle mutex poisoned") = Some(handle);
+            Ok(())
+        }) {
+            let _ = service.shutdown().await;
+            return Err(error);
+        }
+        Ok(Some(service))
+    }
+
+    pub fn receive_dm_inbox_event(&self, event: DmInboxRuntimeEvent) {
+        let _transition = self.inner.panic.transition();
+        if self.ensure_active().is_err() {
+            return;
+        }
+        let DmInboxReceive::Message(message) = event.receive else {
+            return;
+        };
+        if self
+            .inner
+            .state
+            .lock()
+            .expect("runtime state mutex poisoned")
+            .blocked
+            .contains(&message.metadata.author_pubkey)
+        {
+            return;
+        }
+        self.publish_message_event(
+            &message.metadata.gift_wrap_id,
+            &format!("dm:{}", message.metadata.author_pubkey),
+            &message.content,
+            "received",
+        );
     }
 
     #[must_use]
@@ -443,14 +543,11 @@ impl DaemonCore {
     }
 
     fn apply_reload(&self, replacement: DaemonConfig) -> Result<(), CoreError> {
-        if self
-            .inner
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .relays
-            != replacement.relays
-        {
+        let relay_change_requires_restart = {
+            let current = self.inner.config.lock().expect("config mutex poisoned");
+            current.relays != replacement.relays || current.dm_relays != replacement.dm_relays
+        };
+        if relay_change_requires_restart {
             return Err(CoreError::RestartRequired);
         }
         let joined = replacement
@@ -591,6 +688,7 @@ impl DaemonCore {
             nostr_public_key: nostr.public_key_hex(),
             joined_geohashes: state.joined.iter().cloned().collect(),
             relay_count: config.relays.len(),
+            dm_relay_count: config.dm_relays.len(),
             outbox_pending: pending,
             outbox_failed: failed,
             account,
@@ -1047,6 +1145,16 @@ impl DaemonCore {
     }
 
     async fn perform_panic_cleanup(&self) -> Result<serde_json::Value, CoreError> {
+        let dm_inbox = self
+            .inner
+            .dm_inbox
+            .lock()
+            .expect("DM inbox handle mutex poisoned")
+            .take();
+        if let Some(handle) = dm_inbox {
+            handle.quiesce().await;
+        }
+
         // Stop relay work before dropping keys. Quiescing rejects new
         // commands, cancels the active publish/subscribe, discards the outer
         // queue, closes every relay, and only then returns.

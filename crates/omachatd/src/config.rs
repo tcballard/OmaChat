@@ -3,7 +3,7 @@ use omachat_crypto::{DisplayName, GlobalHandle};
 use omachat_proto::geohash::Geohash;
 use omachat_store::RequestedProvider;
 use serde::Deserialize;
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,6 +28,7 @@ impl From<StorageProviderConfig> for RequestedProvider {
 pub struct DaemonConfig {
     pub storage_provider: StorageProviderConfig,
     pub relays: Vec<String>,
+    pub dm_relays: Vec<String>,
     pub joined_geohashes: Vec<String>,
     /// Candidate global account handle. This remains local-only until a
     /// verified central-registry receipt is stored.
@@ -50,6 +51,22 @@ impl DaemonConfig {
         for relay in &self.relays {
             let url = url::Url::parse(relay).map_err(|_| CoreError::InvalidConfig)?;
             if !matches!(url.scheme(), "ws" | "wss") {
+                return Err(CoreError::InvalidConfig);
+            }
+        }
+        if self.dm_relays.len() > 16 {
+            return Err(CoreError::InvalidConfig);
+        }
+        let mut private_relays = HashSet::with_capacity(self.dm_relays.len());
+        for relay in &self.dm_relays {
+            let url = url::Url::parse(relay).map_err(|_| CoreError::InvalidConfig)?;
+            if !matches!(url.scheme(), "ws" | "wss")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
+                || !private_relays.insert(url.to_string())
+            {
                 return Err(CoreError::InvalidConfig);
             }
         }

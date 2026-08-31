@@ -10,6 +10,7 @@ pub enum CoreError {
     Identity(omachat_crypto::IdentityError),
     Outbox(omachat_store::OutboxError),
     RelayPool(omachat_nostr::pool::RelayPoolError),
+    DmInbox(crate::dm_inbox_service::DmInboxServiceError),
     InvalidConfig,
     InvalidCommand,
     InvalidGeohash,
@@ -45,6 +46,7 @@ impl CoreError {
             | Self::Identity(_)
             | Self::Outbox(_)
             | Self::RelayPool(_)
+            | Self::DmInbox(_)
             | Self::Nostr
             | Self::Encoding
             | Self::Clock
@@ -65,6 +67,7 @@ impl fmt::Display for CoreError {
             Self::Identity(error) => write!(formatter, "identity operation failed: {error}"),
             Self::Outbox(error) => write!(formatter, "outbox failed: {error}"),
             Self::RelayPool(error) => write!(formatter, "relay pool failed: {error}"),
+            Self::DmInbox(error) => write!(formatter, "private inbox failed: {error}"),
             Self::InvalidConfig => formatter.write_str("daemon configuration is invalid"),
             Self::InvalidCommand => formatter.write_str("command is invalid in this context"),
             Self::InvalidGeohash => formatter.write_str("geohash is invalid"),
@@ -98,6 +101,7 @@ impl Error for CoreError {
             Self::Identity(error) => Some(error),
             Self::Outbox(error) => Some(error),
             Self::RelayPool(error) => Some(error),
+            Self::DmInbox(error) => Some(error),
             _ => None,
         }
     }
