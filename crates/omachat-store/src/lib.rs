@@ -6,6 +6,7 @@ mod courier;
 mod erase;
 mod identity;
 mod outbox;
+mod registry;
 mod sealed;
 mod trust;
 
@@ -18,6 +19,7 @@ pub use outbox::{
     AttemptOutcome, NostrOutbox, OutboxError, OutboxMessage, OutboxState, OutboxTransport,
     TransportAttempt,
 };
+pub use registry::{RegistryVault, RegistryVaultError};
 pub use sealed::{
     MasterKey, ProviderKind, RequestedProvider, SealedStore, StoreError, StoreStatus,
 };

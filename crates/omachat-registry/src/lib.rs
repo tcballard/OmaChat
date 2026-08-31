@@ -12,10 +12,12 @@ use omachat_crypto::{
     AccountError, AccountId, AccountSecrets, GlobalHandle, SignedLocalAccountBinding,
     verify_registry_handle_claim,
 };
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, error::Error, fmt};
 
 const CLAIM_VERSION: u16 = 1;
+const REGISTRY_STATE_VERSION: u16 = 1;
 const RECEIPT_VERSION: u16 = 1;
 const CLAIM_DOMAIN: &[u8] = b"omachat.registry.handle-claim.v1\0";
 const CLAIM_HASH_DOMAIN: &[u8] = b"omachat.registry.handle-claim-hash.v1\0";
@@ -25,8 +27,35 @@ const KEY_BYTES: usize = 32;
 const SIGNATURE_BYTES: usize = 64;
 const GENESIS_HASH: [u8; KEY_BYTES] = [0_u8; KEY_BYTES];
 
+mod serde_signature {
+    use super::SIGNATURE_BYTES;
+    use serde::de::Deserialize;
+    use serde::de::Error;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &[u8; SIGNATURE_BYTES], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; SIGNATURE_BYTES], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: Vec<u8> = Vec::deserialize(deserializer)?;
+        if value.len() != SIGNATURE_BYTES {
+            return Err(Error::invalid_length(value.len(), &"a 64-byte signature"));
+        }
+        let mut signature = [0_u8; SIGNATURE_BYTES];
+        signature.copy_from_slice(&value);
+        Ok(signature)
+    }
+}
+
 /// Caller-generated, fixed-width idempotency key.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct CommandId([u8; KEY_BYTES]);
 
 impl CommandId {
@@ -46,7 +75,7 @@ impl CommandId {
 ///
 /// This is intentionally distinct from [`GlobalHandle`], which proves only
 /// that a candidate has valid syntax.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct RegisteredHandle(GlobalHandle);
 
 impl RegisteredHandle {
@@ -187,7 +216,7 @@ impl HandleClaim {
 }
 
 /// Registry-signed evidence for one accepted state transition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RegistryReceipt {
     pub version: u16,
     pub sequence: u64,
@@ -202,6 +231,7 @@ pub struct RegistryReceipt {
     /// receipts belonging to other accounts.
     pub previous_account_receipt_hash: [u8; KEY_BYTES],
     pub accepted_at: u64,
+    #[serde(with = "serde_signature")]
     pub signature: [u8; SIGNATURE_BYTES],
 }
 
@@ -364,6 +394,33 @@ struct AccountRecord {
 struct AcceptedCommand {
     claim_hash: [u8; KEY_BYTES],
     receipt: RegistryReceipt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryStateSnapshot {
+    pub version: u16,
+    pub accounts: Vec<RegistryAccountSnapshot>,
+    pub commands: Vec<RegistryCommandSnapshot>,
+    pub head: Option<RegistryReceipt>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryAccountSnapshot {
+    pub account_id: AccountId,
+    pub binding: SignedLocalAccountBinding,
+    pub registry_revision: u64,
+    pub registered_handle: RegisteredHandle,
+    pub last_receipt_hash: [u8; KEY_BYTES],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryCommandSnapshot {
+    pub command_id: CommandId,
+    pub claim_hash: [u8; KEY_BYTES],
+    pub receipt: RegistryReceipt,
 }
 
 /// Single-authority in-memory registry state.
@@ -537,6 +594,184 @@ impl RegistryState {
     pub const fn head(&self) -> Option<&RegistryReceipt> {
         self.head.as_ref()
     }
+
+    /// Export the complete authoritative state for sealed persistence.
+    #[must_use]
+    pub fn snapshot(&self) -> RegistryStateSnapshot {
+        RegistryStateSnapshot {
+            version: REGISTRY_STATE_VERSION,
+            accounts: self
+                .accounts
+                .iter()
+                .map(|(account_id, record)| RegistryAccountSnapshot {
+                    account_id: account_id.clone(),
+                    binding: record.binding.clone(),
+                    registry_revision: record.registry_revision,
+                    registered_handle: record.registered_handle.clone(),
+                    last_receipt_hash: record.last_receipt_hash,
+                })
+                .collect(),
+            commands: self
+                .commands
+                .iter()
+                .map(|(command_id, command)| RegistryCommandSnapshot {
+                    command_id: *command_id,
+                    claim_hash: command.claim_hash,
+                    receipt: command.receipt.clone(),
+                })
+                .collect(),
+            head: self.head.clone(),
+        }
+    }
+
+    /// Rebuild an in-memory registry from a persisted snapshot.
+    pub fn restore(
+        seed: [u8; KEY_BYTES],
+        snapshot: RegistryStateSnapshot,
+    ) -> Result<Self, RegistryError> {
+        if snapshot.version != REGISTRY_STATE_VERSION {
+            return Err(RegistryError::UnsupportedStateVersion(snapshot.version));
+        }
+        let command_count = snapshot.commands.len();
+        let mut commands: BTreeMap<CommandId, AcceptedCommand> = BTreeMap::new();
+        for command in snapshot.commands {
+            if commands
+                .insert(
+                    command.command_id,
+                    AcceptedCommand {
+                        claim_hash: command.claim_hash,
+                        receipt: command.receipt,
+                    },
+                )
+                .is_some()
+            {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+        }
+
+        let pinned_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+        let mut global_receipts: Vec<RegistryReceipt> = commands
+            .iter()
+            .map(|(command_id, command)| {
+                if *command_id != command.receipt.command_id {
+                    return Err(RegistryError::InvalidRegistryState);
+                }
+                if command.claim_hash != command.receipt.claim_hash {
+                    return Err(RegistryError::InvalidRegistryState);
+                }
+                command.receipt.verify(&pinned_key)?;
+                Ok(command.receipt.clone())
+            })
+            .collect::<Result<_, RegistryError>>()?;
+        global_receipts.sort_by_key(|receipt| receipt.sequence);
+        let mut receipts_by_hash = BTreeMap::new();
+        let mut account_latest = BTreeMap::new();
+        let mut previous: Option<&RegistryReceipt> = None;
+        for receipt in &global_receipts {
+            receipt.verify_after(&pinned_key, previous)?;
+            let previous_account = account_latest.get(&receipt.account_id);
+            receipt.verify_account_after(&pinned_key, previous_account)?;
+            let hash = receipt.receipt_hash();
+            if receipts_by_hash.insert(hash, receipt.clone()).is_some() {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+            account_latest.insert(receipt.account_id.clone(), receipt.clone());
+            previous = Some(receipt);
+        }
+
+        if command_count == 0 {
+            if snapshot.head.is_some() {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+        } else {
+            let expected_head = global_receipts
+                .last()
+                .cloned()
+                .expect("non-empty command list must have a head");
+            if snapshot.head != Some(expected_head) {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+        }
+
+        let mut accounts = BTreeMap::new();
+        let mut active_handles = BTreeMap::new();
+        for account_snapshot in snapshot.accounts {
+            if account_snapshot.registry_revision == 0
+                || account_snapshot.account_id != account_snapshot.binding.account_id
+            {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+            account_snapshot
+                .binding
+                .verify()
+                .map_err(RegistryError::InvalidBinding)?;
+            if account_snapshot
+                .binding
+                .handle
+                .as_ref()
+                .is_none_or(|handle| {
+                    handle != account_snapshot.registered_handle.as_global_handle()
+                })
+            {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+            let previous = active_handles.insert(
+                account_snapshot.registered_handle.clone(),
+                account_snapshot.account_id.clone(),
+            );
+            if let Some(previous_owner) = previous
+                && previous_owner != account_snapshot.account_id
+            {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+            if accounts.contains_key(&account_snapshot.account_id) {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+
+            let latest = receipts_by_hash
+                .get(&account_snapshot.last_receipt_hash)
+                .ok_or(RegistryError::InvalidRegistryState)?;
+            if latest.account_id != account_snapshot.account_id
+                || latest.account_revision != account_snapshot.registry_revision
+                || latest.handle != account_snapshot.registered_handle
+            {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+            if let Some(account_chain) = account_latest.get(&account_snapshot.account_id) {
+                if account_chain.receipt_hash() != account_snapshot.last_receipt_hash {
+                    return Err(RegistryError::InvalidRegistryState);
+                }
+            } else {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+            accounts.insert(
+                account_snapshot.account_id,
+                AccountRecord {
+                    binding: account_snapshot.binding,
+                    registry_revision: account_snapshot.registry_revision,
+                    registered_handle: account_snapshot.registered_handle,
+                    last_receipt_hash: account_snapshot.last_receipt_hash,
+                },
+            );
+        }
+
+        if accounts.len() != account_latest.len() {
+            return Err(RegistryError::InvalidRegistryState);
+        }
+        for command in commands.values() {
+            if !accounts.contains_key(&command.receipt.account_id) {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+        }
+
+        Ok(Self {
+            signing_key: SigningKey::from_bytes(&seed),
+            accounts,
+            active_handles,
+            commands,
+            head: snapshot.head,
+        })
+    }
 }
 
 fn validate_binding(binding: &SignedLocalAccountBinding) -> Result<(), RegistryError> {
@@ -567,6 +802,8 @@ fn push_vec_bytes(output: &mut Vec<u8>, value: &[u8]) {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RegistryError {
+    UnsupportedStateVersion(u16),
+    InvalidRegistryState,
     InvalidBinding(AccountError),
     MissingHandle,
     ClaimAccountMismatch,
@@ -625,6 +862,12 @@ impl fmt::Display for RegistryError {
             }
             Self::UnsupportedReceiptVersion(version) => {
                 write!(formatter, "unsupported registry receipt version {version}")
+            }
+            Self::UnsupportedStateVersion(version) => {
+                write!(formatter, "unsupported registry state version {version}")
+            }
+            Self::InvalidRegistryState => {
+                formatter.write_str("registry state snapshot is internally inconsistent")
             }
             Self::InvalidRegistryKey => formatter.write_str("invalid pinned registry key"),
             Self::InvalidReceiptSequence => {
