@@ -19,6 +19,7 @@ pub enum CoreError {
     Encoding,
     Clock,
     Random,
+    Subscription,
     ConfirmationRequired,
     PanicErase,
     Panicked,
@@ -45,7 +46,8 @@ impl CoreError {
             | Self::Nostr
             | Self::Encoding
             | Self::Clock
-            | Self::Random => ErrorCode::Internal,
+            | Self::Random
+            | Self::Subscription => ErrorCode::Internal,
             Self::PanicErase => ErrorCode::Internal,
         }
     }
@@ -70,6 +72,7 @@ impl fmt::Display for CoreError {
             Self::Encoding => formatter.write_str("daemon state encoding failed"),
             Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
             Self::Random => formatter.write_str("secure random generation failed"),
+            Self::Subscription => formatter.write_str("Nostr subscription refresh failed"),
             Self::ConfirmationRequired => {
                 formatter.write_str("panic erase requires exact confirmation ERASE")
             }

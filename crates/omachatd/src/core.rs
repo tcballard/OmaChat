@@ -7,7 +7,7 @@ use crate::{
 use omachat_crypto::IdentitySecrets;
 use omachat_nostr::{
     envelope::{CreateEnvelope, RumorShape, create as create_private_envelope},
-    event::{EventLimits, xonly_public_key},
+    event::{EventLimits, SignedEvent, xonly_public_key},
     geochat::{ChatInput, ParsedGeoEvent, create_chat, parse_geo_event, subscription_filter},
     mailbox::{MailboxReceive, PrivateMailbox},
     pool::PoolNotification,
@@ -42,6 +42,8 @@ struct CoreInner {
     store: SealedStore,
     identity: Mutex<Option<IdentitySecrets>>,
     storage_transaction: Mutex<()>,
+    subscription_transaction: tokio::sync::Mutex<()>,
+    outbox_drain: tokio::sync::Mutex<()>,
     panicked: AtomicBool,
     nostr: Mutex<Option<NostrHandle>>,
     mailbox: Mutex<PrivateMailbox>,
@@ -106,6 +108,8 @@ impl DaemonCore {
                 store,
                 identity: Mutex::new(Some(identity)),
                 storage_transaction: Mutex::new(()),
+                subscription_transaction: tokio::sync::Mutex::new(()),
+                outbox_drain: tokio::sync::Mutex::new(()),
                 panicked: AtomicBool::new(false),
                 nostr: Mutex::new(None),
                 mailbox: Mutex::new(mailbox),
@@ -179,8 +183,14 @@ impl DaemonCore {
     }
 
     pub fn receive_nostr_notification(&self, notification: PoolNotification) {
-        let RelayNotification::Event { event, .. } = notification.notification else {
-            return;
+        let event = match notification.notification {
+            RelayNotification::Connected => {
+                let core = self.clone();
+                tokio::spawn(async move { core.drain_outbox().await });
+                return;
+            }
+            RelayNotification::Event { event, .. } => event,
+            _ => return,
         };
         let Ok(now) = unix_time() else { return };
         if let Ok(parsed) = parse_geo_event(&event, now, &EventLimits::default()) {
@@ -305,8 +315,8 @@ impl DaemonCore {
         let result = match command {
             Command::Status => self.status_value(),
             Command::Fingerprint => self.fingerprint_value(),
-            Command::Join { geohash } => self.join(geohash),
-            Command::Leave { geohash } => self.leave(geohash),
+            Command::Join { geohash } => self.join(geohash).await,
+            Command::Leave { geohash } => self.leave(geohash).await,
             Command::Send { conversation, text } => self.send(&conversation, &text).await,
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
@@ -376,20 +386,34 @@ impl DaemonCore {
         ))
     }
 
-    fn join(&self, value: String) -> Result<serde_json::Value, CoreError> {
+    async fn join(&self, value: String) -> Result<serde_json::Value, CoreError> {
         let geohash = Geohash::parse(&value).map_err(|_| CoreError::InvalidGeohash)?;
-        self.inner
+        let _subscription = self.inner.subscription_transaction.lock().await;
+        let inserted = self
+            .inner
             .state
             .lock()
             .expect("runtime state mutex poisoned")
             .joined
             .insert(geohash.to_string());
+        if let Err(error) = self.refresh_nostr_subscription().await {
+            if inserted {
+                self.inner
+                    .state
+                    .lock()
+                    .expect("runtime state mutex poisoned")
+                    .joined
+                    .remove(geohash.as_str());
+            }
+            return Err(error);
+        }
         self.publish_status_event();
         Ok(serde_json::json!({"joined": geohash.as_str()}))
     }
 
-    fn leave(&self, value: String) -> Result<serde_json::Value, CoreError> {
+    async fn leave(&self, value: String) -> Result<serde_json::Value, CoreError> {
         let geohash = Geohash::parse(&value).map_err(|_| CoreError::InvalidGeohash)?;
+        let _subscription = self.inner.subscription_transaction.lock().await;
         let removed = self
             .inner
             .state
@@ -400,8 +424,34 @@ impl DaemonCore {
         if !removed {
             return Err(CoreError::NotJoined);
         }
+        if let Err(error) = self.refresh_nostr_subscription().await {
+            self.inner
+                .state
+                .lock()
+                .expect("runtime state mutex poisoned")
+                .joined
+                .insert(geohash.to_string());
+            return Err(error);
+        }
         self.publish_status_event();
         Ok(serde_json::json!({"left": geohash.as_str()}))
+    }
+
+    async fn refresh_nostr_subscription(&self) -> Result<(), CoreError> {
+        let handle = self
+            .inner
+            .nostr
+            .lock()
+            .expect("Nostr handle mutex poisoned")
+            .clone();
+        let Some(handle) = handle else {
+            return Ok(());
+        };
+        let filters = self.nostr_filters(unix_time()?)?;
+        handle
+            .subscribe("omachat-main-v1".into(), filters)
+            .await
+            .map_err(|_| CoreError::Subscription)
     }
 
     fn who(&self, value: &str) -> Result<serde_json::Value, CoreError> {
@@ -585,13 +635,101 @@ impl DaemonCore {
                         .map_err(CoreError::Outbox)?;
                     "stored"
                 }
-                Err(_) => "queued",
+                Err(_) => {
+                    let _storage = self
+                        .inner
+                        .storage_transaction
+                        .lock()
+                        .expect("storage transaction mutex poisoned");
+                    if let Ok(mut outbox) = NostrOutbox::load(&self.inner.store, now) {
+                        let _ = outbox.record_transport_attempt(
+                            &event.id,
+                            omachat_store::OutboxTransport::Nostr,
+                            omachat_store::AttemptOutcome::Unavailable,
+                            now,
+                        );
+                    }
+                    "queued"
+                }
             }
         } else {
             "queued"
         };
         self.publish_message_event(&event.id, conversation, text, delivery);
         Ok(serde_json::json!({"id": event.id, "delivery": delivery}))
+    }
+
+    async fn drain_outbox(&self) {
+        let Some(handle) = self
+            .inner
+            .nostr
+            .lock()
+            .expect("Nostr handle mutex poisoned")
+            .clone()
+        else {
+            return;
+        };
+        let _drain = self.inner.outbox_drain.lock().await;
+        loop {
+            let now = unix_time().unwrap_or_default();
+            let pending = {
+                let _storage = self
+                    .inner
+                    .storage_transaction
+                    .lock()
+                    .expect("storage transaction mutex poisoned");
+                let Ok(outbox) = NostrOutbox::load(&self.inner.store, now) else {
+                    return;
+                };
+                outbox
+                    .next_pending()
+                    .map(|message| (message.id.clone(), message.gift_wrap.clone()))
+            };
+            let Some((id, gift_wrap)) = pending else {
+                return;
+            };
+            let event =
+                match SignedEvent::from_json(gift_wrap.as_bytes(), now, &EventLimits::default()) {
+                    Ok(event) => event,
+                    Err(_) => {
+                        self.record_outbox_attempt(
+                            &id,
+                            omachat_store::AttemptOutcome::Rejected,
+                            now,
+                        );
+                        return;
+                    }
+                };
+            let outcome = if handle.publish(event).await.is_ok() {
+                omachat_store::AttemptOutcome::Acknowledged
+            } else {
+                omachat_store::AttemptOutcome::Unavailable
+            };
+            let state = self.record_outbox_attempt(&id, outcome, now);
+            if outcome != omachat_store::AttemptOutcome::Acknowledged {
+                if state == Some(omachat_store::OutboxState::Failed) {
+                    continue;
+                }
+                return;
+            }
+        }
+    }
+
+    fn record_outbox_attempt(
+        &self,
+        id: &str,
+        outcome: omachat_store::AttemptOutcome,
+        now: u64,
+    ) -> Option<omachat_store::OutboxState> {
+        let _storage = self
+            .inner
+            .storage_transaction
+            .lock()
+            .expect("storage transaction mutex poisoned");
+        let mut outbox = NostrOutbox::load(&self.inner.store, now).ok()?;
+        outbox
+            .record_transport_attempt(id, omachat_store::OutboxTransport::Nostr, outcome, now)
+            .ok()
     }
 
     fn identity(&self) -> Result<std::sync::MutexGuard<'_, Option<IdentitySecrets>>, CoreError> {
