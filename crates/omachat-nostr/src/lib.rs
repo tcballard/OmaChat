@@ -7,6 +7,7 @@ pub mod dm_delivery;
 pub mod dm_inbox;
 pub mod dm_inbox_runtime;
 pub mod dm_relay_cache;
+pub mod dm_relay_list;
 pub mod dm_relay_routing;
 pub mod envelope;
 pub mod event;
