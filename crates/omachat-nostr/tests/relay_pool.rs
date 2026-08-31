@@ -5,7 +5,10 @@ use omachat_nostr::{
     relay::{RelayConfig, RelayNotification, RelayRoute},
 };
 use serde_json::{Value, json};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashSet,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
@@ -149,6 +152,57 @@ async fn acknowledgement_threshold_fails_closed() {
     }
     first_server.await.unwrap();
     second_server.await.unwrap();
+}
+
+#[tokio::test]
+async fn selected_publish_never_sends_to_an_ineligible_healthy_relay() {
+    let ineligible = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let authenticated = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let configs = vec![
+        relay_config(ineligible.local_addr().unwrap()),
+        relay_config(authenticated.local_addr().unwrap()),
+    ];
+    let ineligible_server = tokio::spawn(async move {
+        let (stream, _) = ineligible.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(100);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match tokio::time::timeout(remaining, socket.next()).await {
+                Err(_) => break,
+                Ok(Some(Ok(Message::Ping(payload)))) => {
+                    socket.send(Message::Pong(payload)).await.unwrap();
+                }
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    panic!("ineligible relay received client text frame: {text}");
+                }
+                Ok(Some(Ok(Message::Close(_))) | None) => break,
+                Ok(Some(Ok(_))) => {}
+                Ok(Some(Err(error))) => panic!("ineligible relay socket failed: {error}"),
+            }
+        }
+        finish_on_close(socket).await;
+    });
+    let authenticated_server = tokio::spawn(ack_server(authenticated, true));
+
+    let mut pool = RelayPool::spawn(configs, RelayPoolConfig::default()).unwrap();
+    wait_connected(&mut pool, 2).await;
+    let result = pool
+        .publish_to_indices(event(), &HashSet::from([1]), 1)
+        .await
+        .unwrap();
+    assert_eq!(result.accepted, 1);
+    assert_eq!(result.attempted, 1);
+    assert_eq!(result.outcomes[0].relay_index, 1);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    for outcome in pool.shutdown().await {
+        outcome.unwrap();
+    }
+    ineligible_server.await.unwrap();
+    authenticated_server.await.unwrap();
 }
 
 async fn ack_server(listener: TcpListener, accepted: bool) {
