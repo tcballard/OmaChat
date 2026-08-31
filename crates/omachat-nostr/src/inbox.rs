@@ -6,7 +6,9 @@ use crate::{
     event::{EventLimits, SignedEvent},
     gift_wrap::GIFT_WRAP_KIND,
 };
+use std::net::IpAddr;
 use std::{error::Error, fmt};
+use url::Url;
 
 /// Product policy for using recipient-authored kind 10050 inbox metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -129,7 +131,7 @@ pub fn verify_dm_inbox(
         .into_iter()
         .map(|relay| relay.url)
         .collect::<Vec<_>>();
-    if policy.require_tls && relay_urls.iter().any(|relay| !relay.starts_with("wss://")) {
+    if policy.require_tls && relay_urls.iter().any(|relay| !secure_or_loopback(relay)) {
         return Err(DmInboxError::InsecureRelay);
     }
     Ok(VerifiedDmInbox {
@@ -139,6 +141,18 @@ pub fn verify_dm_inbox(
         relay_urls,
         source_event: event.clone(),
     })
+}
+
+fn secure_or_loopback(endpoint: &str) -> bool {
+    let Ok(parsed) = Url::parse(endpoint) else {
+        return false;
+    };
+    parsed.scheme() == "wss"
+        || (parsed.scheme() == "ws"
+            && parsed
+                .host_str()
+                .and_then(|host| host.parse::<IpAddr>().ok())
+                .is_some_and(|address| address.is_loopback()))
 }
 
 /// Bind one persistent NIP-59 gift wrap to its verified recipient inbox.

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -96,7 +97,13 @@ impl VerifiedDmRelayRecord {
                 return Err(DmRelayCacheError::EndpointTooLong);
             }
             let parsed = Url::parse(endpoint).map_err(|_| DmRelayCacheError::InvalidEndpoint)?;
-            if parsed.scheme() != "wss"
+            let secure_or_loopback = parsed.scheme() == "wss"
+                || (parsed.scheme() == "ws"
+                    && parsed
+                        .host_str()
+                        .and_then(|host| host.parse::<IpAddr>().ok())
+                        .is_some_and(|address| address.is_loopback()));
+            if !secure_or_loopback
                 || parsed.host_str().is_none()
                 || !parsed.username().is_empty()
                 || parsed.password().is_some()

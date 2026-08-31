@@ -308,6 +308,30 @@ impl DaemonCore {
         })
     }
 
+    pub fn remember_dm_relay_list(
+        &self,
+        event: &SignedEvent,
+        expected_recipient_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<omachat_nostr::dm_relay_cache::CacheMutation, CoreError> {
+        self.with_active_transition(|| {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            crate::dm_relay_cache_store::SealedDmRelayCache::new(&self.inner.store)
+                .verify_and_save(
+                    event,
+                    expected_recipient_public_key,
+                    now,
+                    &EventLimits::default(),
+                    &omachat_nostr::inbox::DmInboxPolicy::default(),
+                )
+                .map_err(CoreError::DmRelayCache)
+        })
+    }
+
     pub async fn start_dm_inbox(
         &self,
         inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
