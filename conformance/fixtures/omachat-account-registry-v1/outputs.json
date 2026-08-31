@@ -1,0 +1,88 @@
+{
+  "accounts": [
+    {
+      "account_id": "oa1_a645d3afb4000fa6b55597b1290226fda6de04a2d2563259c5420931431ebc10",
+      "account_root_public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "device_id": "od1_fd6da4638e8912af47e63afc839636aa42b2181b7828e0ec759fcddbc70982db",
+      "device_signing_public_key_hex": "66cd608b928b88e50e0efeaa33faf1c43cefe07294b0b87e9fe0aba6a3cf7633",
+      "id": "alice",
+      "noise_public_key_hex": "18a6f8c1a7fddf22bd410138f79f7298cd38d1d0a542d4266d556be8609d8862",
+      "nostr_public_key_hex": "d793631af7aa0e709439dd47fc001acd0b0727670b6670ea528ac83cb0127f4a",
+      "recovery_public_key_hex": "204040e364c10f2bec9c1fe500a1cd4c247c89d650a01ed7e82caba867877c21"
+    },
+    {
+      "account_id": "oa1_9d0090b79c4a04acd447f4c8c4434bef786486a39c23e6d6d1b859493aa55aec",
+      "account_root_public_key_hex": "884b8857f4eaa1613c61504db34d4beaf346517a0e31de3cddd4d9b4201d9d0b",
+      "device_id": "od1_22eb20b392a2dc21464efd1fc344029411f1242413264523a532042c54c114f4",
+      "device_signing_public_key_hex": "74f85cda34d1c27c4621484731e91579c3d9c6cfc0d94b281aa11e9162058aa9",
+      "id": "bob",
+      "noise_public_key_hex": "04bcd2e0d00f2cce5fe8f1c6c2fbec5c07fa56e3aa5c88a5689975d88b3fce05",
+      "nostr_public_key_hex": "23da3838ba0217e0f3ed6bc2df5dc81b200311692b562ae00f6334187bc2611f",
+      "recovery_public_key_hex": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0"
+    }
+  ],
+  "registry_public_key_hex": "c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7",
+  "schema_version": 1,
+  "transitions": [
+    {
+      "binding_signature_hex": "b0bdfc7784a63a410eee70042bfe64321df647eef8155533e31963b233539014837559adb61ac02efe0cdc421f599595de50bf18a9c93e47fbabc92a4cb0b007",
+      "claim_hash_hex": "c97b93be9d0caaf3203619ad0211bc5fb6bbd97bf9edca54276b9af3a55e6b50",
+      "claim_proof_hex": "21f4ca7ac1b81ecbc78b1a3184d0ad5a0df47a670f4cba4a1baeaacc23c6d226accfb88c355e6c09e91fb5efe81e44ebe9e4990f848497b4effbe6db25df790a",
+      "id": "alice-initial",
+      "receipt": {
+        "accepted_at": 1788000101,
+        "account_id": "oa1_a645d3afb4000fa6b55597b1290226fda6de04a2d2563259c5420931431ebc10",
+        "account_revision": 1,
+        "claim_hash_hex": "c97b93be9d0caaf3203619ad0211bc5fb6bbd97bf9edca54276b9af3a55e6b50",
+        "command_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "handle": "alice",
+        "previous_account_receipt_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "previous_receipt_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "receipt_hash_hex": "9656e2be45f7c1f225ca7dae6d0bd873cbb9a0e1e3f656a35ddd45723509523f",
+        "sequence": 1,
+        "signature_hex": "7877f2be0f695f50ea18f877f4106af0bca1f0187b88c7c4e8469067d835dae703729f117245cc50046af60d1351aa3985b29fd947d84b6470da0f5ba5086f06",
+        "version": 1
+      }
+    },
+    {
+      "binding_signature_hex": "b36df5a93df366e55dcd531055158c9a19fabcfe614ccf03730596ac462155ec9253dbde8ac962992cb1e772b1e90a1c06bd71d3d50f57e9bd84b9547c586408",
+      "claim_hash_hex": "dfa86673bea5fb8dfe73b3180ec42303999ea0989322d1e137334b54d8b0f58d",
+      "claim_proof_hex": "6cc0f5a45fe3b1018f32f21bd36b3840ae59e055ac6590669114830c305454eaefa818c63004d8e9d3e535205af6e7584540894106cdf338fb8c00d56c690007",
+      "id": "bob-initial",
+      "receipt": {
+        "accepted_at": 1788000102,
+        "account_id": "oa1_9d0090b79c4a04acd447f4c8c4434bef786486a39c23e6d6d1b859493aa55aec",
+        "account_revision": 1,
+        "claim_hash_hex": "dfa86673bea5fb8dfe73b3180ec42303999ea0989322d1e137334b54d8b0f58d",
+        "command_id_hex": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+        "handle": "bob",
+        "previous_account_receipt_hash_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "previous_receipt_hash_hex": "9656e2be45f7c1f225ca7dae6d0bd873cbb9a0e1e3f656a35ddd45723509523f",
+        "receipt_hash_hex": "524877ef34de5c07e1bb974c25427f3e937e882199abff408e53a9f007ec456c",
+        "sequence": 2,
+        "signature_hex": "f52e8d2301da1c80b15d2e4a78ed967616e17447cf15fe672c43c8720240ad2af30cc21cbc52c8b2963d817ace86490e9b1ac8810cd6a5678747b892c6b86503",
+        "version": 1
+      }
+    },
+    {
+      "binding_signature_hex": "d768cc7356d8cfa17ae2c90a1e1951d85ca1c964b5facd49a7a1a1999d9ec8b3b92707a5e418c64e36de5dec2d41f56adbc0f38432261128fb8473dbe707a604",
+      "claim_hash_hex": "70c8515c7f5b36b71a3e7e381baa1510ab3c74bb6267e2f67f2bb923111db27c",
+      "claim_proof_hex": "632e7dbf04165e5b41a60e967f95cf9324f54acbbbab7dd6b2832c0fa739b6c3487b7bd668e455ce6acc2e00184c9868ad68d7151945b9b028dce464638fdc0c",
+      "id": "alice-update-after-bob",
+      "receipt": {
+        "accepted_at": 1788000103,
+        "account_id": "oa1_a645d3afb4000fa6b55597b1290226fda6de04a2d2563259c5420931431ebc10",
+        "account_revision": 2,
+        "claim_hash_hex": "70c8515c7f5b36b71a3e7e381baa1510ab3c74bb6267e2f67f2bb923111db27c",
+        "command_id_hex": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+        "handle": "alice",
+        "previous_account_receipt_hash_hex": "9656e2be45f7c1f225ca7dae6d0bd873cbb9a0e1e3f656a35ddd45723509523f",
+        "previous_receipt_hash_hex": "524877ef34de5c07e1bb974c25427f3e937e882199abff408e53a9f007ec456c",
+        "receipt_hash_hex": "adedb44be672317280e53284412382cafaee2034eb257d62c53f8c0312a361bb",
+        "sequence": 3,
+        "signature_hex": "3bb2f6d00db965b449bc4c1704d188d9e8f691076656651830cea32f42d8a2d65903650d84b525e05bc9aa2b9824060c928f7ed05356df55fb56a606edffa70b",
+        "version": 1
+      }
+    }
+  ]
+}

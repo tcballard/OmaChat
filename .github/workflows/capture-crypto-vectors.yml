@@ -21,6 +21,42 @@ env:
   ANDROID_REVISION: 93e9594bad3e537b4ec6fd096c0fde7533f22e74
 
 jobs:
+  python-account-registry:
+    name: Python account/registry reference (two identical runs)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out OmaChat
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.12.13'
+
+      - name: Install pinned reference dependencies
+        shell: bash
+        run: |
+          python3 -m venv "$RUNNER_TEMP/account-registry-venv"
+          "$RUNNER_TEMP/account-registry-venv/bin/python" -m pip install \
+            -r conformance/harnesses/requirements-account-registry.txt
+
+      - name: Generate two deterministic replicas
+        shell: bash
+        run: |
+          python_bin="$RUNNER_TEMP/account-registry-venv/bin/python"
+          "$python_bin" conformance/harnesses/generate-account-registry-vector.py \
+            --output-dir "$RUNNER_TEMP/account-registry-a"
+          "$python_bin" conformance/harnesses/generate-account-registry-vector.py \
+            --output-dir "$RUNNER_TEMP/account-registry-b"
+
+      - name: Compare replicas and committed fixture byte for byte
+        shell: bash
+        run: |
+          diff -ru "$RUNNER_TEMP/account-registry-a" "$RUNNER_TEMP/account-registry-b"
+          diff -ru conformance/fixtures/omachat-account-registry-v1 \
+            "$RUNNER_TEMP/account-registry-a"
+
   swift:
     name: Swift capture (two identical runs)
     runs-on: macos-latest

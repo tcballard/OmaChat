@@ -50,6 +50,60 @@
       ]
     },
     {
+      "id": "omachat-account-registry-v1",
+      "protocol_area": "account-registry",
+      "description": "Independent synthetic account/device identity, local binding, handle claim, and interleaved global/per-account registry receipt transcripts.",
+      "producer": {
+        "kind": "synthetic",
+        "implementation": "independent Python account/registry reference generator",
+        "repository": null,
+        "release": null,
+        "commit": null,
+        "captured_at_utc": "2026-08-31T09:32:16Z",
+        "build": {
+          "toolchain": "CPython 3.12.13 with cryptography 46.0.0, cffi 1.17.1, pycparser 2.23, and cryptography OpenSSL backend 3.5.3",
+          "host": "Ubuntu 24.04.3 LTS, Linux 6.18.35, x86_64",
+          "target": "platform-independent deterministic Ed25519, X25519, secp256k1, and SHA-256 transcripts",
+          "configuration": "same-project standalone Python reference calculation using fixed synthetic test-only keys and times; does not import, call, or consume output from OmaChat Rust; two generated output trees were byte-compared",
+          "command": [
+            "python3",
+            "conformance/harnesses/generate-account-registry-vector.py",
+            "--output-dir",
+            "<output-directory>"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/omachat-account-registry-v1/inputs.json",
+          "bytes": 2322,
+          "sha256": "57c8c21392d93891f699a643a2efd310643ba205af20a586ecea0bb8b653f2bc"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/omachat-account-registry-v1/intermediates.json",
+          "bytes": 7271,
+          "sha256": "e57b6ed63fd8000765acb4e661b5cf3bcfb819b648b173da9213f3e3c834aff7"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/omachat-account-registry-v1/outputs.json",
+          "bytes": 5732,
+          "sha256": "92a437e38560ef1dbe12b813025389c9e63307d908d7651ed125561cbf0a3f83"
+        }
+      ]
+    },
+    {
       "id": "android-nostr-supported-shapes-v1",
       "protocol_area": "nostr-private-envelope",
       "description": "Pinned Android production-path acceptance of the released Swift tagless rumor and current recipient-p rumor shapes, plus Android's current inner-event creation shape.",
