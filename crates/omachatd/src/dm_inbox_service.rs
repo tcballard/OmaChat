@@ -9,20 +9,75 @@ use omachat_nostr::{
     dm_inbox_runtime::{
         AuthenticatedDmInboxRuntime, DmInboxRuntimeConfig, DmInboxRuntimeError, DmInboxRuntimeEvent,
     },
+    event::SignedEvent,
+    pool::PoolPublishResult,
     relay::{RelayConfig, RelayError, RelayRoute},
 };
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     task::JoinHandle,
 };
 
+const COMMAND_CAPACITY: usize = 64;
+
+enum DmInboxCommand {
+    Publish {
+        event: SignedEvent,
+        recipient_public_key: String,
+        now: u64,
+        response: oneshot::Sender<Result<PoolPublishResult, DmInboxRuntimeError>>,
+    },
+}
+
 #[derive(Clone)]
 pub struct DmInboxHandle {
+    commands: mpsc::Sender<DmInboxCommand>,
     shutdown: watch::Sender<bool>,
     terminated: watch::Receiver<bool>,
 }
 
 impl DmInboxHandle {
+    pub async fn publish(
+        &self,
+        event: SignedEvent,
+        recipient_public_key: String,
+        now: u64,
+    ) -> Result<PoolPublishResult, DmInboxServiceError> {
+        let mut shutdown = self.shutdown.subscribe();
+        if *shutdown.borrow() || *self.terminated.borrow() {
+            return Err(DmInboxServiceError::Stopped);
+        }
+        let (response, result) = oneshot::channel();
+        let command = DmInboxCommand::Publish {
+            event,
+            recipient_public_key,
+            now,
+            response,
+        };
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                let _ = changed;
+                return Err(DmInboxServiceError::Stopped);
+            }
+            sent = self.commands.send(command) => {
+                sent.map_err(|_| DmInboxServiceError::Stopped)?;
+            }
+        }
+        tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                let _ = changed;
+                Err(DmInboxServiceError::Stopped)
+            }
+            received = result => {
+                received
+                    .map_err(|_| DmInboxServiceError::Stopped)?
+                    .map_err(DmInboxServiceError::Runtime)
+            }
+        }
+    }
+
     /// Stop accepting or decrypting events and wait until relay actors have
     /// joined and the runtime-owned key copy has been dropped.
     pub async fn quiesce(&self) {
@@ -92,14 +147,17 @@ impl DmInboxService {
 
         let (shutdown, shutdown_receiver) = watch::channel(false);
         let (terminated_sender, terminated) = watch::channel(false);
+        let (commands, command_receiver) = mpsc::channel(COMMAND_CAPACITY);
         let task = tokio::spawn(run_service(
             runtime,
             inbound,
+            command_receiver,
             shutdown_receiver,
             terminated_sender,
         ));
         Ok(Self {
             handle: DmInboxHandle {
+                commands,
                 shutdown,
                 terminated,
             },
@@ -131,10 +189,11 @@ impl Drop for DmInboxService {
 async fn run_service(
     mut runtime: AuthenticatedDmInboxRuntime,
     inbound: mpsc::Sender<DmInboxRuntimeEvent>,
+    commands: mpsc::Receiver<DmInboxCommand>,
     mut shutdown: watch::Receiver<bool>,
     terminated: watch::Sender<bool>,
 ) -> Result<(), DmInboxServiceError> {
-    let run_result = run_until_shutdown(&mut runtime, inbound, &mut shutdown).await;
+    let run_result = run_until_shutdown(&mut runtime, inbound, commands, &mut shutdown).await;
     let relay_shutdown = runtime.shutdown().await;
     terminated.send_replace(true);
 
@@ -152,6 +211,7 @@ async fn run_service(
 async fn run_until_shutdown(
     runtime: &mut AuthenticatedDmInboxRuntime,
     inbound: mpsc::Sender<DmInboxRuntimeEvent>,
+    mut commands: mpsc::Receiver<DmInboxCommand>,
     shutdown: &mut watch::Receiver<bool>,
 ) -> Result<(), DmInboxServiceError> {
     'service: loop {
@@ -167,8 +227,36 @@ async fn run_until_shutdown(
                 continue;
             }
             event = runtime.next(unix_time()?) => {
-                event.map_err(DmInboxServiceError::Runtime)?
+                Some(event.map_err(DmInboxServiceError::Runtime)?)
             }
+            command = commands.recv() => {
+                let Some(command) = command else {
+                    return Ok(());
+                };
+                match command {
+                    DmInboxCommand::Publish {
+                        event,
+                        recipient_public_key,
+                        now,
+                        response,
+                    } => {
+                        let result = tokio::select! {
+                            biased;
+                            changed = shutdown.changed() => {
+                                let _ = changed;
+                                return Ok(());
+                            }
+                            result = runtime.publish(event, &recipient_public_key, now) => result,
+                        };
+                        let _ = response.send(result);
+                    }
+                }
+                None
+            }
+        };
+
+        let Some(event) = event else {
+            continue;
         };
 
         tokio::select! {
@@ -203,6 +291,7 @@ pub enum DmInboxServiceError {
         error: RelayError,
     },
     Clock,
+    Stopped,
     Task,
 }
 
@@ -217,6 +306,7 @@ impl fmt::Display for DmInboxServiceError {
                 )
             }
             Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
+            Self::Stopped => formatter.write_str("authenticated inbox service stopped"),
             Self::Task => formatter.write_str("authenticated inbox task failed"),
         }
     }
@@ -227,7 +317,7 @@ impl Error for DmInboxServiceError {
         match self {
             Self::Runtime(error) => Some(error),
             Self::RelayShutdown { error, .. } => Some(error),
-            Self::Clock | Self::Task => None,
+            Self::Clock | Self::Stopped | Self::Task => None,
         }
     }
 }

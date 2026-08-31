@@ -7,7 +7,9 @@ use zeroize::Zeroizing;
 use crate::{
     auth::RelayAuthSigner,
     dm_inbox::{DmInbox, DmInboxConfig, DmInboxError, DmInboxReceive},
-    pool::{RelayPool, RelayPoolConfig, RelayPoolError},
+    event::SignedEvent,
+    gift_wrap::GIFT_WRAP_KIND,
+    pool::{PoolPublishResult, RelayPool, RelayPoolConfig, RelayPoolError},
     relay::{RelayConfig, RelayError, RelayNotification},
 };
 
@@ -75,6 +77,12 @@ pub enum DmInboxRuntimeError {
     UnauthenticatedEvent {
         relay_index: usize,
     },
+    UnauthenticatedPublish {
+        authenticated: usize,
+        required: usize,
+    },
+    InvalidOutboundGiftWrap,
+    OutboundRecipientMismatch,
     Inbox(DmInboxError),
     Stopped,
 }
@@ -140,6 +148,18 @@ impl fmt::Display for DmInboxRuntimeError {
                 formatter,
                 "relay {relay_index} delivered an inbox event before authentication",
             ),
+            Self::UnauthenticatedPublish {
+                authenticated,
+                required,
+            } => write!(
+                formatter,
+                "cannot publish with only {authenticated} of {required} authenticated relays",
+            ),
+            Self::InvalidOutboundGiftWrap => {
+                formatter.write_str("outbound event is not a valid persistent NIP-17 gift wrap")
+            }
+            Self::OutboundRecipientMismatch => formatter
+                .write_str("outbound gift-wrap recipient does not match the requested recipient"),
             Self::Inbox(error) => write!(formatter, "inbox event rejected: {error}"),
             Self::Stopped => formatter.write_str("relay pool stopped"),
         }
@@ -271,6 +291,40 @@ impl AuthenticatedDmInboxRuntime {
         self.inbox
             .unblock_author(author_xonly_public_key)
             .map_err(Into::into)
+    }
+
+    pub async fn publish(
+        &self,
+        event: SignedEvent,
+        recipient_xonly_public_key: &str,
+        now: u64,
+    ) -> Result<PoolPublishResult, DmInboxRuntimeError> {
+        if self.authenticated_relays.len() != self.relay_count {
+            return Err(DmInboxRuntimeError::UnauthenticatedPublish {
+                authenticated: self.authenticated_relays.len(),
+                required: self.relay_count,
+            });
+        }
+        self.inbox
+            .subscription_filter(recipient_xonly_public_key, now)?;
+        if event.kind != GIFT_WRAP_KIND
+            || event
+                .verify(now, &self.inbox.config().event_limits)
+                .is_err()
+        {
+            return Err(DmInboxRuntimeError::InvalidOutboundGiftWrap);
+        }
+        let mut recipient_tags = event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().is_some_and(|name| name == "p"));
+        let recipient_matches = recipient_tags
+            .next()
+            .is_some_and(|tag| tag.len() == 2 && tag[1] == recipient_xonly_public_key);
+        if !recipient_matches || recipient_tags.next().is_some() {
+            return Err(DmInboxRuntimeError::OutboundRecipientMismatch);
+        }
+        self.pool.publish(event).await.map_err(Into::into)
     }
 
     pub async fn next(&mut self, now: u64) -> Result<DmInboxRuntimeEvent, DmInboxRuntimeError> {
