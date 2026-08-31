@@ -37,6 +37,9 @@ pub enum Command {
     DiscoverDmRelays {
         public_key: String,
     },
+    DiscoverProfile {
+        public_key: String,
+    },
     Who {
         geohash: String,
     },
@@ -115,6 +118,11 @@ enum StrictRequestWire {
         params: SendParams,
     },
     DiscoverDmRelays {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
+    },
+    DiscoverProfile {
         version: u16,
         id: String,
         params: PublicKeyParams,
@@ -220,6 +228,11 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: PublicKeyParams { public_key },
             } => (version, id, Command::DiscoverDmRelays { public_key }),
+            StrictRequestWire::DiscoverProfile {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::DiscoverProfile { public_key }),
             StrictRequestWire::Who {
                 version,
                 id,

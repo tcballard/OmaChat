@@ -378,6 +378,72 @@ impl DaemonCore {
         self.remember_dm_relay_list(&discovered.event, recipient_public_key, now)
     }
 
+    pub async fn discover_profile_metadata(
+        &self,
+        participant_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<
+        (
+            omachat_nostr::profile_cache::ProfileCacheMutation,
+            omachat_nostr::profile_verification::VerifiedNostrProfile,
+        ),
+        CoreError,
+    > {
+        let _operation = self.inner.operations.read().await;
+        let (relay_configs, auth_signer) = self.with_active_transition(|| {
+            let relay_configs = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .dm_relays
+                .iter()
+                .cloned()
+                .map(|url| {
+                    omachat_nostr::relay::RelayConfig::new(
+                        url,
+                        omachat_nostr::relay::RelayRoute::Direct,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let auth_signer = RelayAuthSigner::from_secret_key(*nostr.private_key())
+                .map_err(|_| CoreError::Nostr)?;
+            Ok((relay_configs, auth_signer))
+        })?;
+        let discovered = omachat_nostr::profile_discovery::discover_profile_metadata(
+            relay_configs,
+            auth_signer,
+            participant_public_key,
+            now,
+            &EventLimits::default(),
+            &omachat_nostr::profile_discovery::ProfileDiscoveryConfig::default(),
+        )
+        .await
+        .map_err(CoreError::ProfileDiscovery)?;
+        let mutation = self.with_active_transition(|| {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            crate::profile_cache_store::SealedProfileCache::new(&self.inner.store)
+                .verify_and_save(
+                    &discovered.event,
+                    participant_public_key,
+                    now,
+                    &EventLimits::default(),
+                )
+                .map_err(CoreError::ProfileCache)
+        })?;
+        Ok((mutation, discovered.profile))
+    }
+
     pub async fn start_dm_inbox(
         &self,
         inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
@@ -738,6 +804,33 @@ impl DaemonCore {
                 Ok(serde_json::json!({
                     "public_key": hex::encode(recipient),
                     "status": status,
+                }))
+            }
+            Command::DiscoverProfile { public_key } => {
+                let participant = decode_xonly(&public_key)?;
+                let (mutation, profile) = self
+                    .discover_profile_metadata(&participant, unix_time()?)
+                    .await?;
+                let status = match mutation {
+                    omachat_nostr::profile_cache::ProfileCacheMutation::Stored => "stored",
+                    omachat_nostr::profile_cache::ProfileCacheMutation::Unchanged => "unchanged",
+                };
+                let name_classification = profile.name_classification().map(|classification| {
+                    match classification {
+                        omachat_nostr::profile_verification::ProfileNameClassification::HandleSyntaxCandidate => "handle-syntax-candidate",
+                        omachat_nostr::profile_verification::ProfileNameClassification::PresentationOnly => "presentation-only",
+                    }
+                });
+                Ok(serde_json::json!({
+                    "public_key": hex::encode(profile.public_key()),
+                    "source_event_id": profile.source_event_id(),
+                    "status": status,
+                    "nostr_name": profile.nostr_name(),
+                    "name_classification": name_classification,
+                    "display_name": profile.display_name(),
+                    "about": profile.about(),
+                    "picture": profile.picture(),
+                    "global_handle_verified": false,
                 }))
             }
             Command::Who { geohash } => self.who(&geohash),
