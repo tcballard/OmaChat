@@ -3,4 +3,5 @@
 pub mod envelope;
 pub mod event;
 pub mod frame;
+pub mod pool;
 pub mod relay;
