@@ -1446,7 +1446,19 @@ dependencies = [
 name = "omachatd"
 version = "0.0.1"
 dependencies = [
+ "futures-util",
+ "getrandom 0.4.3",
+ "hex",
+ "omachat-crypto",
+ "omachat-nostr",
  "omachat-proto",
+ "omachat-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]

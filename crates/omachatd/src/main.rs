@@ -1,12 +1,160 @@
-use std::{env, ffi::OsStr, process::ExitCode};
+use omachatd::{DaemonConfig, DaemonCore, EventHub, IpcServer, NostrService};
+use std::{env, ffi::OsStr, fs, os::unix::fs::PermissionsExt, path::PathBuf, process::ExitCode};
+use tokio::sync::watch;
 
-fn main() -> ExitCode {
-    let mut arguments = env::args_os().skip(1);
-    if arguments.next().as_deref() == Some(OsStr::new("--version")) && arguments.next().is_none() {
+#[tokio::main]
+async fn main() -> ExitCode {
+    let arguments = env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments.as_slice() == [OsStr::new("--version")] {
         println!("{}", omachat_proto::version_line("omachatd"));
         return ExitCode::SUCCESS;
     }
+    let options = match Options::parse(&arguments) {
+        Ok(options) => options,
+        Err(error) => {
+            eprintln!(
+                "{error}\nusage: omachatd [--config PATH] [--state PATH] [--socket PATH] [--file-key]"
+            );
+            return ExitCode::from(2);
+        }
+    };
+    match run(options).await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("omachatd: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
 
-    eprintln!("omachatd runtime is not implemented yet; use --version");
-    ExitCode::from(2)
+async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
+    let mut config = if let Some(path) = &options.config {
+        DaemonConfig::load(path)?
+    } else {
+        DaemonConfig::default()
+    };
+    if options.file_key {
+        config.storage_provider = omachatd::StorageProviderConfig::File;
+    }
+    if let Some(parent) = options.socket.parent() {
+        fs::create_dir_all(parent)?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+    }
+    let events = EventHub::default();
+    let core = DaemonCore::open(&options.state, config, events.clone()).await?;
+    let (inbound_sender, mut inbound_receiver) = tokio::sync::mpsc::channel(256);
+    let relays = core.relay_urls();
+    let nostr = if relays.is_empty() {
+        None
+    } else {
+        let service = NostrService::spawn(&relays, inbound_sender)?;
+        let handle = service.handle();
+        core.attach_nostr(handle.clone());
+        let filters = core.nostr_filters(unix_time())?;
+        tokio::spawn(async move {
+            if let Err(error) = handle.subscribe("omachat-main-v1".into(), filters).await {
+                eprintln!("omachatd: initial Nostr subscription failed: {error}");
+            }
+        });
+        Some(service)
+    };
+    let inbound_core = core.clone();
+    tokio::spawn(async move {
+        while let Some(notification) = inbound_receiver.recv().await {
+            inbound_core.receive_nostr_notification(notification);
+        }
+    });
+    let server = IpcServer::bind(&options.socket, core.clone(), events)?;
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    if let Some(config_path) = options.config.clone() {
+        let reload_core = core.clone();
+        tokio::spawn(async move {
+            let Ok(mut signal) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+            else {
+                return;
+            };
+            while signal.recv().await.is_some() {
+                if let Err(error) = reload_core.reload(&config_path) {
+                    eprintln!("omachatd: rejected SIGHUP reload: {error}");
+                }
+            }
+        });
+    }
+    let signal_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            let _ = signal_shutdown.send(true);
+        }
+    });
+    let panic_shutdown = shutdown_tx.clone();
+    tokio::spawn(async move {
+        while !core.is_panicked() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let _ = panic_shutdown.send(true);
+    });
+    server.run(shutdown_rx).await?;
+    if let Some(service) = nostr {
+        let _ = service.shutdown().await;
+    }
+    Ok(())
+}
+
+fn unix_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
+}
+
+struct Options {
+    config: Option<PathBuf>,
+    state: PathBuf,
+    socket: PathBuf,
+    file_key: bool,
+}
+
+impl Options {
+    fn parse(arguments: &[std::ffi::OsString]) -> Result<Self, String> {
+        let state = env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state")))
+            .ok_or("XDG_STATE_HOME and HOME are unset")?
+            .join("omachat");
+        let socket = env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .ok_or("XDG_RUNTIME_DIR is unset")?
+            .join("omachat/omachat.sock");
+        let mut options = Self {
+            config: None,
+            state,
+            socket,
+            file_key: false,
+        };
+        let mut index = 0;
+        while index < arguments.len() {
+            match arguments[index].to_str() {
+                Some("--config" | "--state" | "--socket") => {
+                    let flag = arguments[index].to_string_lossy().into_owned();
+                    let value = arguments
+                        .get(index + 1)
+                        .ok_or_else(|| format!("{flag} requires a path"))?;
+                    match flag.as_str() {
+                        "--config" => options.config = Some(PathBuf::from(value)),
+                        "--state" => options.state = PathBuf::from(value),
+                        "--socket" => options.socket = PathBuf::from(value),
+                        _ => unreachable!(),
+                    }
+                    index += 2;
+                }
+                Some("--file-key") => {
+                    options.file_key = true;
+                    index += 1;
+                }
+                _ => return Err("unknown or non-UTF-8 argument".into()),
+            }
+        }
+        Ok(options)
+    }
 }

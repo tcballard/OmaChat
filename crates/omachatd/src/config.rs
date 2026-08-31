@@ -1,0 +1,61 @@
+use crate::core_error::CoreError;
+use omachat_proto::geohash::Geohash;
+use omachat_store::RequestedProvider;
+use serde::Deserialize;
+use std::{fs, path::Path};
+
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StorageProviderConfig {
+    #[default]
+    Auto,
+    SecretService,
+    File,
+}
+impl From<StorageProviderConfig> for RequestedProvider {
+    fn from(value: StorageProviderConfig) -> Self {
+        match value {
+            StorageProviderConfig::Auto => Self::Auto,
+            StorageProviderConfig::SecretService => Self::SecretService,
+            StorageProviderConfig::File => Self::File,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DaemonConfig {
+    pub storage_provider: StorageProviderConfig,
+    pub relays: Vec<String>,
+    pub joined_geohashes: Vec<String>,
+    pub nickname: Option<String>,
+}
+
+impl DaemonConfig {
+    pub fn load(path: impl AsRef<Path>) -> Result<Self, CoreError> {
+        let bytes = fs::read(path).map_err(CoreError::Io)?;
+        let config: Self = serde_json::from_slice(&bytes).map_err(|_| CoreError::InvalidConfig)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        for relay in &self.relays {
+            let url = url::Url::parse(relay).map_err(|_| CoreError::InvalidConfig)?;
+            if !matches!(url.scheme(), "ws" | "wss") {
+                return Err(CoreError::InvalidConfig);
+            }
+        }
+        for geohash in &self.joined_geohashes {
+            Geohash::parse(geohash).map_err(|_| CoreError::InvalidConfig)?;
+        }
+        if self
+            .nickname
+            .as_ref()
+            .is_some_and(|nickname| nickname.trim().is_empty() || nickname.len() > 64)
+        {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(())
+    }
+}
