@@ -44,6 +44,10 @@ must complete NIP-42 authentication for the persisted device Nostr principal
 before OmaChat sends its recipient-only kind-1059 subscription. Relay changes
 require a daemon restart. This setting is a reachability choice, not protocol
 authority, and no production OmaChat relay is implied by the default config.
+When this inbox is active, direct `Send` commands create standard NIP-17
+kind-14 messages and publish their persistent kind-1059 gift wraps through the
+same authenticated relay set. The sealed outbox records the delivery profile so
+restart retries never infer protocol semantics from encrypted payloads.
 
 ## Storage provider
 

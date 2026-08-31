@@ -13,6 +13,7 @@ use omachat_nostr::{
     envelope::{CreateEnvelope, RumorShape, create as create_private_envelope},
     event::{EventLimits, SignedEvent, xonly_public_key},
     geochat::{ChatInput, ParsedGeoEvent, create_chat, parse_geo_event, subscription_filter},
+    gift_wrap::{ChatRecipient, GiftWrapPersistence, create_chat_rumor, create_gift_wrap},
     mailbox::{MailboxReceive, PrivateMailbox},
     pool::PoolNotification,
     relay::RelayNotification,
@@ -20,8 +21,8 @@ use omachat_nostr::{
 use omachat_proto::ipc::{Command, ErrorBody, ErrorCode, Event, Request, ResponseOutcome, VERSION};
 use omachat_proto::{COMPATIBILITY_PROFILE, geohash::Geohash};
 use omachat_store::{
-    AccountVault, BlockList, IdentityVault, LocalAccount, NostrOutbox, ProviderKind, PublicArchive,
-    PublicArchiveEntry, SealedStore,
+    AccountVault, BlockList, IdentityVault, LocalAccount, NostrDeliveryProfile, NostrOutbox,
+    ProviderKind, PublicArchive, PublicArchiveEntry, SealedStore,
 };
 use serde::Serialize;
 use serde_json::to_value;
@@ -888,6 +889,17 @@ impl DaemonCore {
             .unwrap_or(conversation)
             .to_ascii_lowercase();
         let recipient = decode_xonly(&peer)?;
+        if self
+            .inner
+            .dm_inbox
+            .lock()
+            .expect("DM inbox handle mutex poisoned")
+            .is_some()
+        {
+            return self
+                .send_standard_dm(conversation, text, &peer, &recipient, now)
+                .await;
+        }
         let one_time_secret = random_valid_secp()?;
         let seal_nonce = random_bytes()?;
         let gift_wrap_nonce = random_bytes()?;
@@ -986,16 +998,105 @@ impl DaemonCore {
         Ok(serde_json::json!({"id": event.id, "delivery": delivery}))
     }
 
-    async fn drain_outbox(&self) {
-        let Some(handle) = self
+    async fn send_standard_dm(
+        &self,
+        conversation: &str,
+        text: &str,
+        peer: &str,
+        recipient: &[u8; 32],
+        now: u64,
+    ) -> Result<serde_json::Value, CoreError> {
+        let relay_hint = self
+            .inner
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .dm_relays
+            .first()
+            .cloned();
+        let event = {
+            let identity = self.identity()?;
+            let sender = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let rumor = create_chat_rumor(
+                sender.private_key(),
+                now,
+                &[ChatRecipient {
+                    public_key: *recipient,
+                    relay_hint,
+                }],
+                text.to_owned(),
+                None,
+                None,
+                &EventLimits::default(),
+            )
+            .map_err(|_| CoreError::Nostr)?;
+            create_gift_wrap(
+                &rumor,
+                sender.private_key(),
+                recipient,
+                now,
+                GiftWrapPersistence::Persistent,
+                &EventLimits::default(),
+            )
+            .map_err(|_| CoreError::Nostr)?
+        };
+        let gift_wrap = serde_json::to_string(&event).map_err(|_| CoreError::Encoding)?;
+        {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            NostrOutbox::load(&self.inner.store, now)
+                .map_err(CoreError::Outbox)?
+                .enqueue_with_profile(&event.id, peer, gift_wrap, NostrDeliveryProfile::Nip17, now)
+                .map_err(CoreError::Outbox)?;
+        }
+
+        self.drain_outbox().await;
+        let delivery = {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            let outbox = NostrOutbox::load(&self.inner.store, now).map_err(CoreError::Outbox)?;
+            if outbox
+                .messages()
+                .iter()
+                .any(|message| message.id == event.id)
+            {
+                "queued"
+            } else {
+                "stored"
+            }
+        };
+        self.publish_message_event(&event.id, conversation, text, delivery);
+        Ok(serde_json::json!({"id": event.id, "delivery": delivery}))
+    }
+
+    pub async fn drain_outbox(&self) {
+        let compatibility_handle = self
             .inner
             .nostr
             .lock()
             .expect("Nostr handle mutex poisoned")
-            .clone()
-        else {
+            .clone();
+        let nip17_handle = self
+            .inner
+            .dm_inbox
+            .lock()
+            .expect("DM inbox handle mutex poisoned")
+            .clone();
+        if compatibility_handle.is_none() && nip17_handle.is_none() {
             return;
-        };
+        }
         let _drain = self.inner.outbox_drain.lock().await;
         loop {
             let now = unix_time().unwrap_or_default();
@@ -1011,11 +1112,16 @@ impl DaemonCore {
                 let Ok(outbox) = NostrOutbox::load(&self.inner.store, now) else {
                     return;
                 };
-                outbox
-                    .next_pending()
-                    .map(|message| (message.id.clone(), message.gift_wrap.clone()))
+                outbox.next_pending().map(|message| {
+                    (
+                        message.id.clone(),
+                        message.peer.clone(),
+                        message.gift_wrap.clone(),
+                        message.nostr_profile,
+                    )
+                })
             };
-            let Some((id, gift_wrap)) = pending else {
+            let Some((id, peer, gift_wrap, nostr_profile)) = pending else {
                 return;
             };
             if self.is_panicked() {
@@ -1033,10 +1139,27 @@ impl DaemonCore {
                         return;
                     }
                 };
-            let outcome = if handle.publish(event).await.is_ok() {
-                omachat_store::AttemptOutcome::Acknowledged
-            } else {
-                omachat_store::AttemptOutcome::Unavailable
+            let outcome = match nostr_profile {
+                NostrDeliveryProfile::Compatibility => {
+                    let Some(handle) = compatibility_handle.as_ref() else {
+                        return;
+                    };
+                    if handle.publish(event).await.is_ok() {
+                        omachat_store::AttemptOutcome::Acknowledged
+                    } else {
+                        omachat_store::AttemptOutcome::Unavailable
+                    }
+                }
+                NostrDeliveryProfile::Nip17 => {
+                    let Some(handle) = nip17_handle.as_ref() else {
+                        return;
+                    };
+                    if handle.publish(event, peer, now).await.is_ok() {
+                        omachat_store::AttemptOutcome::Acknowledged
+                    } else {
+                        omachat_store::AttemptOutcome::Unavailable
+                    }
+                }
             };
             let state = self.record_outbox_attempt(&id, outcome, now);
             if outcome != omachat_store::AttemptOutcome::Acknowledged {

@@ -72,6 +72,10 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             dm_inbound_core.receive_dm_inbox_event(event);
         }
     });
+    if dm_inbox.is_some() {
+        let startup_drain = core.clone();
+        tokio::spawn(async move { startup_drain.drain_outbox().await });
+    }
     let server = IpcServer::bind(&options.socket, core.clone(), events)?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
