@@ -4,7 +4,7 @@ use crate::{
     ipc_server::{EventHub, RequestHandler},
     nostr_service::NostrHandle,
 };
-use omachat_crypto::IdentitySecrets;
+use omachat_crypto::{DisplayName, GlobalHandle, IdentitySecrets};
 use omachat_nostr::{
     envelope::{CreateEnvelope, RumorShape, create as create_private_envelope},
     event::{EventLimits, SignedEvent, xonly_public_key},
@@ -16,8 +16,8 @@ use omachat_nostr::{
 use omachat_proto::ipc::{Command, ErrorBody, ErrorCode, Event, Request, ResponseOutcome, VERSION};
 use omachat_proto::{COMPATIBILITY_PROFILE, geohash::Geohash};
 use omachat_store::{
-    BlockList, IdentityVault, NostrOutbox, ProviderKind, PublicArchive, PublicArchiveEntry,
-    SealedStore,
+    AccountVault, BlockList, IdentityVault, LocalAccount, NostrOutbox, ProviderKind, PublicArchive,
+    PublicArchiveEntry, SealedStore,
 };
 use serde::Serialize;
 use serde_json::to_value;
@@ -41,6 +41,7 @@ struct RuntimeState {
 struct CoreInner {
     store: SealedStore,
     identity: Mutex<Option<IdentitySecrets>>,
+    account: Mutex<Option<LocalAccount>>,
     storage_transaction: Mutex<()>,
     subscription_transaction: tokio::sync::Mutex<()>,
     outbox_drain: tokio::sync::Mutex<()>,
@@ -69,6 +70,20 @@ struct DaemonStatus<'a> {
     relay_count: usize,
     outbox_pending: usize,
     outbox_failed: usize,
+    account: AccountStatus,
+}
+
+#[derive(Serialize)]
+struct AccountStatus {
+    account_id: String,
+    device_id: String,
+    handle: Option<String>,
+    display_name: Option<String>,
+    binding_revision: u64,
+    binding_issued_at: u64,
+    /// `local-only` is an explicit non-claim: no central registry receipt has
+    /// established global uniqueness yet.
+    registry_state: &'static str,
 }
 
 impl DaemonCore {
@@ -82,6 +97,15 @@ impl DaemonCore {
             .await
             .map_err(CoreError::Store)?;
         let identity = IdentityVault::load_or_create(&store).map_err(CoreError::IdentityStore)?;
+        let (configured_handle, configured_display_name) = configured_account_profile(&config)?;
+        let account = AccountVault::load_or_create(
+            &store,
+            &identity,
+            configured_handle,
+            configured_display_name,
+            unix_time()?,
+        )
+        .map_err(CoreError::AccountVault)?;
         let blocked = BlockList::load(&store)
             .map_err(|_| CoreError::Encoding)?
             .keys()
@@ -107,6 +131,7 @@ impl DaemonCore {
             inner: Arc::new(CoreInner {
                 store,
                 identity: Mutex::new(Some(identity)),
+                account: Mutex::new(Some(account)),
                 storage_transaction: Mutex::new(()),
                 subscription_transaction: tokio::sync::Mutex::new(()),
                 outbox_drain: tokio::sync::Mutex::new(()),
@@ -183,6 +208,9 @@ impl DaemonCore {
     }
 
     pub fn receive_nostr_notification(&self, notification: PoolNotification) {
+        if self.is_panicked() {
+            return;
+        }
         let event = match notification.notification {
             RelayNotification::Connected => {
                 let core = self.clone();
@@ -218,6 +246,9 @@ impl DaemonCore {
                     .storage_transaction
                     .lock()
                     .expect("storage transaction mutex poisoned");
+                if self.is_panicked() {
+                    return;
+                }
                 if let Ok(mut archive) = PublicArchive::load(&self.inner.store, now) {
                     let _ = archive.insert(
                         PublicArchiveEntry {
@@ -280,11 +311,31 @@ impl DaemonCore {
             .map(|value| Geohash::parse(value).map(|geohash| geohash.to_string()))
             .collect::<Result<BTreeSet<_>, _>>()
             .map_err(|_| CoreError::InvalidConfig)?;
+        let (configured_handle, configured_display_name) =
+            configured_account_profile(&replacement)?;
+        let replacement_account = {
+            let identity = self.identity()?;
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            AccountVault::load_or_create(
+                &self.inner.store,
+                identity.as_ref().expect("checked identity"),
+                configured_handle,
+                configured_display_name,
+                unix_time()?,
+            )
+            .map_err(CoreError::AccountVault)?
+        };
         self.inner
             .state
             .lock()
             .expect("runtime state mutex poisoned")
             .joined = joined;
+        *self.inner.account.lock().expect("account mutex poisoned") = Some(replacement_account);
         *self.inner.config.lock().expect("config mutex poisoned") = replacement;
         let handle = self
             .inner
@@ -342,6 +393,7 @@ impl DaemonCore {
         let nostr = identity
             .device_nostr_identity()
             .map_err(CoreError::Identity)?;
+        let account = self.account_status()?;
         let state = self
             .inner
             .state
@@ -354,6 +406,7 @@ impl DaemonCore {
             .storage_transaction
             .lock()
             .expect("storage transaction mutex poisoned");
+        self.ensure_active()?;
         let outbox = NostrOutbox::load(&self.inner.store, now).map_err(CoreError::Outbox)?;
         let pending = outbox
             .messages()
@@ -371,6 +424,7 @@ impl DaemonCore {
             relay_count: config.relays.len(),
             outbox_pending: pending,
             outbox_failed: failed,
+            account,
         })
         .map_err(|_| CoreError::Encoding)
     }
@@ -489,6 +543,7 @@ impl DaemonCore {
             .storage_transaction
             .lock()
             .expect("storage transaction mutex poisoned");
+        self.ensure_active()?;
         BlockList::load(&self.inner.store)
             .map_err(|_| CoreError::Encoding)?
             .block(normalized.clone())
@@ -603,6 +658,7 @@ impl DaemonCore {
             .storage_transaction
             .lock()
             .expect("storage transaction mutex poisoned");
+        self.ensure_active()?;
         let mut outbox = NostrOutbox::load(&self.inner.store, now).map_err(CoreError::Outbox)?;
         outbox
             .enqueue(&event.id, &peer, gift_wrap, now)
@@ -623,6 +679,7 @@ impl DaemonCore {
                         .storage_transaction
                         .lock()
                         .expect("storage transaction mutex poisoned");
+                    self.ensure_active()?;
                     let mut outbox =
                         NostrOutbox::load(&self.inner.store, now).map_err(CoreError::Outbox)?;
                     outbox
@@ -641,6 +698,9 @@ impl DaemonCore {
                         .storage_transaction
                         .lock()
                         .expect("storage transaction mutex poisoned");
+                    if self.is_panicked() {
+                        return Err(CoreError::Panicked);
+                    }
                     if let Ok(mut outbox) = NostrOutbox::load(&self.inner.store, now) {
                         let _ = outbox.record_transport_attempt(
                             &event.id,
@@ -678,6 +738,9 @@ impl DaemonCore {
                     .storage_transaction
                     .lock()
                     .expect("storage transaction mutex poisoned");
+                if self.is_panicked() {
+                    return;
+                }
                 let Ok(outbox) = NostrOutbox::load(&self.inner.store, now) else {
                     return;
                 };
@@ -688,6 +751,9 @@ impl DaemonCore {
             let Some((id, gift_wrap)) = pending else {
                 return;
             };
+            if self.is_panicked() {
+                return;
+            }
             let event =
                 match SignedEvent::from_json(gift_wrap.as_bytes(), now, &EventLimits::default()) {
                     Ok(event) => event,
@@ -726,6 +792,9 @@ impl DaemonCore {
             .storage_transaction
             .lock()
             .expect("storage transaction mutex poisoned");
+        if self.is_panicked() {
+            return None;
+        }
         let mut outbox = NostrOutbox::load(&self.inner.store, now).ok()?;
         outbox
             .record_transport_attempt(id, omachat_store::OutboxTransport::Nostr, outcome, now)
@@ -740,6 +809,40 @@ impl DaemonCore {
         Ok(guard)
     }
 
+    fn ensure_active(&self) -> Result<(), CoreError> {
+        if self.is_panicked() {
+            Err(CoreError::Panicked)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn account_status(&self) -> Result<AccountStatus, CoreError> {
+        let account = self.inner.account.lock().expect("account mutex poisoned");
+        let account = account.as_ref().ok_or(CoreError::Panicked)?;
+        let public = account.public_identity();
+        let binding = account.binding();
+        Ok(AccountStatus {
+            account_id: public.account_id.to_string(),
+            device_id: binding.device_id.to_string(),
+            handle: binding
+                .handle
+                .as_ref()
+                .map(|handle| handle.as_str().to_owned()),
+            display_name: binding
+                .display_name
+                .as_ref()
+                .map(|name| name.as_str().to_owned()),
+            binding_revision: binding.revision,
+            binding_issued_at: binding.issued_at,
+            registry_state: if binding.handle.is_some() {
+                "local-only"
+            } else {
+                "unconfigured"
+            },
+        })
+    }
+
     async fn panic_erase(&self, confirmation: &str) -> Result<serde_json::Value, CoreError> {
         if confirmation != "ERASE" {
             return Err(CoreError::ConfirmationRequired);
@@ -752,15 +855,27 @@ impl DaemonCore {
         {
             return Err(CoreError::Panicked);
         }
-        if let Err(error) = self.inner.store.panic_erase().await {
-            self.inner.panicked.store(false, Ordering::Release);
-            return Err(CoreError::Store(error));
+        // Follow the same identity -> account -> storage lock order used by
+        // status/reload, wait for in-flight store work, then destroy all
+        // in-process authorities before beginning irreversible external
+        // cleanup. Once panic starts, any cleanup failure is terminal and the
+        // daemon remains unavailable.
+        {
+            let mut identity = self.inner.identity.lock().expect("identity mutex poisoned");
+            let mut account = self.inner.account.lock().expect("account mutex poisoned");
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            identity.take();
+            account.take();
         }
         self.inner
-            .identity
-            .lock()
-            .expect("identity mutex poisoned")
-            .take();
+            .store
+            .panic_erase()
+            .await
+            .map_err(CoreError::Store)?;
         self.inner
             .state
             .lock()
@@ -810,6 +925,24 @@ fn unix_time() -> Result<u64, CoreError> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .map_err(|_| CoreError::Clock)
+}
+
+fn configured_account_profile(
+    config: &DaemonConfig,
+) -> Result<(Option<GlobalHandle>, Option<DisplayName>), CoreError> {
+    let handle = config
+        .account_handle
+        .as_deref()
+        .map(GlobalHandle::parse)
+        .transpose()
+        .map_err(|_| CoreError::InvalidConfig)?;
+    let display_name = config
+        .account_display_name
+        .as_deref()
+        .map(DisplayName::parse)
+        .transpose()
+        .map_err(|_| CoreError::InvalidConfig)?;
+    Ok((handle, display_name))
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], CoreError> {

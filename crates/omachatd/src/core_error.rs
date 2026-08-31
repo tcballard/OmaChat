@@ -6,6 +6,7 @@ pub enum CoreError {
     Io(std::io::Error),
     Store(omachat_store::StoreError),
     IdentityStore(omachat_store::IdentityStoreError),
+    AccountVault(omachat_store::AccountVaultError),
     Identity(omachat_crypto::IdentityError),
     Outbox(omachat_store::OutboxError),
     RelayPool(omachat_nostr::pool::RelayPoolError),
@@ -40,6 +41,7 @@ impl CoreError {
             Self::Io(_)
             | Self::Store(_)
             | Self::IdentityStore(_)
+            | Self::AccountVault(_)
             | Self::Identity(_)
             | Self::Outbox(_)
             | Self::RelayPool(_)
@@ -59,6 +61,7 @@ impl fmt::Display for CoreError {
             Self::Io(error) => write!(formatter, "daemon I/O failed: {error}"),
             Self::Store(error) => write!(formatter, "sealed store failed: {error}"),
             Self::IdentityStore(error) => write!(formatter, "identity store failed: {error}"),
+            Self::AccountVault(error) => write!(formatter, "account store failed: {error}"),
             Self::Identity(error) => write!(formatter, "identity operation failed: {error}"),
             Self::Outbox(error) => write!(formatter, "outbox failed: {error}"),
             Self::RelayPool(error) => write!(formatter, "relay pool failed: {error}"),
@@ -91,6 +94,7 @@ impl Error for CoreError {
             Self::Io(error) => Some(error),
             Self::Store(error) => Some(error),
             Self::IdentityStore(error) => Some(error),
+            Self::AccountVault(error) => Some(error),
             Self::Identity(error) => Some(error),
             Self::Outbox(error) => Some(error),
             Self::RelayPool(error) => Some(error),
