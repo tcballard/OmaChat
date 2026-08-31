@@ -19,7 +19,9 @@ use tokio_tungstenite::{
         handshake::server::{Request, Response},
     },
 };
-use transport_probe::{ProbeError, connect_direct_for_test, roundtrip_on_stream};
+use transport_probe::{
+    ProbeError, connect_direct_for_test, handshake_on_stream, roundtrip_on_stream,
+};
 
 const TEST_HOST: &str = "relay.invalid";
 
@@ -44,11 +46,11 @@ async fn direct_and_socks_websockets_preserve_tls_name_remote_dns_and_reconnect(
     let relay = TcpListener::bind("127.0.0.1:0").await?;
     let relay_address = relay.local_addr()?;
     let expected_host = format!("{TEST_HOST}:{}", relay_address.port());
-    let relay_task = tokio::spawn(serve_echo(relay, server_config, expected_host, 4));
+    let relay_task = tokio::spawn(serve_echo(relay, server_config, expected_host, 8));
     let proxy = TcpListener::bind("127.0.0.1:0").await?;
     let proxy_address = proxy.local_addr()?;
-    let (host_sender, mut host_receiver) = mpsc::channel(2);
-    let proxy_task = tokio::spawn(serve_socks5(proxy, relay_address, host_sender, 2));
+    let (host_sender, mut host_receiver) = mpsc::channel(4);
+    let proxy_task = tokio::spawn(serve_socks5(proxy, relay_address, host_sender, 4));
     let url = format!("wss://{TEST_HOST}:{}/probe", relay_address.port());
 
     for attempt in 0..2 {
@@ -61,6 +63,18 @@ async fn direct_and_socks_websockets_preserve_tls_name_remote_dns_and_reconnect(
         )
         .await?;
     }
+    for _ in 0..2 {
+        let stream = connect_direct_for_test(relay_address).await?;
+        handshake_on_stream(&url, stream, connector.clone()).await?;
+    }
+    for _ in 0..2 {
+        let stream = tokio_socks::tcp::Socks5Stream::connect(
+            proxy_address,
+            (TEST_HOST, relay_address.port()),
+        )
+        .await?;
+        handshake_on_stream(&url, stream, connector.clone()).await?;
+    }
     for attempt in 0..2 {
         let stream = tokio_socks::tcp::Socks5Stream::connect(
             proxy_address,
@@ -72,11 +86,11 @@ async fn direct_and_socks_websockets_preserve_tls_name_remote_dns_and_reconnect(
     let mut observed = Vec::new();
     while let Some(host) = host_receiver.recv().await {
         observed.push(host);
-        if observed.len() == 2 {
+        if observed.len() == 4 {
             break;
         }
     }
-    assert_eq!(observed, vec![TEST_HOST, TEST_HOST]);
+    assert_eq!(observed, vec![TEST_HOST, TEST_HOST, TEST_HOST, TEST_HOST]);
     proxy_task.await??;
     relay_task.await??;
     Ok(())
@@ -105,8 +119,11 @@ async fn serve_echo(
         .await?;
         if let Some(message) = websocket.next().await {
             let message = message?;
-            assert!(matches!(message, Message::Text(_)));
-            websocket.send(message).await?;
+            match message {
+                Message::Text(_) => websocket.send(message).await?,
+                Message::Close(_) => {}
+                other => panic!("unexpected probe message: {other:?}"),
+            }
         }
     }
     Ok(())

@@ -37,6 +37,19 @@ jobs:
       - name: Run portable G0 tests
         run: cargo test -p omachat-nostr -p omachat-store --all-targets --locked
 
+      - name: Validate OC-008 live capture wrapper
+        run: |
+          bash -n conformance/probes/capture-oc008.sh
+          conformance/probes/capture-oc008.sh --help >/dev/null
+          if conformance/probes/capture-oc008.sh \
+            --url wss://relay.invalid/ \
+            --target-host wrong.invalid \
+            --socks5 127.0.0.1:9050 \
+            --output ignored; then
+            echo "mismatched target host unexpectedly passed" >&2
+            exit 1
+          fi
+
       - name: Compile-check BlueR qualification probe
         run: cargo clippy -p omachat-mesh --example bluer_dual_role_probe --locked -- -D warnings
 

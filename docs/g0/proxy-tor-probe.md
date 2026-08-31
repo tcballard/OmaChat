@@ -2,17 +2,38 @@
 
 Status: portable transport proof complete; live system-Tor and Arti captures pending
 
+The pending live evidence is collected by one fail-closed wrapper. Run it from
+a clean OmaChat checkout on Omarchy v4.0.1, with system Tor listening on the
+declared SOCKS5 address and a reachable `wss://` Nostr relay:
+
+```sh
+conformance/probes/capture-oc008.sh \
+  --url wss://relay.example/ \
+  --target-host relay.example \
+  --socks5 127.0.0.1:9050 \
+  --output evidence/oc008-$(date -u +%Y%m%dT%H%M%SZ)
+```
+
+The wrapper records only explicit host/tool metadata, probe JSON, the
+system-Tor process's network/write syscalls, and SHA-256 checksums. It does not
+capture environment variables, Tor configuration, credentials, or user data.
+It fails if the traced probe opens a DNS/DoT socket, the unresolved hostname is
+absent from the SOCKS write, either route cannot reconnect, Arti cannot connect
+and shut down, the worktree is dirty, or the destination already exists.
+
 The test-only transport probe opens a WebSocket directly or through SOCKS5,
-performs an echo round trip, closes it, and reconnects. The SOCKS path passes an
-unresolved `(hostname, port)` to `tokio-socks`; the proxy owns DNS. TLS and the
-WebSocket request retain the original `wss://` hostname for certificate
-verification, SNI, and `Host`.
+closes it, and reconnects. Its default echo exchange supports hermetic tests;
+`--handshake-only` supports live Nostr relays without sending a non-protocol
+message. The SOCKS path passes an unresolved `(hostname, port)` to
+`tokio-socks`; the proxy owns DNS. TLS and the WebSocket request retain the
+original `wss://` hostname for certificate verification, SNI, and `Host`.
 
 ```sh
 cargo run -p omachat-nostr --example transport_probe -- \
-  --url wss://relay.example/path --attempts 2
+  --url wss://relay.example/path --attempts 2 --handshake-only
 cargo run -p omachat-nostr --example transport_probe -- \
-  --url wss://relay.example/path --socks5 127.0.0.1:9050 --attempts 2
+  --url wss://relay.example/path --socks5 127.0.0.1:9050 --attempts 2 \
+  --handshake-only
 ```
 
 `transport_semantics.rs` supplies a hermetic TLS relay and recording SOCKS5
