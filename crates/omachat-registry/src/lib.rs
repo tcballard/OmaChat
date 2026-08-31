@@ -16,6 +16,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, error::Error, fmt};
 
+mod agent_claim;
+
+pub use agent_claim::{
+    AgentHandleClaim, AgentHandleClaimError, AgentHandleClaimSnapshot, AgentRegistrySubject,
+};
+
 const CLAIM_VERSION: u16 = 1;
 const REGISTRY_STATE_VERSION: u16 = 1;
 const RECEIPT_VERSION: u16 = 1;
