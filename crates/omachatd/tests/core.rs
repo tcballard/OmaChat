@@ -1,6 +1,8 @@
 use futures_util::{SinkExt, StreamExt};
 use omachat_proto::ipc::{Command, Request, ResponseOutcome, VERSION};
-use omachatd::{DaemonConfig, DaemonCore, EventHub, RequestHandler, StorageProviderConfig};
+use omachatd::{
+    DaemonConfig, DaemonCore, EventHub, PanicState, RequestHandler, StorageProviderConfig,
+};
 use serde_json::Value;
 use std::fs;
 use std::time::Duration;
@@ -278,7 +280,7 @@ async fn global_account_handle_is_not_reused_as_a_geohash_nickname() {
     .unwrap();
     let (inbound, mut notifications) = tokio::sync::mpsc::channel(8);
     let service = omachatd::NostrService::spawn(&[url], inbound).unwrap();
-    core.attach_nostr(service.handle());
+    core.attach_nostr(service.handle()).unwrap();
     wait_for_connected(&mut notifications).await;
 
     let sent = command(
@@ -315,6 +317,9 @@ async fn invalid_account_profile_configuration_fails_before_core_start() {
 #[tokio::test]
 async fn panic_requires_confirmation_erases_state_and_rejects_more_work() {
     let temporary = tempdir().expect("temporary directory");
+    let reload_directory = tempdir().expect("reload directory");
+    let reload_path = reload_directory.path().join("config.json");
+    fs::write(&reload_path, b"{}").expect("reload config");
     let core = DaemonCore::open(
         temporary.path(),
         DaemonConfig {
@@ -335,6 +340,7 @@ async fn panic_requires_confirmation_erases_state_and_rejects_more_work() {
         })
         .await;
     assert!(matches!(denied, ResponseOutcome::Error { .. }));
+    assert_eq!(core.panic_state(), PanicState::Active);
     command(
         &core,
         Command::Panic {
@@ -343,7 +349,12 @@ async fn panic_requires_confirmation_erases_state_and_rejects_more_work() {
     )
     .await;
     assert!(core.is_panicked());
+    assert_eq!(
+        core.wait_for_panic_terminal().await,
+        PanicState::CleanupComplete
+    );
     assert!(!temporary.path().exists());
+    assert!(core.reload(&reload_path).is_err());
     let rejected = core
         .handle(Request {
             version: VERSION,
@@ -381,6 +392,10 @@ async fn panic_cleanup_failure_is_terminal_and_never_reenables_the_daemon() {
         .await;
     assert!(matches!(failed, ResponseOutcome::Error { .. }));
     assert!(core.is_panicked());
+    assert_eq!(
+        core.wait_for_panic_terminal().await,
+        PanicState::CleanupFailed
+    );
 
     let rejected = core
         .handle(Request {
@@ -390,6 +405,97 @@ async fn panic_cleanup_failure_is_terminal_and_never_reenables_the_daemon() {
         })
         .await;
     assert!(matches!(rejected, ResponseOutcome::Error { .. }));
+}
+
+#[tokio::test]
+async fn panic_cancels_a_slow_publish_before_erasing_and_emits_no_local_message() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}/", listener.local_addr().unwrap());
+    let (event_seen_sender, event_seen_receiver) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let event = next_json(&mut socket).await;
+        assert_eq!(event[0], "EVENT");
+        event_seen_sender.send(()).unwrap();
+        // Withhold OK so the send command remains inside relay publication
+        // until panic quiescence cancels it.
+        while let Some(Ok(message)) = socket.next().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+
+    let temporary = tempdir().unwrap();
+    let events = EventHub::default();
+    let mut local_events = events.subscribe();
+    let core = DaemonCore::open(
+        temporary.path(),
+        DaemonConfig {
+            storage_provider: StorageProviderConfig::File,
+            joined_geohashes: vec!["gcpvj".into()],
+            ..DaemonConfig::default()
+        },
+        events,
+    )
+    .await
+    .unwrap();
+    let (inbound, mut notifications) = tokio::sync::mpsc::channel(8);
+    let service = omachatd::NostrService::spawn(&[url], inbound).unwrap();
+    core.attach_nostr(service.handle()).unwrap();
+    wait_for_connected(&mut notifications).await;
+
+    let send_core = core.clone();
+    let send = tokio::spawn(async move {
+        send_core
+            .handle(Request {
+                version: VERSION,
+                id: "slow-send".into(),
+                command: Command::Send {
+                    conversation: "#gcpvj".into(),
+                    text: "must not publish locally after panic".into(),
+                },
+            })
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), event_seen_receiver)
+        .await
+        .expect("relay receives slow publish")
+        .expect("relay event signal");
+
+    let panic_core = core.clone();
+    let panic = tokio::spawn(async move {
+        panic_core
+            .handle(Request {
+                version: VERSION,
+                id: "panic-during-send".into(),
+                command: Command::Panic {
+                    confirmation: "ERASE".into(),
+                },
+            })
+            .await
+    });
+
+    let sent = tokio::time::timeout(Duration::from_secs(2), send)
+        .await
+        .expect("slow send is cancelled")
+        .expect("send task");
+    assert!(matches!(sent, ResponseOutcome::Error { .. }));
+    let erased = tokio::time::timeout(Duration::from_secs(2), panic)
+        .await
+        .expect("panic cleanup completes after send releases its operation guard")
+        .expect("panic task");
+    assert!(matches!(erased, ResponseOutcome::Ok { .. }));
+    assert_eq!(core.panic_state(), PanicState::CleanupComplete);
+    assert!(local_events.try_recv().is_err());
+    assert!(
+        core.attach_nostr(service.handle()).is_err(),
+        "a relay handle cannot be attached after panic starts"
+    );
+
+    service.shutdown().await.unwrap();
+    server.await.unwrap();
 }
 
 #[tokio::test]
@@ -428,7 +534,7 @@ async fn join_and_leave_replace_the_live_subscription_filters() {
     .unwrap();
     let (inbound, mut notifications) = tokio::sync::mpsc::channel(8);
     let service = omachatd::NostrService::spawn(&[url], inbound).unwrap();
-    core.attach_nostr(service.handle());
+    core.attach_nostr(service.handle()).unwrap();
     wait_for_connected(&mut notifications).await;
 
     let joined = command(
@@ -506,7 +612,7 @@ async fn reconnect_drains_a_queued_private_message_once() {
 
     let (inbound, mut notifications) = tokio::sync::mpsc::channel(32);
     let service = omachatd::NostrService::spawn(&[url], inbound).unwrap();
-    core.attach_nostr(service.handle());
+    core.attach_nostr(service.handle()).unwrap();
     let notification_core = core.clone();
     let forwarding = tokio::spawn(async move {
         while let Some(notification) = notifications.recv().await {
