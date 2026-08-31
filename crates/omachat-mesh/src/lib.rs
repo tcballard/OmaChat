@@ -1,4 +1,6 @@
-//! BlueZ mesh transport boundary.
-//!
-//! GATT identifiers and packet behavior remain absent until source extraction
-//! and live-peer conformance establish them.
+//! Bounded public and private mesh protocol building blocks.
+
+pub mod announce;
+pub mod fragment;
+pub mod packet;
+pub mod sync;
