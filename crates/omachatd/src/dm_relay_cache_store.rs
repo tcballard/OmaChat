@@ -2,9 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use omachat_nostr::{
-    dm_relay_cache::{DmRelayCacheError, VerifiedDmRelayCache},
-    event::EventLimits,
-    inbox::DmInboxPolicy,
+    dm_relay_cache::{CacheMutation, DmRelayCacheError, VerifiedDmRelayCache},
+    dm_relay_routing::{DmRelayRoute, DmRelayRoutingError, DmRelayRoutingPolicy, route_dm_relays},
+    event::{EventLimits, SignedEvent},
+    inbox::{DmInboxError, DmInboxPolicy, verify_dm_inbox},
 };
 use omachat_store::{SealedStore, StoreError};
 
@@ -40,6 +41,58 @@ impl<'a> SealedDmRelayCache<'a> {
         Ok(())
     }
 
+    /// Verify and durably store recipient-authored kind 10050 metadata before
+    /// exposing the mutation to callers.
+    pub fn verify_and_save(
+        &self,
+        event: &SignedEvent,
+        expected_recipient_public_key: &[u8; 32],
+        now: u64,
+        event_limits: &EventLimits,
+        policy: &DmInboxPolicy,
+    ) -> Result<CacheMutation, SealedDmRelayCacheError> {
+        let verified = verify_dm_inbox(
+            event,
+            expected_recipient_public_key,
+            now,
+            event_limits,
+            policy,
+        )?;
+        let mut cache = match self.load(now, event_limits, policy)? {
+            SealedDmRelayCacheState::Missing => VerifiedDmRelayCache::new(),
+            SealedDmRelayCacheState::Loaded(cache) => cache,
+        };
+        let mutation = cache.insert(verified.to_cache_record(now)?)?;
+        if mutation == CacheMutation::Stored {
+            self.save(&cache)?;
+        }
+        Ok(mutation)
+    }
+
+    /// Resolve one recipient route from cryptographically revalidated sealed
+    /// state. Bootstrap fallback remains an explicit caller policy.
+    pub fn route(
+        &self,
+        recipient_public_key: &[u8; 32],
+        now: u64,
+        bootstrap_relays: &[String],
+        routing_policy: DmRelayRoutingPolicy,
+        event_limits: &EventLimits,
+        inbox_policy: &DmInboxPolicy,
+    ) -> Result<DmRelayRoute, SealedDmRelayCacheError> {
+        let cache = match self.load(now, event_limits, inbox_policy)? {
+            SealedDmRelayCacheState::Missing => VerifiedDmRelayCache::new(),
+            SealedDmRelayCacheState::Loaded(cache) => cache,
+        };
+        Ok(route_dm_relays(
+            &cache,
+            recipient_public_key,
+            now,
+            bootstrap_relays,
+            routing_policy,
+        )?)
+    }
+
     pub fn clear(&self) -> Result<(), SealedDmRelayCacheError> {
         self.store.delete(DM_RELAY_CACHE_RECORD_NAME)?;
         Ok(())
@@ -56,6 +109,8 @@ pub enum SealedDmRelayCacheState {
 pub enum SealedDmRelayCacheError {
     Store(StoreError),
     Cache(DmRelayCacheError),
+    Inbox(DmInboxError),
+    Routing(DmRelayRoutingError),
 }
 
 impl fmt::Display for SealedDmRelayCacheError {
@@ -68,6 +123,10 @@ impl fmt::Display for SealedDmRelayCacheError {
                 formatter,
                 "sealed DM relay cache validation failed: {error}"
             ),
+            Self::Inbox(error) => {
+                write!(formatter, "DM relay metadata verification failed: {error}")
+            }
+            Self::Routing(error) => write!(formatter, "DM relay routing failed: {error}"),
         }
     }
 }
@@ -77,6 +136,8 @@ impl Error for SealedDmRelayCacheError {
         match self {
             Self::Store(error) => Some(error),
             Self::Cache(error) => Some(error),
+            Self::Inbox(error) => Some(error),
+            Self::Routing(error) => Some(error),
         }
     }
 }
@@ -90,5 +151,17 @@ impl From<StoreError> for SealedDmRelayCacheError {
 impl From<DmRelayCacheError> for SealedDmRelayCacheError {
     fn from(error: DmRelayCacheError) -> Self {
         Self::Cache(error)
+    }
+}
+
+impl From<DmInboxError> for SealedDmRelayCacheError {
+    fn from(error: DmInboxError) -> Self {
+        Self::Inbox(error)
+    }
+}
+
+impl From<DmRelayRoutingError> for SealedDmRelayCacheError {
+    fn from(error: DmRelayRoutingError) -> Self {
+        Self::Routing(error)
     }
 }

@@ -2,8 +2,9 @@ use std::fs;
 
 use omachat_nostr::{
     discovery::NIP17_DM_RELAY_LIST_KIND,
-    dm_relay_cache::{DmRelayCacheLookup, VerifiedDmRelayCache},
-    event::{EventLimits, UnsignedEvent, xonly_public_key},
+    dm_relay_cache::{CacheMutation, DmRelayCacheLookup, VerifiedDmRelayCache},
+    dm_relay_routing::{DmRelayRouteProvenance, DmRelayRoutingPolicy},
+    event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
     inbox::{DmInboxPolicy, verify_dm_inbox},
 };
 use omachat_store::{RequestedProvider, SealedStore, StoreError};
@@ -15,20 +16,24 @@ use tempfile::tempdir;
 
 const NOW: u64 = 1_800_000_000;
 
-fn cache(created_at: u64, verified_at: u64) -> ([u8; 32], VerifiedDmRelayCache) {
-    let secret = [31; 32];
+fn relay_list(secret: [u8; 32], created_at: u64, relay: &str) -> ([u8; 32], SignedEvent) {
     let recipient = xonly_public_key(&secret).expect("recipient public key");
     let event = UnsignedEvent::new(
         hex::encode(recipient),
         created_at,
         NIP17_DM_RELAY_LIST_KIND,
-        vec![vec!["relay".into(), "wss://recipient.example".into()]],
+        vec![vec!["relay".into(), relay.into()]],
         String::new(),
         &EventLimits::default(),
     )
     .expect("relay list")
     .sign_with_aux(&secret, &[8; 32], &EventLimits::default())
     .expect("signed relay list");
+    (recipient, event)
+}
+
+fn cache(created_at: u64, verified_at: u64) -> ([u8; 32], VerifiedDmRelayCache) {
+    let (recipient, event) = relay_list([31; 32], created_at, "wss://recipient.example");
     let verified = verify_dm_inbox(
         &event,
         &recipient,
@@ -42,6 +47,73 @@ fn cache(created_at: u64, verified_at: u64) -> ([u8; 32], VerifiedDmRelayCache) 
         .insert(verified.to_cache_record(verified_at).expect("cache record"))
         .expect("cache insert");
     (recipient, cache)
+}
+
+#[tokio::test]
+async fn verified_metadata_is_durable_before_a_route_is_exposed() {
+    let state = tempdir().expect("state directory");
+    let (recipient, event) = relay_list([30; 32], NOW - 1, "wss://recipient.example");
+    let store = SealedStore::open(state.path(), RequestedProvider::File)
+        .await
+        .expect("open store");
+    assert_eq!(
+        SealedDmRelayCache::new(&store)
+            .verify_and_save(
+                &event,
+                &recipient,
+                NOW,
+                &EventLimits::default(),
+                &DmInboxPolicy::default(),
+            )
+            .expect("verify and save"),
+        CacheMutation::Stored
+    );
+    drop(store);
+
+    let reopened = SealedStore::open(state.path(), RequestedProvider::File)
+        .await
+        .expect("reopen store");
+    let route = SealedDmRelayCache::new(&reopened)
+        .route(
+            &recipient,
+            NOW,
+            &[],
+            DmRelayRoutingPolicy::default(),
+            &EventLimits::default(),
+            &DmInboxPolicy::default(),
+        )
+        .expect("durable route");
+    assert_eq!(route.recipient_public_key(), &recipient);
+    assert_eq!(route.relay_urls(), &["wss://recipient.example/"]);
+    assert!(matches!(
+        route.provenance(),
+        DmRelayRouteProvenance::VerifiedFresh { .. }
+    ));
+}
+
+#[tokio::test]
+async fn forged_recipient_metadata_never_creates_persisted_state() {
+    let state = tempdir().expect("state directory");
+    let expected_recipient = xonly_public_key(&[29; 32]).expect("expected recipient");
+    let (_, attacker_event) = relay_list([28; 32], NOW - 1, "wss://attacker.example");
+    let store = SealedStore::open(state.path(), RequestedProvider::File)
+        .await
+        .expect("open store");
+    let adapter = SealedDmRelayCache::new(&store);
+    assert!(matches!(
+        adapter.verify_and_save(
+            &attacker_event,
+            &expected_recipient,
+            NOW,
+            &EventLimits::default(),
+            &DmInboxPolicy::default(),
+        ),
+        Err(SealedDmRelayCacheError::Inbox(_))
+    ));
+    assert!(matches!(
+        adapter.load(NOW, &EventLimits::default(), &DmInboxPolicy::default()),
+        Ok(SealedDmRelayCacheState::Missing)
+    ));
 }
 
 #[tokio::test]
