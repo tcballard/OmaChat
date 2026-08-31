@@ -7,6 +7,7 @@ mod erase;
 mod identity;
 mod outbox;
 mod registry;
+mod registry_cache;
 mod sealed;
 mod trust;
 
@@ -20,6 +21,9 @@ pub use outbox::{
     OutboxTransport, TransportAttempt,
 };
 pub use registry::{RegistryVault, RegistryVaultError};
+pub use registry_cache::{
+    CachedRegistryRecord, RegistryCacheError, RegistryCacheLookup, VerifiedRegistryCache,
+};
 pub use sealed::{
     MasterKey, ProviderKind, RequestedProvider, SealedStore, StoreError, StoreStatus,
 };
