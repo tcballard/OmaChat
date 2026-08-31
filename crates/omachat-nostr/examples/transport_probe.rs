@@ -3,7 +3,7 @@
 mod transport_probe;
 
 use std::{env, process::ExitCode};
-use transport_probe::{Route, run_probe};
+use transport_probe::{Interaction, Route, run_probe};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -20,6 +20,7 @@ async fn run() -> Result<(), transport_probe::ProbeError> {
     let mut url = None;
     let mut socks5 = None;
     let mut attempts = 2;
+    let mut interaction = Interaction::Echo;
     let mut arguments = env::args().skip(1);
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
@@ -31,9 +32,10 @@ async fn run() -> Result<(), transport_probe::ProbeError> {
                     .ok_or("--attempts requires a value")?
                     .parse()?
             }
+            "--handshake-only" => interaction = Interaction::HandshakeOnly,
             "--help" | "-h" => {
                 println!(
-                    "usage: transport_probe --url <ws[s]://host/path> [--socks5 host:port] [--attempts N]"
+                    "usage: transport_probe --url <ws[s]://host/path> [--socks5 host:port] [--attempts N] [--handshake-only]"
                 );
                 return Ok(());
             }
@@ -42,7 +44,7 @@ async fn run() -> Result<(), transport_probe::ProbeError> {
     }
     let url = url.ok_or("--url is required")?;
     let route = socks5.as_deref().map_or(Route::Direct, Route::Socks5);
-    let result = run_probe(&url, route, attempts).await?;
+    let result = run_probe(&url, route, attempts, interaction).await?;
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }

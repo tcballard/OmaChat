@@ -16,11 +16,18 @@ pub enum Route<'a> {
     Socks5(&'a str),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Interaction {
+    Echo,
+    HandshakeOnly,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ProbeResult {
     pub url: String,
     pub route: &'static str,
     pub attempts: usize,
+    pub interaction: &'static str,
     pub remote_dns: bool,
     pub tls_server_name: String,
     pub reconnect: &'static str,
@@ -30,6 +37,7 @@ pub async fn run_probe<'a>(
     url: &'a str,
     route: Route<'a>,
     attempts: usize,
+    interaction: Interaction,
 ) -> Result<ProbeResult, ProbeError> {
     if attempts < 2 {
         return Err("at least two attempts are required to prove reconnect".into());
@@ -51,7 +59,7 @@ pub async fn run_probe<'a>(
                 let (socket, _) = tokio::time::timeout(Duration::from_secs(20), connect_async(url))
                     .await
                     .map_err(|_| "direct WebSocket connection timed out")??;
-                exchange(socket, &payload).await?;
+                interact(socket, &payload, interaction).await?;
             }
             Route::Socks5(proxy) => {
                 let stream = tokio::time::timeout(
@@ -66,7 +74,7 @@ pub async fn run_probe<'a>(
                 )
                 .await
                 .map_err(|_| "WebSocket-over-SOCKS5 handshake timed out")??;
-                exchange(socket, &payload).await?;
+                interact(socket, &payload, interaction).await?;
             }
         }
     }
@@ -78,6 +86,10 @@ pub async fn run_probe<'a>(
             "socks5"
         },
         attempts,
+        interaction: match interaction {
+            Interaction::Echo => "echo",
+            Interaction::HandshakeOnly => "handshake-only",
+        },
         remote_dns: matches!(route, Route::Socks5(_)),
         tls_server_name: host.to_owned(),
         reconnect: "passed",
@@ -94,6 +106,34 @@ where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
     let (socket, _) = client_async_tls_with_config(url, stream, None, Some(connector)).await?;
+    exchange(socket, payload).await
+}
+
+pub async fn handshake_on_stream<S>(
+    url: &str,
+    stream: S,
+    connector: Connector,
+) -> Result<(), ProbeError>
+where
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    let (mut socket, _) = client_async_tls_with_config(url, stream, None, Some(connector)).await?;
+    socket.close(None).await?;
+    Ok(())
+}
+
+async fn interact<S>(
+    mut socket: WebSocketStream<S>,
+    payload: &str,
+    interaction: Interaction,
+) -> Result<(), ProbeError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    if matches!(interaction, Interaction::HandshakeOnly) {
+        socket.close(None).await?;
+        return Ok(());
+    }
     exchange(socket, payload).await
 }
 
