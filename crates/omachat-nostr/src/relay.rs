@@ -50,6 +50,8 @@ pub struct RelayConfig {
     pub ping_interval: Duration,
     pub idle_timeout: Duration,
     pub response_timeout: Duration,
+    /// Maximum grace period before shutdown aborts and joins the actor.
+    pub shutdown_timeout: Duration,
     pub reconnect_initial_delay: Duration,
     pub reconnect_max_delay: Duration,
     pub event_limits: EventLimits,
@@ -69,6 +71,7 @@ impl RelayConfig {
             ping_interval: Duration::from_secs(30),
             idle_timeout: Duration::from_secs(90),
             response_timeout: Duration::from_secs(20),
+            shutdown_timeout: Duration::from_secs(1),
             reconnect_initial_delay: Duration::from_secs(1),
             reconnect_max_delay: Duration::from_secs(60),
             event_limits: EventLimits::default(),
@@ -86,6 +89,7 @@ impl RelayConfig {
             || self.ping_interval.is_zero()
             || self.idle_timeout <= self.ping_interval
             || self.response_timeout.is_zero()
+            || self.shutdown_timeout.is_zero()
             || self.reconnect_initial_delay.is_zero()
             || self.reconnect_max_delay < self.reconnect_initial_delay
         {
@@ -146,6 +150,7 @@ pub struct RelayConnection {
     notifications: mpsc::Receiver<RelayNotification>,
     health: watch::Receiver<RelayHealth>,
     response_timeout: Duration,
+    shutdown_timeout: Duration,
     task: Option<JoinHandle<Result<(), RelayError>>>,
 }
 
@@ -158,6 +163,7 @@ impl RelayConnection {
             mpsc::channel(config.notification_capacity);
         let (health_sender, health_receiver) = watch::channel(RelayHealth::Connecting);
         let response_timeout = config.response_timeout;
+        let shutdown_timeout = config.shutdown_timeout;
         let task = tokio::spawn(run_actor(
             config,
             command_receiver,
@@ -169,6 +175,7 @@ impl RelayConnection {
             notifications: notification_receiver,
             health: health_receiver,
             response_timeout,
+            shutdown_timeout,
             task: Some(task),
         })
     }
@@ -233,14 +240,34 @@ impl RelayConnection {
     }
 
     /// Stop the actor, close its socket, and await owned work.
+    ///
+    /// If the actor cannot process the graceful request within the configured
+    /// shutdown deadline, it is aborted and still awaited before this method
+    /// returns. This keeps an outer timeout from becoming the owner of a
+    /// detached relay task.
     pub async fn shutdown(mut self) -> Result<(), RelayError> {
-        let (sender, receiver) = oneshot::channel();
-        if self.commands.send(Command::Shutdown(sender)).await.is_ok() {
-            let _ = tokio::time::timeout(self.response_timeout, receiver).await;
-        }
-        match self.task.take() {
-            Some(task) => task.await.map_err(|_| RelayError::Task)?,
-            None => Ok(()),
+        // Never wait for capacity in a queue whose consumer may itself be
+        // wedged. A full queue falls through to the bounded abort path.
+        let _ = self.commands.try_send(Command::Shutdown);
+        let Some(task) = self.task.as_mut() else {
+            return Ok(());
+        };
+        match tokio::time::timeout(self.shutdown_timeout, task).await {
+            Ok(result) => {
+                self.task.take();
+                result.map_err(|_| RelayError::Task)?
+            }
+            Err(_) => {
+                let task = self.task.as_mut().expect("relay task remains owned");
+                task.abort();
+                let result = task.await;
+                self.task.take();
+                match result {
+                    Err(error) if error.is_cancelled() => Err(RelayError::ShutdownTimeout),
+                    Err(_) => Err(RelayError::Task),
+                    Ok(result) => result,
+                }
+            }
         }
     }
 
@@ -251,6 +278,18 @@ impl RelayConnection {
                 mpsc::error::TrySendError::Full(_) => RelayError::Backpressure,
                 mpsc::error::TrySendError::Closed(_) => RelayError::Stopped,
             })
+    }
+}
+
+impl Drop for RelayConnection {
+    fn drop(&mut self) {
+        // Tokio detaches a task when its JoinHandle is dropped. Abort first so
+        // cancellation of `shutdown` cannot leave a relay actor running
+        // indefinitely without an owner. The explicit shutdown path still
+        // awaits the aborted task before reporting completion.
+        if let Some(task) = &self.task {
+            task.abort();
+        }
     }
 }
 
@@ -268,7 +307,7 @@ enum Command {
         subscription_id: String,
         response: oneshot::Sender<Result<(), RelayError>>,
     },
-    Shutdown(oneshot::Sender<()>),
+    Shutdown,
 }
 
 async fn run_actor(
@@ -372,9 +411,8 @@ async fn run_actor_loop(
                                 }
                             }
                         }
-                        Some(Command::Shutdown(response)) => {
+                        Some(Command::Shutdown) => {
                             let _ = socket.close(None).await;
-                            let _ = response.send(());
                             break false;
                         }
                         None => break false,
@@ -461,10 +499,7 @@ async fn wait_to_reconnect(
     tokio::select! {
         () = tokio::time::sleep(delay) => Ok(false),
         command = commands.recv() => match command {
-            Some(Command::Shutdown(response)) => {
-                let _ = response.send(());
-                Ok(true)
-            }
+            Some(Command::Shutdown) => Ok(true),
             Some(other) => {
                 reject_command(other, RelayError::Disconnected);
                 Ok(false)
@@ -482,9 +517,7 @@ fn reject_command(command: Command, error: RelayError) {
         Command::Subscribe { response, .. } | Command::Close { response, .. } => {
             let _ = response.send(Err(error));
         }
-        Command::Shutdown(response) => {
-            let _ = response.send(());
-        }
+        Command::Shutdown => {}
     }
 }
 
@@ -622,6 +655,7 @@ pub enum RelayError {
     Backpressure,
     ConnectTimeout,
     ResponseTimeout,
+    ShutdownTimeout,
     Disconnected,
     Stopped,
     Task,
@@ -642,6 +676,9 @@ impl fmt::Display for RelayError {
             Self::Backpressure => formatter.write_str("relay notification queue is full"),
             Self::ConnectTimeout => formatter.write_str("relay connection timed out"),
             Self::ResponseTimeout => formatter.write_str("relay response timed out"),
+            Self::ShutdownTimeout => {
+                formatter.write_str("relay shutdown timed out; actor was aborted and joined")
+            }
             Self::Disconnected => formatter.write_str("relay disconnected"),
             Self::Stopped => formatter.write_str("relay actor stopped"),
             Self::Task => formatter.write_str("relay task failed"),
