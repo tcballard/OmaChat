@@ -5,6 +5,10 @@
 //! bytes, while clients accept a receipt only after verifying a separately
 //! pinned registry key and the exact signed claim.
 
+mod evidence;
+
+pub use evidence::{RegistryEvidenceClient, RegistryEvidenceError, RegistryEvidenceResolution};
+
 use omachat_crypto::{AccountId, GlobalHandle, SignedLocalAccountBinding};
 use omachat_registry::{
     AcceptedRegistryRecord, CommandId, HandleClaim, RegistryError, RegistryReceipt, RegistryState,
