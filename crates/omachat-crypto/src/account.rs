@@ -474,6 +474,14 @@ impl SignedLocalAccountBinding {
     }
 }
 
+impl AccountSecrets {
+    pub(crate) fn sign_account_root_transcript(&self, transcript: &[u8]) -> [u8; 64] {
+        SigningKey::from_bytes(&self.account_root_seed)
+            .sign(transcript)
+            .to_bytes()
+    }
+}
+
 fn domain_hash(domain: &[u8], components: &[&[u8]]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(domain);

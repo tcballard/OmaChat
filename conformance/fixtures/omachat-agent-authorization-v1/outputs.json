@@ -1,0 +1,11 @@
+{
+  "account_id": "oa1_a645d3afb4000fa6b55597b1290226fda6de04a2d2563259c5420931431ebc10",
+  "account_root_public_key_hex": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "agent_proof_hex": "dbe9bea97fcba98f152f1a09e0321802d3bf2f5d71630e349cd726020784d7c42c4f7342f0a3250536bca73a82714a27ae0ad07872d7de3d54c7ac6c4cc4e231",
+  "agent_public_key_hex": "6930f46dd0b16d866d59d1054aa63298b357499cd1862ef16f3f55f1cafceb82",
+  "authorization_hash_hex": "e908394c41c780c54de4e8905ee20a52803d181ce8ddde7059e43369da823079",
+  "authorization_id": "oag1_172c5d1222fefc0ddccd18a4ccbf65ee47ad50602f93a891adc89ad236aa5727",
+  "authorization_signature_hex": "1b72d784bab96191933836be3c635efad493c1a752d87226b43ee686d7f4d212fe394e1bb7e868437f7ce47e840cb278d304fd88ad24ac8a6fdefaff99c4df0d",
+  "revocation_signature_hex": "5febc273733cfad2f6d1a2ba1d619ef079a1066261aed11ecef4d44b3a546578e03594f3f5e04b4897007ab6ff2aaf003670366ef2038615c0f0573f5e50c809",
+  "schema_version": 1
+}

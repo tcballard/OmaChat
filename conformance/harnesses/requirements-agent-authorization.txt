@@ -1,0 +1,4 @@
+# Exact Python packages used to generate omachat-agent-authorization-v1.
+cryptography==46.0.0
+cffi==1.17.1
+pycparser==2.23
