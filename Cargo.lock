@@ -1386,10 +1386,12 @@ dependencies = [
 name = "omachat-nostr"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
  "futures-util",
  "hex",
  "k256",
  "omachat-crypto",
+ "omachat-proto",
  "rcgen",
  "rustls",
  "serde",
