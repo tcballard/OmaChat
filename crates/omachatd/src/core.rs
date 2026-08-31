@@ -312,6 +312,15 @@ impl DaemonCore {
         &self,
         inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
     ) -> Result<Option<DmInboxService>, CoreError> {
+        let (ready, _ready_receiver) = tokio::sync::mpsc::channel(1);
+        self.start_dm_inbox_with_ready(inbound, ready).await
+    }
+
+    pub async fn start_dm_inbox_with_ready(
+        &self,
+        inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
+        ready: tokio::sync::mpsc::Sender<()>,
+    ) -> Result<Option<DmInboxService>, CoreError> {
         let _operation = self.inner.operations.read().await;
         let bootstrap = self.with_active_transition(|| {
             let relays = self
@@ -351,12 +360,13 @@ impl DaemonCore {
             return Ok(None);
         };
 
-        let service = DmInboxService::spawn(
+        let service = DmInboxService::spawn_with_ready(
             &relays,
             auth_signer,
             recipient_secret_key,
             &blocked,
             inbound,
+            ready,
         )
         .await
         .map_err(CoreError::DmInbox)?;

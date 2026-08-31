@@ -7,7 +7,8 @@ use std::{
 use omachat_nostr::{
     auth::RelayAuthSigner,
     dm_inbox_runtime::{
-        AuthenticatedDmInboxRuntime, DmInboxRuntimeConfig, DmInboxRuntimeError, DmInboxRuntimeEvent,
+        AuthenticatedDmInboxRuntime, DmInboxRuntimeActivity, DmInboxRuntimeConfig,
+        DmInboxRuntimeError, DmInboxRuntimeEvent,
     },
     event::SignedEvent,
     pool::PoolPublishResult,
@@ -119,6 +120,30 @@ impl DmInboxService {
         .await
     }
 
+    pub async fn spawn_with_ready(
+        urls: &[String],
+        auth_signer: RelayAuthSigner,
+        recipient_secret_key: [u8; 32],
+        blocked_authors: &[String],
+        inbound: mpsc::Sender<DmInboxRuntimeEvent>,
+        ready: mpsc::Sender<()>,
+    ) -> Result<Self, DmInboxServiceError> {
+        let relay_configs = urls
+            .iter()
+            .map(|url| RelayConfig::new(url.clone(), RelayRoute::Direct))
+            .collect();
+        Self::spawn_inner(
+            relay_configs,
+            auth_signer,
+            recipient_secret_key,
+            blocked_authors,
+            DmInboxRuntimeConfig::default(),
+            inbound,
+            Some(ready),
+        )
+        .await
+    }
+
     pub async fn spawn_with_config(
         relay_configs: Vec<RelayConfig>,
         auth_signer: RelayAuthSigner,
@@ -126,6 +151,27 @@ impl DmInboxService {
         blocked_authors: &[String],
         runtime_config: DmInboxRuntimeConfig,
         inbound: mpsc::Sender<DmInboxRuntimeEvent>,
+    ) -> Result<Self, DmInboxServiceError> {
+        Self::spawn_inner(
+            relay_configs,
+            auth_signer,
+            recipient_secret_key,
+            blocked_authors,
+            runtime_config,
+            inbound,
+            None,
+        )
+        .await
+    }
+
+    async fn spawn_inner(
+        relay_configs: Vec<RelayConfig>,
+        auth_signer: RelayAuthSigner,
+        recipient_secret_key: [u8; 32],
+        blocked_authors: &[String],
+        runtime_config: DmInboxRuntimeConfig,
+        inbound: mpsc::Sender<DmInboxRuntimeEvent>,
+        ready: Option<mpsc::Sender<()>>,
     ) -> Result<Self, DmInboxServiceError> {
         let now = unix_time()?;
         let mut runtime = AuthenticatedDmInboxRuntime::connect(
@@ -152,6 +198,7 @@ impl DmInboxService {
             runtime,
             inbound,
             command_receiver,
+            ready,
             shutdown_receiver,
             terminated_sender,
         ));
@@ -190,10 +237,12 @@ async fn run_service(
     mut runtime: AuthenticatedDmInboxRuntime,
     inbound: mpsc::Sender<DmInboxRuntimeEvent>,
     commands: mpsc::Receiver<DmInboxCommand>,
+    ready: Option<mpsc::Sender<()>>,
     mut shutdown: watch::Receiver<bool>,
     terminated: watch::Sender<bool>,
 ) -> Result<(), DmInboxServiceError> {
-    let run_result = run_until_shutdown(&mut runtime, inbound, commands, &mut shutdown).await;
+    let run_result =
+        run_until_shutdown(&mut runtime, inbound, commands, ready, &mut shutdown).await;
     let relay_shutdown = runtime.shutdown().await;
     terminated.send_replace(true);
 
@@ -212,6 +261,7 @@ async fn run_until_shutdown(
     runtime: &mut AuthenticatedDmInboxRuntime,
     inbound: mpsc::Sender<DmInboxRuntimeEvent>,
     mut commands: mpsc::Receiver<DmInboxCommand>,
+    mut ready: Option<mpsc::Sender<()>>,
     shutdown: &mut watch::Receiver<bool>,
 ) -> Result<(), DmInboxServiceError> {
     'service: loop {
@@ -226,8 +276,19 @@ async fn run_until_shutdown(
                 }
                 continue;
             }
-            event = runtime.next(unix_time()?) => {
-                Some(event.map_err(DmInboxServiceError::Runtime)?)
+            activity = runtime.next_activity(unix_time()?) => {
+                match activity.map_err(DmInboxServiceError::Runtime)? {
+                    DmInboxRuntimeActivity::Inbox(event) => Some(event),
+                    DmInboxRuntimeActivity::AuthenticationRestored => {
+                        if let Some(sender) = &ready {
+                            match sender.try_send(()) {
+                                Ok(()) | Err(mpsc::error::TrySendError::Full(())) => {}
+                                Err(mpsc::error::TrySendError::Closed(())) => ready = None,
+                            }
+                        }
+                        None
+                    }
+                }
             }
             command = commands.recv() => {
                 let Some(command) = command else {

@@ -65,11 +65,20 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let (dm_inbound_sender, mut dm_inbound_receiver) = tokio::sync::mpsc::channel(256);
-    let dm_inbox = core.start_dm_inbox(dm_inbound_sender).await?;
+    let (dm_ready_sender, mut dm_ready_receiver) = tokio::sync::mpsc::channel(1);
+    let dm_inbox = core
+        .start_dm_inbox_with_ready(dm_inbound_sender, dm_ready_sender)
+        .await?;
     let dm_inbound_core = core.clone();
     tokio::spawn(async move {
         while let Some(event) = dm_inbound_receiver.recv().await {
             dm_inbound_core.receive_dm_inbox_event(event);
+        }
+    });
+    let dm_ready_core = core.clone();
+    tokio::spawn(async move {
+        while dm_ready_receiver.recv().await.is_some() {
+            dm_ready_core.drain_outbox().await;
         }
     });
     if dm_inbox.is_some() {

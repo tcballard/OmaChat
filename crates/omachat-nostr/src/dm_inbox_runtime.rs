@@ -42,6 +42,12 @@ pub struct DmInboxRuntimeEvent {
     pub receive: DmInboxReceive,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DmInboxRuntimeActivity {
+    Inbox(DmInboxRuntimeEvent),
+    AuthenticationRestored,
+}
+
 #[derive(Debug)]
 pub enum DmInboxRuntimeError {
     InvalidConfig(&'static str),
@@ -329,6 +335,18 @@ impl AuthenticatedDmInboxRuntime {
 
     pub async fn next(&mut self, now: u64) -> Result<DmInboxRuntimeEvent, DmInboxRuntimeError> {
         loop {
+            match self.next_activity(now).await? {
+                DmInboxRuntimeActivity::Inbox(event) => return Ok(event),
+                DmInboxRuntimeActivity::AuthenticationRestored => {}
+            }
+        }
+    }
+
+    pub async fn next_activity(
+        &mut self,
+        now: u64,
+    ) -> Result<DmInboxRuntimeActivity, DmInboxRuntimeError> {
+        loop {
             let notification = self
                 .pool
                 .next_notification()
@@ -349,7 +367,14 @@ impl AuthenticatedDmInboxRuntime {
                             public_key,
                         });
                     }
+                    let was_fully_authenticated =
+                        self.authenticated_relays.len() == self.relay_count;
                     self.authenticated_relays.insert(relay_index);
+                    if !was_fully_authenticated
+                        && self.authenticated_relays.len() == self.relay_count
+                    {
+                        return Ok(DmInboxRuntimeActivity::AuthenticationRestored);
+                    }
                 }
                 RelayNotification::AuthenticationRejected { message, .. } => {
                     self.authenticated_relays.remove(&relay_index);
@@ -372,10 +397,10 @@ impl AuthenticatedDmInboxRuntime {
                     let receive = self
                         .inbox
                         .receive(&event, &self.recipient_secret_key, now)?;
-                    return Ok(DmInboxRuntimeEvent {
+                    return Ok(DmInboxRuntimeActivity::Inbox(DmInboxRuntimeEvent {
                         relay_index,
                         receive,
-                    });
+                    }));
                 }
                 RelayNotification::Closed {
                     subscription_id,
