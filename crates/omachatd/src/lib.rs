@@ -8,6 +8,7 @@ mod dm_inbox_service;
 mod dm_relay_cache_store;
 mod ipc_server;
 mod nostr_service;
+mod profile_cache_store;
 
 pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
@@ -23,3 +24,6 @@ pub use dm_relay_cache_store::{
 };
 pub use ipc_server::{EventHub, IpcServer, RequestHandler, ServerError};
 pub use nostr_service::{NostrHandle, NostrService};
+pub use profile_cache_store::{
+    PROFILE_CACHE_RECORD_NAME, SealedProfileCache, SealedProfileCacheError, SealedProfileCacheState,
+};
