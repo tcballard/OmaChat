@@ -18,8 +18,11 @@ OC-064 and all prerequisite gates close.
 - One issue normally maps to one reviewable pull request. Adjacent issues may be bundled only when the owner explicitly approves the scope and the combined change remains reviewable.
 - Every PR names its upstream compatibility pin and includes tests or captured evidence for changed behavior.
 - Protocol and cryptographic PRs must consume committed cross-implementation fixtures; self-generated Rust round trips are necessary but not sufficient.
-- Implementation entry follows each issue's explicit dependency list. An open
-  evidence issue blocks the dependent subsystem, not unrelated later-gate work.
+- Merge, closure, and compatibility claims follow each issue's explicit
+  dependency list. Hermetic implementation may be prepared behind an open live
+  evidence prerequisite when the gated integration remains explicit and the PR
+  stays unmerged. An open evidence issue blocks that integration and acceptance,
+  not unrelated code that can be proved locally.
 - Android is an acceptance peer only for features present in Android v2.0.1. Courier, prekey, RSR, and current bridge acceptance use Swift/iOS.
 - No PR may silently adopt upstream `main`; pin changes require a dedicated drift review.
 - No merge is implied by this document. Opening issues, pushing branches, and merging remain separate repository actions.
