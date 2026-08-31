@@ -2,6 +2,7 @@
 
 use crate::{
     discovery::{RelayDiscoveryLimits, parse_nip17_dm_relay_list},
+    dm_relay_cache::{DmRelayCacheError, VerifiedDmRelayRecord},
     event::{EventLimits, SignedEvent},
     gift_wrap::GIFT_WRAP_KIND,
 };
@@ -37,6 +38,7 @@ pub struct VerifiedDmInbox {
     source_event_id: String,
     source_created_at: u64,
     relay_urls: Vec<String>,
+    source_event: SignedEvent,
 }
 
 impl VerifiedDmInbox {
@@ -58,6 +60,27 @@ impl VerifiedDmInbox {
     #[must_use]
     pub fn relay_urls(&self) -> &[String] {
         &self.relay_urls
+    }
+
+    /// Converts only already signature-verified kind 10050 metadata into a cache record.
+    pub fn to_cache_record(
+        &self,
+        verified_at: u64,
+    ) -> Result<VerifiedDmRelayRecord, DmRelayCacheError> {
+        let mut recipient_pubkey = [0; 32];
+        hex::decode_to_slice(&self.recipient_public_key, &mut recipient_pubkey)
+            .map_err(|_| DmRelayCacheError::InvalidRecipient)?;
+        let mut source_event_id = [0; 32];
+        hex::decode_to_slice(&self.source_event_id, &mut source_event_id)
+            .map_err(|_| DmRelayCacheError::InvalidSourceEvent)?;
+        VerifiedDmRelayRecord::from_authenticated_event(
+            recipient_pubkey,
+            source_event_id,
+            self.source_created_at,
+            verified_at,
+            self.relay_urls.clone(),
+            self.source_event.clone(),
+        )
     }
 }
 
@@ -114,6 +137,7 @@ pub fn verify_dm_inbox(
         source_event_id: event.id.clone(),
         source_created_at: list.created_at,
         relay_urls,
+        source_event: event.clone(),
     })
 }
 

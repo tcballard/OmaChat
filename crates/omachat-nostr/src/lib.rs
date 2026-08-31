@@ -6,6 +6,7 @@ pub mod discovery;
 pub mod dm_delivery;
 pub mod dm_inbox;
 pub mod dm_inbox_runtime;
+pub mod dm_relay_cache;
 pub mod envelope;
 pub mod event;
 pub mod frame;
