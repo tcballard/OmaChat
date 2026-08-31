@@ -1415,11 +1415,16 @@ dependencies = [
 name = "omachat-store"
 version = "0.0.1"
 dependencies = [
+ "chacha20poly1305",
+ "getrandom 0.4.3",
+ "hex",
+ "omachat-crypto",
  "secret-service",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]
