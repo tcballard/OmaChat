@@ -19,9 +19,10 @@ check suite on the proposed toolchain.
 | `omachat-tui` | binary package | `omachat` terminal client |
 | `omachat-ctl` | binary | Control and scripting client |
 
-The scaffold intentionally contains no wire constants, packet layouts,
-cryptographic schedules, relay URLs, or runtime behavior. Those values remain
-blocked on the extraction and conformance work named in the build backlog.
+The workspace now contains protocol, cryptographic, storage, daemon, IPC,
+CLI/TUI, and packaging implementation. Hardware, live-peer, target-host, and
+soak evidence remain blocked on the conformance work named in the build backlog;
+code presence alone never closes those gates.
 
 ## Local checks
 
@@ -34,6 +35,7 @@ cargo test --workspace --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 cargo build --workspace --bins --locked
 ./scripts/check-version-contract.sh
+sh ./scripts/check-packaging.sh
 ```
 
 CI additionally runs `cargo-audit` through the RustSec audit action and
