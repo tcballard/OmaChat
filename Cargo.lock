@@ -1474,6 +1474,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "omachat-registry-transport"
+version = "0.0.1"
+dependencies = [
+ "omachat-crypto",
+ "omachat-registry",
+ "omachat-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "omachat-store"
 version = "0.0.1"
 dependencies = [

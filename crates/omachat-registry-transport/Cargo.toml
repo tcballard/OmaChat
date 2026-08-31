@@ -1,0 +1,21 @@
+[package]
+name = "omachat-registry-transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+omachat-registry = { path = "../omachat-registry", version = "=0.0.1" }
+omachat-store = { path = "../omachat-store", version = "=0.0.1" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
