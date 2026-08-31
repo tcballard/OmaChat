@@ -84,8 +84,10 @@ uniqueness, revision CAS, idempotency, and registry-signed global and
 per-account hash-chained receipts. Handle rename and reuse remain deferred
 until service policy is specified; the state machine does not silently choose
 permanent tombstones. Crash-safe sealed persistence and a bounded, versioned
-service/client transport adapter preserve those invariants across restart and
-verify exact claim-bound receipts against a pinned registry key. Registry
-hosting/deployment, daemon integration, the verified freshness cache, key
+service/client transport adapter preserve those invariants and complete
+accepted-claim evidence across restart. Verified handle/account lookups return
+the exact claim-bound receipt against a pinned registry key; historical state
+without that evidence fails lookup closed. Registry hosting/deployment, daemon
+integration, the verified freshness cache, key
 transparency, and the workspace/channel product surface are not completed or
 live.
