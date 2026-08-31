@@ -14,6 +14,13 @@ impl SealedStore {
     /// This is not a claim of physical overwrite on CoW, SSD, snapshot, backup,
     /// or networked storage.
     pub async fn panic_erase(&self) -> Result<PanicEraseReport, StoreError> {
+        // Once the user confirms panic erase, destroy the in-process key even
+        // if a later filesystem or Secret Service cleanup step fails. Callers
+        // must treat every failure after this point as terminal.
+        self.key
+            .lock()
+            .expect("master-key mutex poisoned")
+            .zeroize();
         let metadata = fs::symlink_metadata(&self.state_directory).map_err(StoreError::Io)?;
         if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
             return Err(StoreError::UnsafeEraseTarget);
@@ -36,10 +43,6 @@ impl SealedStore {
             },
             ProviderKind::SecretService => delete_secret_service_key().await?,
         }
-        self.key
-            .lock()
-            .expect("master-key mutex poisoned")
-            .zeroize();
         fs::remove_dir_all(&self.state_directory).map_err(StoreError::Io)?;
         sync_directory(&parent)?;
         Ok(PanicEraseReport {
