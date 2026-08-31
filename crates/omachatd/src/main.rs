@@ -49,7 +49,7 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let service = NostrService::spawn(&relays, inbound_sender)?;
         let handle = service.handle();
-        core.attach_nostr(handle.clone());
+        core.attach_nostr(handle.clone())?;
         let filters = core.nostr_filters(unix_time())?;
         tokio::spawn(async move {
             if let Err(error) = handle.subscribe("omachat-main-v1".into(), filters).await {
@@ -89,16 +89,17 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let panic_shutdown = shutdown_tx.clone();
+    let panic_core = core.clone();
     tokio::spawn(async move {
-        while !core.is_panicked() {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
+        panic_core.wait_for_panic_terminal().await;
         let _ = panic_shutdown.send(true);
     });
-    server.run(shutdown_rx).await?;
+    let server_result = server.run(shutdown_rx).await;
+    core.prepare_for_shutdown().await;
     if let Some(service) = nostr {
         let _ = service.shutdown().await;
     }
+    server_result?;
     Ok(())
 }
 
