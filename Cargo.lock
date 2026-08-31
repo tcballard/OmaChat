@@ -1385,6 +1385,7 @@ name = "omachat-crypto"
 version = "0.0.1"
 dependencies = [
  "base64 0.22.1",
+ "chacha20 0.9.1",
  "chacha20poly1305",
  "ed25519-dalek",
  "getrandom 0.4.3",
