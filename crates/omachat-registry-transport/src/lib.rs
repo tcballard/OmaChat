@@ -6,8 +6,10 @@
 //! pinned registry key and the exact signed claim.
 
 mod evidence;
+mod websocket;
 
 pub use evidence::{RegistryEvidenceClient, RegistryEvidenceError, RegistryEvidenceResolution};
+pub use websocket::{RegistryWebSocketError, RegistryWebSocketTransport};
 
 use omachat_crypto::{AccountId, GlobalHandle, SignedLocalAccountBinding};
 use omachat_registry::{

@@ -1481,6 +1481,7 @@ dependencies = [
 name = "omachat-registry-transport"
 version = "0.0.1"
 dependencies = [
+ "futures-util",
  "omachat-crypto",
  "omachat-registry",
  "omachat-store",
@@ -1488,6 +1489,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]
