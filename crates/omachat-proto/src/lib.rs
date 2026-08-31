@@ -1,6 +1,7 @@
 //! Pure protocol codecs and compatibility metadata.
 
 pub mod geohash;
+pub mod ipc;
 
 /// Frozen upstream compatibility profile identifier.
 pub const COMPATIBILITY_PROFILE: &str = "bitchat-swift-v1.7.1";
