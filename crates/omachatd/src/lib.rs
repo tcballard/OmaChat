@@ -1,5 +1,6 @@
 //! Headless daemon IPC service primitives.
 
+mod agent_lifecycle_store;
 mod config;
 mod core;
 mod core_error;
@@ -8,6 +9,10 @@ mod dm_relay_cache_store;
 mod ipc_server;
 mod nostr_service;
 
+pub use agent_lifecycle_store::{
+    AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
+    SealedAgentLifecycleState,
+};
 pub use config::{DaemonConfig, StorageProviderConfig};
 pub use core::{DaemonCore, PanicState};
 pub use core_error::CoreError;
