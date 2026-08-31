@@ -3,6 +3,8 @@
 pub mod announce;
 pub mod ble;
 pub mod fragment;
+pub mod noise;
 pub mod packet;
+pub mod private;
 pub mod routing;
 pub mod sync;
