@@ -1,6 +1,6 @@
 use omachat_registry_host::{
-    RegistryProcessCommand, RegistryProcessConfigError, load_registry_signing_seed,
-    parse_registry_process_args,
+    RegistryAcceptanceClock, RegistryProcessCommand, RegistryProcessConfigError,
+    load_registry_signing_seed, parse_registry_process_args,
 };
 use std::{
     ffi::OsString,
@@ -117,4 +117,12 @@ fn seed_loader_rejects_group_access_symlinks_and_bad_encoding() {
         load_registry_signing_seed(&link),
         Err(RegistryProcessConfigError::SeedIo { .. })
     ));
+}
+
+#[test]
+fn acceptance_clock_rejects_rollback_without_rewriting_time() {
+    let mut clock = RegistryAcceptanceClock::new();
+    assert_eq!(clock.observe(100).unwrap(), 100);
+    assert_eq!(clock.observe(100).unwrap(), 100);
+    assert!(clock.observe(99).is_err());
 }

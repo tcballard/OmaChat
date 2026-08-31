@@ -7,8 +7,8 @@
 mod process;
 
 pub use process::{
-    REGISTRYD_HELP, RegistryProcessCommand, RegistryProcessConfig, RegistryProcessConfigError,
-    load_registry_signing_seed, parse_registry_process_args,
+    REGISTRYD_HELP, RegistryAcceptanceClock, RegistryProcessCommand, RegistryProcessConfig,
+    RegistryProcessConfigError, load_registry_signing_seed, parse_registry_process_args,
 };
 
 use omachat_registry_transport::{
@@ -290,6 +290,7 @@ pub enum RegistryHostError {
     Service(RegistryServiceError),
     Task(JoinError),
     ClockBeforeUnixEpoch,
+    ClockRollback { previous: u64, current: u64 },
     InvalidRuntimeState,
 }
 
@@ -309,6 +310,10 @@ impl fmt::Display for RegistryHostError {
             Self::ClockBeforeUnixEpoch => {
                 formatter.write_str("registry host clock is before the Unix epoch")
             }
+            Self::ClockRollback { previous, current } => write!(
+                formatter,
+                "registry host clock rolled back from {previous} to {current}"
+            ),
             Self::InvalidRuntimeState => {
                 formatter.write_str("registry host connection accounting is inconsistent")
             }

@@ -1,4 +1,4 @@
-use crate::RegistryHostLimits;
+use crate::{RegistryHostError, RegistryHostLimits};
 use rustix::fs::{Mode, OFlags, open};
 use std::{
     error::Error,
@@ -9,7 +9,7 @@ use std::{
     net::SocketAddr,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use zeroize::Zeroizing;
 
@@ -29,7 +29,9 @@ Options:\n\
   --request-timeout-seconds N     Handshake/request timeout (default: 10)\n\
   --shutdown-grace-seconds N      Graceful drain timeout (default: 10)\n\
   --help                          Show this help\n\
-  --version                       Show the package version\n";
+  --version                       Show the package version\n\
+\n\
+Network: loopback only; expose only through a TLS reverse proxy.\n";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegistryProcessConfig {
@@ -44,6 +46,36 @@ pub enum RegistryProcessCommand {
     Run(RegistryProcessConfig),
     Help,
     Version,
+}
+
+#[derive(Debug, Default)]
+pub struct RegistryAcceptanceClock {
+    previous: Option<u64>,
+}
+
+impl RegistryAcceptanceClock {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { previous: None }
+    }
+
+    pub fn now(&mut self) -> Result<u64, RegistryHostError> {
+        let current = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| RegistryHostError::ClockBeforeUnixEpoch)?
+            .as_secs();
+        self.observe(current)
+    }
+
+    pub fn observe(&mut self, current: u64) -> Result<u64, RegistryHostError> {
+        if let Some(previous) = self.previous
+            && current < previous
+        {
+            return Err(RegistryHostError::ClockRollback { previous, current });
+        }
+        self.previous = Some(current);
+        Ok(current)
+    }
 }
 
 pub fn parse_registry_process_args(
