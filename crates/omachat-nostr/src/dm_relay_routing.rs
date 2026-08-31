@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
+use std::net::IpAddr;
 
 use k256::schnorr::VerifyingKey as SchnorrVerifyingKey;
 use url::Url;
@@ -151,7 +152,13 @@ fn route_bootstrap(
             return Err(DmRelayRoutingError::RelayEndpointTooLong);
         }
         let parsed = Url::parse(endpoint).map_err(|_| DmRelayRoutingError::InvalidRelayEndpoint)?;
-        if parsed.scheme() != "wss"
+        let secure_or_loopback = parsed.scheme() == "wss"
+            || (parsed.scheme() == "ws"
+                && parsed
+                    .host_str()
+                    .and_then(|host| host.parse::<IpAddr>().ok())
+                    .is_some_and(|address| address.is_loopback()));
+        if !secure_or_loopback
             || parsed.host_str().is_none()
             || !parsed.username().is_empty()
             || parsed.password().is_some()
@@ -338,6 +345,37 @@ mod tests {
                 },
             ),
             Err(DmRelayRoutingError::InvalidRecipientPublicKey)
+        );
+    }
+
+    #[test]
+    fn bootstrap_requires_tls_except_for_numeric_loopback() {
+        let recipient = xonly_public_key(&[43; 32]).expect("recipient public key");
+        let policy = DmRelayRoutingPolicy {
+            allow_bootstrap_when_missing: true,
+            ..DmRelayRoutingPolicy::default()
+        };
+        assert_eq!(
+            route_dm_relays(
+                &VerifiedDmRelayCache::new(),
+                &recipient,
+                NOW,
+                &["ws://relay.example".into()],
+                policy,
+            ),
+            Err(DmRelayRoutingError::InvalidRelayEndpoint)
+        );
+        assert_eq!(
+            route_dm_relays(
+                &VerifiedDmRelayCache::new(),
+                &recipient,
+                NOW,
+                &["ws://127.0.0.1:7447".into()],
+                policy,
+            )
+            .expect("loopback bootstrap")
+            .relay_urls(),
+            &["ws://127.0.0.1:7447/"]
         );
     }
 

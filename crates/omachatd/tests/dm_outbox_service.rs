@@ -3,12 +3,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::{SinkExt, StreamExt};
 use omachat_nostr::{
     auth::RelayAuthSigner,
-    dm_inbox_runtime::{DmInboxRuntimeConfig, DmInboxRuntimeError},
-    event::{EventLimits, SignedEvent},
+    discovery::NIP17_DM_RELAY_LIST_KIND,
+    dm_inbox_runtime::DmInboxRuntimeConfig,
+    dm_relay_routing::route_verified_dm_inbox,
+    dm_routed_publish::plan_routed_dm_publish,
+    event::{EventLimits, SignedEvent, UnsignedEvent},
     gift_wrap::{ChatRecipient, GiftWrapPersistence, create_chat_rumor, create_gift_wrap},
+    inbox::{DmInboxPolicy, verify_dm_inbox},
     relay::{RelayConfig, RelayRoute},
 };
-use omachatd::{DmInboxService, DmInboxServiceError};
+use omachatd::DmInboxService;
 use serde_json::{Value, json};
 use tokio::{
     net::{TcpListener, TcpStream},
@@ -23,7 +27,8 @@ async fn authenticated_service_publishes_only_the_bound_standard_recipient() {
     let relay_task = tokio::spawn(serve_relay(listener));
     let sender_secret_key = [31_u8; 32];
     let sender_signer = RelayAuthSigner::from_secret_key(sender_secret_key).unwrap();
-    let recipient_public_key = *RelayAuthSigner::from_secret_key([37_u8; 32])
+    let recipient_secret_key = [37_u8; 32];
+    let recipient_public_key = *RelayAuthSigner::from_secret_key(recipient_secret_key)
         .unwrap()
         .public_key();
     let recipient_public_key_hex = hex::encode(recipient_public_key);
@@ -50,6 +55,35 @@ async fn authenticated_service_publishes_only_the_bound_standard_recipient() {
         &EventLimits::default(),
     )
     .unwrap();
+    let relay_list = UnsignedEvent::new(
+        recipient_public_key_hex.clone(),
+        now,
+        NIP17_DM_RELAY_LIST_KIND,
+        vec![vec!["relay".into(), relay_url.clone()]],
+        String::new(),
+        &EventLimits::default(),
+    )
+    .unwrap()
+    .sign_with_aux(&recipient_secret_key, &[43; 32], &EventLimits::default())
+    .unwrap();
+    let inbox = verify_dm_inbox(
+        &relay_list,
+        &recipient_public_key,
+        now,
+        &EventLimits::default(),
+        &DmInboxPolicy {
+            require_tls: false,
+            ..DmInboxPolicy::default()
+        },
+    )
+    .unwrap();
+    let plan = plan_routed_dm_publish(
+        gift_wrap.clone(),
+        route_verified_dm_inbox(&inbox).unwrap(),
+        now,
+        &EventLimits::default(),
+    )
+    .unwrap();
 
     let mut relay = RelayConfig::new(relay_url, RelayRoute::Direct);
     relay.connect_timeout = Duration::from_secs(1);
@@ -71,24 +105,7 @@ async fn authenticated_service_publishes_only_the_bound_standard_recipient() {
     .unwrap();
     let handle = service.handle();
 
-    let wrong_recipient = hex::encode(
-        RelayAuthSigner::from_secret_key([41_u8; 32])
-            .unwrap()
-            .public_key(),
-    );
-    let rejected = handle
-        .publish(gift_wrap.clone(), wrong_recipient, now)
-        .await
-        .expect_err("recipient mismatch fails before network publication");
-    assert!(matches!(
-        rejected,
-        DmInboxServiceError::Runtime(DmInboxRuntimeError::OutboundRecipientMismatch)
-    ));
-
-    handle
-        .publish(gift_wrap.clone(), recipient_public_key_hex, now)
-        .await
-        .unwrap();
+    handle.publish(plan).await.unwrap();
     service.shutdown().await.unwrap();
     let published = timeout(Duration::from_secs(2), relay_task)
         .await
@@ -98,30 +115,19 @@ async fn authenticated_service_publishes_only_the_bound_standard_recipient() {
 }
 
 async fn serve_relay(listener: TcpListener) -> SignedEvent {
-    let (stream, _) = listener.accept().await.unwrap();
-    let mut websocket = accept_async(stream).await.unwrap();
-    websocket
-        .send(Message::Text(
-            json!(["AUTH", "daemon-outbox-test"]).to_string().into(),
-        ))
-        .await
-        .unwrap();
-    let auth_frame = next_json(&mut websocket).await;
-    assert_eq!(auth_frame[0], "AUTH");
-    let auth_event: SignedEvent = serde_json::from_value(auth_frame[1].clone()).unwrap();
-    auth_event
-        .verify(unix_now() + 1, &EventLimits::default())
-        .unwrap();
-    websocket
-        .send(Message::Text(
-            json!(["OK", auth_event.id, true, ""]).to_string().into(),
-        ))
-        .await
-        .unwrap();
-    let request = next_json(&mut websocket).await;
-    assert_eq!(request[0], "REQ");
-    assert_eq!(request[2]["kinds"], json!([1059]));
+    let (inbound_stream, _) = listener.accept().await.unwrap();
+    let inbound = tokio::spawn(async move {
+        let mut websocket = accept_async(inbound_stream).await.unwrap();
+        authenticate(&mut websocket, "daemon-inbox-test").await;
+        let request = next_json(&mut websocket).await;
+        assert_eq!(request[0], "REQ");
+        assert_eq!(request[2]["kinds"], json!([1059]));
+        wait_for_close(&mut websocket).await;
+    });
 
+    let (outbound_stream, _) = listener.accept().await.unwrap();
+    let mut websocket = accept_async(outbound_stream).await.unwrap();
+    authenticate(&mut websocket, "daemon-outbox-test").await;
     let publish = next_json(&mut websocket).await;
     assert_eq!(publish[0], "EVENT");
     let event: SignedEvent = serde_json::from_value(publish[1].clone()).unwrap();
@@ -135,6 +141,31 @@ async fn serve_relay(listener: TcpListener) -> SignedEvent {
         .await
         .unwrap();
 
+    wait_for_close(&mut websocket).await;
+    inbound.await.unwrap();
+    event
+}
+
+async fn authenticate(websocket: &mut WebSocketStream<TcpStream>, challenge: &str) {
+    websocket
+        .send(Message::Text(json!(["AUTH", challenge]).to_string().into()))
+        .await
+        .unwrap();
+    let auth_frame = next_json(websocket).await;
+    assert_eq!(auth_frame[0], "AUTH");
+    let auth_event: SignedEvent = serde_json::from_value(auth_frame[1].clone()).unwrap();
+    auth_event
+        .verify(unix_now() + 1, &EventLimits::default())
+        .unwrap();
+    websocket
+        .send(Message::Text(
+            json!(["OK", auth_event.id, true, ""]).to_string().into(),
+        ))
+        .await
+        .unwrap();
+}
+
+async fn wait_for_close(websocket: &mut WebSocketStream<TcpStream>) {
     while let Some(message) = websocket.next().await {
         match message {
             Ok(Message::Ping(payload)) => {
@@ -144,7 +175,6 @@ async fn serve_relay(listener: TcpListener) -> SignedEvent {
             Ok(_) => {}
         }
     }
-    event
 }
 
 async fn next_json(websocket: &mut WebSocketStream<TcpStream>) -> Value {

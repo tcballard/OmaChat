@@ -102,8 +102,9 @@ async fn command(core: &DaemonCore, command: Command) -> Value {
 }
 
 async fn serve_two_connections(listener: TcpListener) -> (String, String) {
+    let mut first_inbox = authenticated_connection(&listener, true).await;
     let first_id = {
-        let mut websocket = authenticated_connection(&listener).await;
+        let mut websocket = authenticated_connection(&listener, false).await;
         let publish = next_json(&mut websocket).await;
         assert_eq!(publish[0], "EVENT");
         let event: SignedEvent = serde_json::from_value(publish[1].clone()).unwrap();
@@ -117,9 +118,12 @@ async fn serve_two_connections(listener: TcpListener) -> (String, String) {
             .unwrap();
         event.id
     };
+    first_inbox.close(None).await.unwrap();
+    drop(first_inbox);
 
+    let second_inbox = authenticated_connection(&listener, true).await;
     let second_id = {
-        let mut websocket = authenticated_connection(&listener).await;
+        let mut websocket = authenticated_connection(&listener, false).await;
         let publish = next_json(&mut websocket).await;
         assert_eq!(publish[0], "EVENT");
         let event: SignedEvent = serde_json::from_value(publish[1].clone()).unwrap();
@@ -129,21 +133,18 @@ async fn serve_two_connections(listener: TcpListener) -> (String, String) {
             ))
             .await
             .unwrap();
-        while let Some(message) = websocket.next().await {
-            match message {
-                Ok(Message::Ping(payload)) => {
-                    websocket.send(Message::Pong(payload)).await.unwrap();
-                }
-                Ok(Message::Close(_)) | Err(_) => break,
-                Ok(_) => {}
-            }
-        }
+        let inbox = tokio::spawn(wait_for_close(second_inbox));
+        wait_for_close(websocket).await;
+        inbox.await.unwrap();
         event.id
     };
     (first_id, second_id)
 }
 
-async fn authenticated_connection(listener: &TcpListener) -> WebSocketStream<TcpStream> {
+async fn authenticated_connection(
+    listener: &TcpListener,
+    expect_subscription: bool,
+) -> WebSocketStream<TcpStream> {
     let (stream, _) = listener.accept().await.unwrap();
     let mut websocket = accept_async(stream).await.unwrap();
     websocket
@@ -166,9 +167,23 @@ async fn authenticated_connection(listener: &TcpListener) -> WebSocketStream<Tcp
         ))
         .await
         .unwrap();
-    let request = next_json(&mut websocket).await;
-    assert_eq!(request[0], "REQ");
+    if expect_subscription {
+        let request = next_json(&mut websocket).await;
+        assert_eq!(request[0], "REQ");
+    }
     websocket
+}
+
+async fn wait_for_close(mut websocket: WebSocketStream<TcpStream>) {
+    while let Some(message) = websocket.next().await {
+        match message {
+            Ok(Message::Ping(payload)) => {
+                websocket.send(Message::Pong(payload)).await.unwrap();
+            }
+            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
 }
 
 async fn next_json(websocket: &mut WebSocketStream<TcpStream>) -> Value {

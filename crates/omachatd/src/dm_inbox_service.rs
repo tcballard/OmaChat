@@ -4,13 +4,16 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::dm_delivery_service::{
+    DmDeliveryHandle, DmDeliveryService, DmDeliveryServiceConfig, DmDeliveryServiceError,
+};
 use omachat_nostr::{
     auth::RelayAuthSigner,
     dm_inbox_runtime::{
         AuthenticatedDmInboxRuntime, DmInboxRuntimeActivity, DmInboxRuntimeConfig,
         DmInboxRuntimeError, DmInboxRuntimeEvent,
     },
-    event::SignedEvent,
+    dm_routed_publish::RoutedDmPublishPlan,
     pool::PoolPublishResult,
     relay::{RelayConfig, RelayError, RelayRoute},
 };
@@ -23,10 +26,8 @@ const COMMAND_CAPACITY: usize = 64;
 
 enum DmInboxCommand {
     Publish {
-        event: SignedEvent,
-        recipient_public_key: String,
-        now: u64,
-        response: oneshot::Sender<Result<PoolPublishResult, DmInboxRuntimeError>>,
+        plan: RoutedDmPublishPlan,
+        response: oneshot::Sender<Result<PoolPublishResult, DmDeliveryServiceError>>,
     },
 }
 
@@ -35,26 +36,20 @@ pub struct DmInboxHandle {
     commands: mpsc::Sender<DmInboxCommand>,
     shutdown: watch::Sender<bool>,
     terminated: watch::Receiver<bool>,
+    delivery: DmDeliveryHandle,
 }
 
 impl DmInboxHandle {
     pub async fn publish(
         &self,
-        event: SignedEvent,
-        recipient_public_key: String,
-        now: u64,
+        plan: RoutedDmPublishPlan,
     ) -> Result<PoolPublishResult, DmInboxServiceError> {
         let mut shutdown = self.shutdown.subscribe();
         if *shutdown.borrow() || *self.terminated.borrow() {
             return Err(DmInboxServiceError::Stopped);
         }
         let (response, result) = oneshot::channel();
-        let command = DmInboxCommand::Publish {
-            event,
-            recipient_public_key,
-            now,
-            response,
-        };
+        let command = DmInboxCommand::Publish { plan, response };
         tokio::select! {
             biased;
             changed = shutdown.changed() => {
@@ -74,7 +69,7 @@ impl DmInboxHandle {
             received = result => {
                 received
                     .map_err(|_| DmInboxServiceError::Stopped)?
-                    .map_err(DmInboxServiceError::Runtime)
+                    .map_err(DmInboxServiceError::Delivery)
             }
         }
     }
@@ -83,6 +78,7 @@ impl DmInboxHandle {
     /// joined and the runtime-owned key copy has been dropped.
     pub async fn quiesce(&self) {
         self.shutdown.send_replace(true);
+        self.delivery.quiesce().await;
         let mut terminated = self.terminated.clone();
         while !*terminated.borrow() {
             if terminated.changed().await.is_err() {
@@ -95,6 +91,7 @@ impl DmInboxHandle {
 pub struct DmInboxService {
     handle: DmInboxHandle,
     task: Option<JoinHandle<Result<(), DmInboxServiceError>>>,
+    delivery: Option<DmDeliveryService>,
 }
 
 impl DmInboxService {
@@ -174,6 +171,8 @@ impl DmInboxService {
         ready: Option<mpsc::Sender<()>>,
     ) -> Result<Self, DmInboxServiceError> {
         let now = unix_time()?;
+        let delivery_signer = auth_signer.clone();
+        let delivery_authentication_timeout = runtime_config.authentication_timeout;
         let mut runtime = AuthenticatedDmInboxRuntime::connect(
             relay_configs,
             auth_signer,
@@ -191,6 +190,21 @@ impl DmInboxService {
             }
         }
 
+        let delivery = match DmDeliveryService::spawn(
+            delivery_signer,
+            DmDeliveryServiceConfig {
+                authentication_timeout: delivery_authentication_timeout,
+                transport_route: RelayRoute::Direct,
+            },
+        ) {
+            Ok(delivery) => delivery,
+            Err(error) => {
+                let _ = runtime.shutdown().await;
+                return Err(DmInboxServiceError::Delivery(error));
+            }
+        };
+        let delivery_handle = delivery.handle();
+
         let (shutdown, shutdown_receiver) = watch::channel(false);
         let (terminated_sender, terminated) = watch::channel(false);
         let (commands, command_receiver) = mpsc::channel(COMMAND_CAPACITY);
@@ -201,14 +215,17 @@ impl DmInboxService {
             ready,
             shutdown_receiver,
             terminated_sender,
+            delivery_handle.clone(),
         ));
         Ok(Self {
             handle: DmInboxHandle {
                 commands,
                 shutdown,
                 terminated,
+                delivery: delivery_handle,
             },
             task: Some(task),
+            delivery: Some(delivery),
         })
     }
 
@@ -220,7 +237,16 @@ impl DmInboxService {
     pub async fn shutdown(mut self) -> Result<(), DmInboxServiceError> {
         self.handle.quiesce().await;
         let task = self.task.take().expect("inbox service task exists");
-        task.await.map_err(|_| DmInboxServiceError::Task)?
+        let run_result = task.await.map_err(|_| DmInboxServiceError::Task)?;
+        let delivery_result = self
+            .delivery
+            .take()
+            .expect("delivery service exists")
+            .shutdown()
+            .await
+            .map_err(DmInboxServiceError::Delivery);
+        run_result?;
+        delivery_result
     }
 }
 
@@ -240,9 +266,17 @@ async fn run_service(
     ready: Option<mpsc::Sender<()>>,
     mut shutdown: watch::Receiver<bool>,
     terminated: watch::Sender<bool>,
+    delivery: DmDeliveryHandle,
 ) -> Result<(), DmInboxServiceError> {
-    let run_result =
-        run_until_shutdown(&mut runtime, inbound, commands, ready, &mut shutdown).await;
+    let run_result = run_until_shutdown(
+        &mut runtime,
+        inbound,
+        commands,
+        ready,
+        &mut shutdown,
+        delivery,
+    )
+    .await;
     let relay_shutdown = runtime.shutdown().await;
     terminated.send_replace(true);
 
@@ -263,6 +297,7 @@ async fn run_until_shutdown(
     mut commands: mpsc::Receiver<DmInboxCommand>,
     mut ready: Option<mpsc::Sender<()>>,
     shutdown: &mut watch::Receiver<bool>,
+    delivery: DmDeliveryHandle,
 ) -> Result<(), DmInboxServiceError> {
     'service: loop {
         if *shutdown.borrow() {
@@ -296,9 +331,7 @@ async fn run_until_shutdown(
                 };
                 match command {
                     DmInboxCommand::Publish {
-                        event,
-                        recipient_public_key,
-                        now,
+                        plan,
                         response,
                     } => {
                         let result = tokio::select! {
@@ -307,7 +340,7 @@ async fn run_until_shutdown(
                                 let _ = changed;
                                 return Ok(());
                             }
-                            result = runtime.publish(event, &recipient_public_key, now) => result,
+                            result = delivery.publish(plan) => result,
                         };
                         let _ = response.send(result);
                     }
@@ -347,6 +380,7 @@ fn unix_time() -> Result<u64, DmInboxServiceError> {
 #[derive(Debug)]
 pub enum DmInboxServiceError {
     Runtime(DmInboxRuntimeError),
+    Delivery(DmDeliveryServiceError),
     RelayShutdown {
         relay_index: usize,
         error: RelayError,
@@ -360,6 +394,7 @@ impl fmt::Display for DmInboxServiceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Runtime(error) => write!(formatter, "authenticated inbox failed: {error}"),
+            Self::Delivery(error) => write!(formatter, "outbound DM delivery failed: {error}"),
             Self::RelayShutdown { relay_index, error } => {
                 write!(
                     formatter,
@@ -377,6 +412,7 @@ impl Error for DmInboxServiceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Runtime(error) => Some(error),
+            Self::Delivery(error) => Some(error),
             Self::RelayShutdown { error, .. } => Some(error),
             Self::Clock | Self::Stopped | Self::Task => None,
         }

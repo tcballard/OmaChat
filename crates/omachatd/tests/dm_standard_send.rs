@@ -91,31 +91,19 @@ async fn command(core: &DaemonCore, command: Command) -> Value {
 }
 
 async fn serve_relay(listener: TcpListener) -> SignedEvent {
-    let (stream, _) = listener.accept().await.unwrap();
-    let mut websocket = accept_async(stream).await.unwrap();
-    websocket
-        .send(Message::Text(
-            json!(["AUTH", "daemon-standard-send-test"])
-                .to_string()
-                .into(),
-        ))
-        .await
-        .unwrap();
-    let auth_frame = next_json(&mut websocket).await;
-    assert_eq!(auth_frame[0], "AUTH");
-    let auth_event: SignedEvent = serde_json::from_value(auth_frame[1].clone()).unwrap();
-    auth_event
-        .verify(unix_now() + 1, &EventLimits::default())
-        .unwrap();
-    websocket
-        .send(Message::Text(
-            json!(["OK", auth_event.id, true, ""]).to_string().into(),
-        ))
-        .await
-        .unwrap();
-    let request = next_json(&mut websocket).await;
-    assert_eq!(request[0], "REQ");
-    assert_eq!(request[2]["kinds"], json!([1059]));
+    let (inbound_stream, _) = listener.accept().await.unwrap();
+    let inbound = tokio::spawn(async move {
+        let mut websocket = accept_async(inbound_stream).await.unwrap();
+        authenticate(&mut websocket, "daemon-standard-inbox-test").await;
+        let request = next_json(&mut websocket).await;
+        assert_eq!(request[0], "REQ");
+        assert_eq!(request[2]["kinds"], json!([1059]));
+        wait_for_close(&mut websocket).await;
+    });
+
+    let (outbound_stream, _) = listener.accept().await.unwrap();
+    let mut websocket = accept_async(outbound_stream).await.unwrap();
+    authenticate(&mut websocket, "daemon-standard-send-test").await;
     let publish = next_json(&mut websocket).await;
     assert_eq!(publish[0], "EVENT");
     let event: SignedEvent = serde_json::from_value(publish[1].clone()).unwrap();
@@ -128,6 +116,31 @@ async fn serve_relay(listener: TcpListener) -> SignedEvent {
         ))
         .await
         .unwrap();
+    wait_for_close(&mut websocket).await;
+    inbound.await.unwrap();
+    event
+}
+
+async fn authenticate(websocket: &mut WebSocketStream<TcpStream>, challenge: &str) {
+    websocket
+        .send(Message::Text(json!(["AUTH", challenge]).to_string().into()))
+        .await
+        .unwrap();
+    let auth_frame = next_json(websocket).await;
+    assert_eq!(auth_frame[0], "AUTH");
+    let auth_event: SignedEvent = serde_json::from_value(auth_frame[1].clone()).unwrap();
+    auth_event
+        .verify(unix_now() + 1, &EventLimits::default())
+        .unwrap();
+    websocket
+        .send(Message::Text(
+            json!(["OK", auth_event.id, true, ""]).to_string().into(),
+        ))
+        .await
+        .unwrap();
+}
+
+async fn wait_for_close(websocket: &mut WebSocketStream<TcpStream>) {
     while let Some(message) = websocket.next().await {
         match message {
             Ok(Message::Ping(payload)) => {
@@ -137,7 +150,6 @@ async fn serve_relay(listener: TcpListener) -> SignedEvent {
             Ok(_) => {}
         }
     }
-    event
 }
 
 async fn next_json(websocket: &mut WebSocketStream<TcpStream>) -> Value {

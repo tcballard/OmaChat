@@ -1164,7 +1164,58 @@ impl DaemonCore {
                     let Some(handle) = nip17_handle.as_ref() else {
                         return;
                     };
-                    if handle.publish(event, peer, now).await.is_ok() {
+                    let recipient = match decode_xonly(&peer) {
+                        Ok(recipient) => recipient,
+                        Err(_) => {
+                            self.record_outbox_attempt(
+                                &id,
+                                omachat_store::AttemptOutcome::Rejected,
+                                now,
+                            );
+                            return;
+                        }
+                    };
+                    let bootstrap_relays = self
+                        .inner
+                        .config
+                        .lock()
+                        .expect("config mutex poisoned")
+                        .dm_relays
+                        .clone();
+                    let route = {
+                        let _storage = self
+                            .inner
+                            .storage_transaction
+                            .lock()
+                            .expect("storage transaction mutex poisoned");
+                        crate::dm_relay_cache_store::SealedDmRelayCache::new(&self.inner.store)
+                            .route(
+                                &recipient,
+                                now,
+                                &bootstrap_relays,
+                                omachat_nostr::dm_relay_routing::DmRelayRoutingPolicy {
+                                    allow_bootstrap_when_missing: true,
+                                    ..omachat_nostr::dm_relay_routing::DmRelayRoutingPolicy::default()
+                                },
+                                &EventLimits::default(),
+                                &omachat_nostr::inbox::DmInboxPolicy::default(),
+                            )
+                    };
+                    let published = match route {
+                        Ok(route) => {
+                            match omachat_nostr::dm_routed_publish::plan_routed_dm_publish(
+                                event,
+                                route,
+                                now,
+                                &EventLimits::default(),
+                            ) {
+                                Ok(plan) => handle.publish(plan).await.is_ok(),
+                                Err(_) => false,
+                            }
+                        }
+                        Err(_) => false,
+                    };
+                    if published {
                         omachat_store::AttemptOutcome::Acknowledged
                     } else {
                         omachat_store::AttemptOutcome::Unavailable
