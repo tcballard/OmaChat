@@ -10,6 +10,8 @@ test -s packaging/omarchy-quattro/manifest.json
 test -s packaging/omarchy-quattro/Widget.qml
 test -x scripts/package-release.sh
 sh -n scripts/package-release.sh
+test -x scripts/check-release-size.sh
+sh -n scripts/check-release-size.sh
 for shell in omachat.bash omachat-ctl.bash _omachat _omachat-ctl omachat.fish omachat-ctl.fish; do
   test -s "packaging/completions/$shell"
 done
