@@ -18,5 +18,6 @@ pub mod gift_wrap;
 pub mod inbox;
 pub mod mailbox;
 pub mod pool;
+pub mod profile_metadata;
 pub mod relay;
 pub mod rendezvous;
