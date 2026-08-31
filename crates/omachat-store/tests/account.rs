@@ -1,10 +1,47 @@
-use omachat_crypto::{AccountError, AccountSecrets, DisplayName, GlobalHandle, IdentitySecrets};
+use omachat_crypto::{
+    AccountError, AccountSecrets, DisplayName, GlobalHandle, IdentitySecrets,
+    SignedLocalAccountBinding,
+};
 use omachat_store::{
     AccountVault, AccountVaultError, IdentityVault, RequestedProvider, SealedStore,
 };
-use serde_json::json;
-use std::fs;
+use serde::Serialize;
+use std::{fs, io::Cursor};
 use tempfile::tempdir;
+use zeroize::Zeroizing;
+
+const MAX_TEST_ACCOUNT_RECORD_PLAINTEXT_BYTES: usize = 4 * 1024;
+
+#[derive(Serialize)]
+struct TestPersistedAccount<'account> {
+    version: u16,
+    secrets: &'account AccountSecrets,
+    binding: &'account SignedLocalAccountBinding,
+}
+
+fn write_account_record(
+    store: &SealedStore,
+    secrets: &AccountSecrets,
+    binding: &SignedLocalAccountBinding,
+) {
+    let mut encoded = Zeroizing::new([0_u8; MAX_TEST_ACCOUNT_RECORD_PLAINTEXT_BYTES]);
+    let encoded_bytes = {
+        let mut writer = Cursor::new(&mut encoded[..]);
+        serde_json::to_writer(
+            &mut writer,
+            &TestPersistedAccount {
+                version: 1,
+                secrets,
+                binding,
+            },
+        )
+        .unwrap();
+        usize::try_from(writer.position()).unwrap()
+    };
+    store
+        .write("account-v1", &encoded[..encoded_bytes])
+        .unwrap();
+}
 
 fn device_identity(seed: u8) -> IdentitySecrets {
     IdentitySecrets::from_all_seeds([seed; 32], [seed + 1; 32], [seed + 2; 32], [seed + 3; 32])
@@ -175,17 +212,7 @@ async fn invalid_binding_signature_and_secret_authority_mismatch_are_rejected() 
     let account_secrets = AccountSecrets::from_seeds([70; 32], [71; 32]);
     let mut binding = account_secrets.sign_local_binding(None, None, device_keys, 1, 100);
     binding.signature[0] ^= 1;
-    store
-        .write(
-            "account-v1",
-            &serde_json::to_vec(&json!({
-                "version": 1,
-                "secrets": account_secrets,
-                "binding": binding,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+    write_account_record(&store, &account_secrets, &binding);
     assert!(matches!(
         AccountVault::load_or_create(&store, &identity, None, None, 200),
         Err(AccountVaultError::Account(AccountError::InvalidSignature))
@@ -199,17 +226,7 @@ async fn invalid_binding_signature_and_secret_authority_mismatch_are_rejected() 
         1,
         100,
     );
-    store
-        .write(
-            "account-v1",
-            &serde_json::to_vec(&json!({
-                "version": 1,
-                "secrets": other_secrets,
-                "binding": binding,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+    write_account_record(&store, &other_secrets, &binding);
     assert!(matches!(
         AccountVault::load_or_create(&store, &identity, None, None, 200),
         Err(AccountVaultError::AccountAuthorityMismatch)

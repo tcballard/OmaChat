@@ -4,10 +4,12 @@ use omachat_crypto::{
     GlobalHandle, IdentityError, IdentitySecrets, SignedLocalAccountBinding,
 };
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, io::Cursor};
+use zeroize::Zeroizing;
 
 const ACCOUNT_RECORD: &str = "account-v1";
 const ACCOUNT_RECORD_VERSION: u16 = 1;
+const MAX_ACCOUNT_RECORD_PLAINTEXT_BYTES: usize = 4 * 1024;
 const INITIAL_BINDING_REVISION: u64 = 1;
 
 #[derive(Deserialize)]
@@ -66,6 +68,9 @@ impl AccountVault {
         let device_keys = current_device_keys(identity)?;
         match store.read(ACCOUNT_RECORD) {
             Ok(bytes) => {
+                // Take ownership of the decrypted allocation immediately so
+                // every exit path wipes the serialized account/recovery seeds.
+                let bytes = Zeroizing::new(bytes);
                 let persisted: PersistedAccount =
                     serde_json::from_slice(&bytes).map_err(|_| AccountVaultError::Encoding)?;
                 Self::validate_and_update(
@@ -162,14 +167,24 @@ fn current_device_keys(identity: &IdentitySecrets) -> Result<DevicePublicKeys, A
 }
 
 fn persist(store: &SealedStore, account: &LocalAccount) -> Result<(), AccountVaultError> {
-    let encoded = serde_json::to_vec(&PersistedAccountRef {
-        version: ACCOUNT_RECORD_VERSION,
-        secrets: &account.secrets,
-        binding: &account.binding,
-    })
-    .map_err(|_| AccountVaultError::Encoding)?;
+    // Serialize into a bounded zeroizing buffer. A growable Vec could leave
+    // an earlier plaintext allocation behind when it reallocates.
+    let mut encoded = Zeroizing::new([0_u8; MAX_ACCOUNT_RECORD_PLAINTEXT_BYTES]);
+    let encoded_bytes = {
+        let mut writer = Cursor::new(&mut encoded[..]);
+        serde_json::to_writer(
+            &mut writer,
+            &PersistedAccountRef {
+                version: ACCOUNT_RECORD_VERSION,
+                secrets: &account.secrets,
+                binding: &account.binding,
+            },
+        )
+        .map_err(|_| AccountVaultError::Encoding)?;
+        usize::try_from(writer.position()).map_err(|_| AccountVaultError::Encoding)?
+    };
     store
-        .write(ACCOUNT_RECORD, &encoded)
+        .write(ACCOUNT_RECORD, &encoded[..encoded_bytes])
         .map_err(AccountVaultError::Store)
 }
 
