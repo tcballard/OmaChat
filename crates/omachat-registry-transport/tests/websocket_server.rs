@@ -6,8 +6,8 @@ use omachat_crypto::{
 use omachat_registry::{CommandId, HandleClaim};
 use omachat_registry_transport::{
     MAX_REGISTRY_REQUESTS_PER_CONNECTION, RegistryClient, RegistryRequest, RegistryService,
-    RegistryWebSocketServerError, RegistryWebSocketTransport, decode_response, encode_request,
-    serve_registry_websocket_connection,
+    RegistryWebSocketServerError, RegistryWebSocketTransport, accept_registry_websocket_request,
+    decode_response, encode_request, serve_registry_websocket_connection,
 };
 use omachat_store::{RequestedProvider, SealedStore};
 use tempfile::tempdir;
@@ -107,7 +107,7 @@ async fn text_requests_fail_before_reaching_registry_state() {
 }
 
 #[tokio::test]
-async fn one_connection_cannot_exceed_the_request_budget() {
+async fn request_admission_does_not_borrow_authoritative_state() {
     let directory = tempdir().unwrap();
     let store = SealedStore::open(directory.path(), RequestedProvider::File)
         .await
@@ -116,40 +116,24 @@ async fn one_connection_cannot_exceed_the_request_budget() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("ws://{}/registry-v1", listener.local_addr().unwrap());
 
-    let server = async {
-        let (stream, _) = listener.accept().await.unwrap();
-        serve_registry_websocket_connection(stream, &mut service, || 100).await
-    };
-    let client = async {
+    assert_eq!(MAX_REGISTRY_REQUESTS_PER_CONNECTION, 1);
+    let client = tokio::spawn(async move {
         let (mut socket, _) = connect_async(&endpoint).await.unwrap();
         let handle = GlobalHandle::parse("nobody").unwrap();
-        for request_id in 1..=MAX_REGISTRY_REQUESTS_PER_CONNECTION {
-            let request = encode_request(&RegistryRequest::lookup_handle(
-                u64::try_from(request_id).unwrap(),
-                handle.clone(),
-            ))
-            .unwrap();
-            socket.send(Message::Binary(request.into())).await.unwrap();
-            let Message::Binary(response) = socket.next().await.unwrap().unwrap() else {
-                panic!("registry server must return binary responses");
-            };
-            assert_eq!(
-                decode_response(&response).unwrap().request_id,
-                u64::try_from(request_id).unwrap()
-            );
-        }
-        let request = encode_request(&RegistryRequest::lookup_handle(
-            u64::try_from(MAX_REGISTRY_REQUESTS_PER_CONNECTION + 1).unwrap(),
-            handle,
-        ))
-        .unwrap();
+        let request = encode_request(&RegistryRequest::lookup_handle(1, handle)).unwrap();
         socket.send(Message::Binary(request.into())).await.unwrap();
-        let _ = socket.next().await;
+        socket
+    });
+
+    let (stream, _) = listener.accept().await.unwrap();
+    let pending = accept_registry_websocket_request(stream).await.unwrap();
+    let response = service.handle(pending.request(), 100).unwrap();
+    let mut socket = client.await.unwrap();
+    let (responded, message) = tokio::join!(pending.respond(response), socket.next());
+    responded.unwrap();
+    let Message::Binary(response) = message.unwrap().unwrap() else {
+        panic!("registry server must return a binary response");
     };
-    let (served, ()) = tokio::join!(server, client);
-    assert!(matches!(
-        served,
-        Err(RegistryWebSocketServerError::RequestLimitExceeded)
-    ));
+    assert_eq!(decode_response(&response).unwrap().request_id, 1);
     assert!(service.is_available());
 }

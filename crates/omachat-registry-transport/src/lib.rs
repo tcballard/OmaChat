@@ -12,7 +12,8 @@ mod websocket_server;
 pub use evidence::{RegistryEvidenceClient, RegistryEvidenceError, RegistryEvidenceResolution};
 pub use websocket::{RegistryWebSocketError, RegistryWebSocketTransport};
 pub use websocket_server::{
-    MAX_REGISTRY_REQUESTS_PER_CONNECTION, RegistryWebSocketServerError,
+    MAX_REGISTRY_REQUESTS_PER_CONNECTION, PendingRegistryWebSocketRequest,
+    RegistryWebSocketServerError, accept_registry_websocket_request,
     serve_registry_websocket_connection,
 };
 
