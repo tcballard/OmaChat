@@ -1,6 +1,7 @@
 //! Bounded, cancellation-safe connection to one Nostr relay.
 
 use crate::{
+    auth::RelayAuthSigner,
     event::{EventLimits, SignedEvent},
     frame::{ClientFrame, FrameError, FrameLimits, RelayFrame},
 };
@@ -44,6 +45,7 @@ pub enum RelayRoute {
 pub struct RelayConfig {
     pub url: String,
     pub route: RelayRoute,
+    pub auth: Option<RelayAuthSigner>,
     pub command_capacity: usize,
     pub notification_capacity: usize,
     pub connect_timeout: Duration,
@@ -65,6 +67,7 @@ impl RelayConfig {
         Self {
             url,
             route,
+            auth: None,
             command_capacity: 64,
             notification_capacity: 256,
             connect_timeout: Duration::from_secs(20),
@@ -135,6 +138,13 @@ pub enum RelayNotification {
     },
     Notice(String),
     AuthChallenge(String),
+    Authenticated {
+        public_key: String,
+    },
+    AuthenticationRejected {
+        public_key: String,
+        message: String,
+    },
 }
 
 /// Successful acknowledgement returned by a relay for a published event.
@@ -331,6 +341,7 @@ async fn run_actor_loop(
     let mut subscriptions: HashMap<String, Vec<Value>> = HashMap::new();
     let mut pending: HashMap<String, oneshot::Sender<Result<PublishAcknowledgement, RelayError>>> =
         HashMap::new();
+    let mut pending_authentication: Option<PendingAuthentication> = None;
     let mut consecutive_failures = 0_u32;
     loop {
         let _ = health.send(RelayHealth::Connecting);
@@ -429,7 +440,9 @@ async fn run_actor_loop(
                                 &config,
                                 &notifications,
                                 &mut pending,
-                            ).is_err() {
+                                &mut pending_authentication,
+                                &mut socket,
+                            ).await.is_err() {
                                 break true;
                             }
                         }
@@ -453,6 +466,7 @@ async fn run_actor_loop(
             break;
         }
         fail_pending(&mut pending, RelayError::Disconnected);
+        pending_authentication = None;
         let _ = health.send(RelayHealth::Disconnected);
         notify(&notifications, RelayNotification::Disconnected)?;
         consecutive_failures = if session_progress {
@@ -521,11 +535,18 @@ fn reject_command(command: Command, error: RelayError) {
     }
 }
 
-fn handle_relay_frame(
+struct PendingAuthentication {
+    event_id: String,
+    public_key: String,
+}
+
+async fn handle_relay_frame(
     bytes: &[u8],
     config: &RelayConfig,
     notifications: &mpsc::Sender<RelayNotification>,
     pending: &mut HashMap<String, oneshot::Sender<Result<PublishAcknowledgement, RelayError>>>,
+    pending_authentication: &mut Option<PendingAuthentication>,
+    socket: &mut RelaySocket,
 ) -> Result<(), RelayError> {
     let frame = RelayFrame::from_json(
         bytes,
@@ -553,6 +574,30 @@ fn handle_relay_frame(
             accepted,
             message,
         } => {
+            if pending_authentication
+                .as_ref()
+                .is_some_and(|authentication| authentication.event_id == event_id)
+            {
+                let authentication = pending_authentication
+                    .take()
+                    .expect("matching pending authentication exists");
+                return if accepted {
+                    notify(
+                        notifications,
+                        RelayNotification::Authenticated {
+                            public_key: authentication.public_key,
+                        },
+                    )
+                } else {
+                    notify(
+                        notifications,
+                        RelayNotification::AuthenticationRejected {
+                            public_key: authentication.public_key,
+                            message,
+                        },
+                    )
+                };
+            }
             if let Some(response) = pending.remove(&event_id) {
                 let result = if accepted {
                     Ok(PublishAcknowledgement { event_id, message })
@@ -575,7 +620,28 @@ fn handle_relay_frame(
         ),
         RelayFrame::Notice(message) => notify(notifications, RelayNotification::Notice(message)),
         RelayFrame::AuthChallenge(challenge) => {
-            notify(notifications, RelayNotification::AuthChallenge(challenge))
+            notify(
+                notifications,
+                RelayNotification::AuthChallenge(challenge.clone()),
+            )?;
+            let Some(signer) = &config.auth else {
+                return Ok(());
+            };
+            let event = signer
+                .sign_challenge(
+                    &config.url,
+                    &challenge,
+                    unix_timestamp(),
+                    &config.event_limits,
+                )
+                .map_err(|error| RelayError::Authentication(error.to_string()))?;
+            let authentication = PendingAuthentication {
+                event_id: event.id.clone(),
+                public_key: event.pubkey.clone(),
+            };
+            send_frame(socket, &ClientFrame::Auth(event), &config.frame_limits).await?;
+            *pending_authentication = Some(authentication);
+            Ok(())
         }
     }
 }
@@ -661,6 +727,7 @@ pub enum RelayError {
     Task,
     DuplicatePublish,
     PublishRejected(String),
+    Authentication(String),
 }
 
 impl fmt::Display for RelayError {
@@ -686,6 +753,9 @@ impl fmt::Display for RelayError {
                 formatter.write_str("event is already awaiting acknowledgement")
             }
             Self::PublishRejected(message) => write!(formatter, "relay rejected event: {message}"),
+            Self::Authentication(message) => {
+                write!(formatter, "relay authentication failed: {message}")
+            }
         }
     }
 }

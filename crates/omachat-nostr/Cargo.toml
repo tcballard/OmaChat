@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 base64 = "=0.22.1"
 futures-util = "=0.3.34"
+getrandom = "=0.4.3"
 hex = "=0.4.3"
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
@@ -20,6 +21,7 @@ tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi
 tokio-socks = "=0.5.3"
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 url = "=2.5.8"
+zeroize = { version = "=1.9.0", features = ["derive"] }
 
 [dev-dependencies]
 rcgen = "=0.14.10"

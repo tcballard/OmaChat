@@ -1,5 +1,6 @@
 use futures_util::{SinkExt, StreamExt};
 use omachat_nostr::{
+    auth::{NIP42_AUTH_KIND, RelayAuthSigner},
     event::{EventLimits, UnsignedEvent, xonly_public_key},
     relay::{RelayConfig, RelayConnection, RelayError, RelayNotification, RelayRoute},
 };
@@ -192,6 +193,115 @@ async fn surfaces_auth_required_publish_rejection() {
         connection.publish(event()).await.unwrap_err(),
         RelayError::PublishRejected("auth-required: sign in".into())
     );
+    connection.shutdown().await.unwrap();
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_nip42_challenge_with_the_configured_principal() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let relay_url = format!("ws://{address}/");
+    let agent_secret = [0x31; 32];
+    let expected_public_key = hex::encode(xonly_public_key(&agent_secret).unwrap());
+    let server_relay_url = relay_url.clone();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(
+                json!(["AUTH", "hermetic-challenge"]).to_string().into(),
+            ))
+            .await
+            .unwrap();
+        let auth = next_json(&mut socket).await;
+        assert_eq!(auth[0], "AUTH");
+        let event: omachat_nostr::event::SignedEvent =
+            serde_json::from_value(auth[1].clone()).unwrap();
+        event.verify(now(), &EventLimits::default()).unwrap();
+        assert_eq!(event.kind, NIP42_AUTH_KIND);
+        assert_eq!(event.pubkey, expected_public_key);
+        assert_eq!(event.content, "");
+        assert_eq!(
+            event.tags,
+            vec![
+                vec!["relay".to_owned(), server_relay_url],
+                vec!["challenge".to_owned(), "hermetic-challenge".to_owned()],
+            ]
+        );
+        socket
+            .send(Message::Text(
+                json!(["OK", event.id, true, "authenticated"])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        while let Some(Ok(message)) = socket.next().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+
+    let mut relay_config = config(address);
+    relay_config.auth = Some(RelayAuthSigner::from_secret_key(agent_secret).unwrap());
+    let mut connection = RelayConnection::spawn(relay_config).unwrap();
+    assert!(matches!(
+        wait_for(&mut connection, |item| matches!(
+            item,
+            RelayNotification::AuthChallenge(_)
+        ))
+        .await,
+        RelayNotification::AuthChallenge(challenge) if challenge == "hermetic-challenge"
+    ));
+    assert!(matches!(
+        wait_for(&mut connection, |item| matches!(
+            item,
+            RelayNotification::Authenticated { .. }
+        ))
+        .await,
+        RelayNotification::Authenticated { public_key }
+            if public_key == hex::encode(xonly_public_key(&agent_secret).unwrap())
+    ));
+    connection.shutdown().await.unwrap();
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn reports_nip42_rejection_without_claiming_authentication() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        socket
+            .send(Message::Text(json!(["AUTH", "denied"]).to_string().into()))
+            .await
+            .unwrap();
+        let auth = next_json(&mut socket).await;
+        socket
+            .send(Message::Text(
+                json!(["OK", auth[1]["id"], false, "restricted: not a member"])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+    });
+
+    let mut relay_config = config(address);
+    relay_config.auth = Some(RelayAuthSigner::from_secret_key([0x32; 32]).unwrap());
+    let mut connection = RelayConnection::spawn(relay_config).unwrap();
+    assert!(matches!(
+        wait_for(&mut connection, |item| matches!(
+            item,
+            RelayNotification::AuthenticationRejected { .. }
+        ))
+        .await,
+        RelayNotification::AuthenticationRejected { message, .. }
+            if message == "restricted: not a member"
+    ));
     connection.shutdown().await.unwrap();
     server.await.unwrap();
 }
