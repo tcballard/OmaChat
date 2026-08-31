@@ -3,6 +3,7 @@
 mod account;
 mod agent;
 mod identity;
+mod nip44;
 
 pub use account::{
     AccountError, AccountId, AccountPublicIdentity, AccountSecrets, DeviceId, DevicePublicKeys,
@@ -14,6 +15,11 @@ pub use agent::{
 };
 pub use identity::{
     DerivationSource, DerivedNostrIdentity, IdentityError, IdentitySecrets, PublicIdentity,
+};
+pub use nip44::{
+    MAX_PLAINTEXT_LEN as NIP44_MAX_PLAINTEXT_LEN, Nip44Error,
+    conversation_key as nip44_conversation_key, decrypt as nip44_decrypt, encrypt as nip44_encrypt,
+    encrypt_with_nonce as nip44_encrypt_with_nonce,
 };
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
