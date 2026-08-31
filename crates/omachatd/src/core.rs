@@ -332,6 +332,52 @@ impl DaemonCore {
         })
     }
 
+    pub async fn discover_dm_relay_list(
+        &self,
+        recipient_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<omachat_nostr::dm_relay_cache::CacheMutation, CoreError> {
+        let _operation = self.inner.operations.read().await;
+        let (relay_configs, auth_signer) = self.with_active_transition(|| {
+            let relay_configs = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .dm_relays
+                .iter()
+                .cloned()
+                .map(|url| {
+                    omachat_nostr::relay::RelayConfig::new(
+                        url,
+                        omachat_nostr::relay::RelayRoute::Direct,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let auth_signer = RelayAuthSigner::from_secret_key(*nostr.private_key())
+                .map_err(|_| CoreError::Nostr)?;
+            Ok((relay_configs, auth_signer))
+        })?;
+        let discovered = omachat_nostr::dm_relay_discovery::discover_dm_relay_list(
+            relay_configs,
+            auth_signer,
+            recipient_public_key,
+            now,
+            &EventLimits::default(),
+            &omachat_nostr::inbox::DmInboxPolicy::default(),
+            &omachat_nostr::dm_relay_discovery::DmRelayDiscoveryConfig::default(),
+        )
+        .await
+        .map_err(CoreError::DmRelayDiscovery)?;
+        self.remember_dm_relay_list(&discovered.event, recipient_public_key, now)
+    }
+
     pub async fn start_dm_inbox(
         &self,
         inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,

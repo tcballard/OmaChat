@@ -12,6 +12,7 @@ pub enum CoreError {
     RelayPool(omachat_nostr::pool::RelayPoolError),
     DmInbox(crate::dm_inbox_service::DmInboxServiceError),
     DmRelayCache(crate::dm_relay_cache_store::SealedDmRelayCacheError),
+    DmRelayDiscovery(omachat_nostr::dm_relay_discovery::DmRelayDiscoveryError),
     InvalidConfig,
     InvalidCommand,
     InvalidGeohash,
@@ -49,6 +50,7 @@ impl CoreError {
             | Self::RelayPool(_)
             | Self::DmInbox(_)
             | Self::DmRelayCache(_)
+            | Self::DmRelayDiscovery(_)
             | Self::Nostr
             | Self::Encoding
             | Self::Clock
@@ -71,6 +73,9 @@ impl fmt::Display for CoreError {
             Self::RelayPool(error) => write!(formatter, "relay pool failed: {error}"),
             Self::DmInbox(error) => write!(formatter, "private inbox failed: {error}"),
             Self::DmRelayCache(error) => write!(formatter, "recipient relay cache failed: {error}"),
+            Self::DmRelayDiscovery(error) => {
+                write!(formatter, "recipient relay discovery failed: {error}")
+            }
             Self::InvalidConfig => formatter.write_str("daemon configuration is invalid"),
             Self::InvalidCommand => formatter.write_str("command is invalid in this context"),
             Self::InvalidGeohash => formatter.write_str("geohash is invalid"),
@@ -106,6 +111,7 @@ impl Error for CoreError {
             Self::RelayPool(error) => Some(error),
             Self::DmInbox(error) => Some(error),
             Self::DmRelayCache(error) => Some(error),
+            Self::DmRelayDiscovery(error) => Some(error),
             _ => None,
         }
     }
