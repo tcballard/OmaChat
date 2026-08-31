@@ -3,5 +3,7 @@
 pub mod envelope;
 pub mod event;
 pub mod frame;
+pub mod geochat;
+pub mod georelay;
 pub mod pool;
 pub mod relay;
