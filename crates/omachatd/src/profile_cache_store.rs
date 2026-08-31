@@ -3,8 +3,12 @@ use std::fmt;
 
 use omachat_nostr::{
     event::{EventLimits, SignedEvent},
-    profile_cache::{ProfileCacheError, ProfileCacheMutation, VerifiedProfileCache},
-    profile_verification::{ProfileVerificationError, verify_profile_metadata},
+    profile_cache::{
+        ProfileCacheError, ProfileCacheLookup, ProfileCacheMutation, VerifiedProfileCache,
+    },
+    profile_verification::{
+        ProfileVerificationError, VerifiedNostrProfile, verify_profile_metadata,
+    },
 };
 use omachat_store::{SealedStore, StoreError};
 
@@ -60,6 +64,33 @@ impl<'a> SealedProfileCache<'a> {
         Ok(mutation)
     }
 
+    pub fn lookup(
+        &self,
+        public_key: &[u8; 32],
+        now: u64,
+        freshness_window_seconds: u64,
+        event_limits: &EventLimits,
+    ) -> Result<SealedProfileCacheLookup, SealedProfileCacheError> {
+        let cache = match self.load(now, event_limits)? {
+            SealedProfileCacheState::Missing => return Ok(SealedProfileCacheLookup::Missing),
+            SealedProfileCacheState::Loaded(cache) => cache,
+        };
+        Ok(
+            match cache.lookup(public_key, now, freshness_window_seconds) {
+                ProfileCacheLookup::Missing => SealedProfileCacheLookup::Missing,
+                ProfileCacheLookup::Fresh(record) => {
+                    SealedProfileCacheLookup::Fresh(record.profile().clone())
+                }
+                ProfileCacheLookup::OfflineStale(record) => {
+                    SealedProfileCacheLookup::OfflineStale(record.profile().clone())
+                }
+                ProfileCacheLookup::UnusableClockRollback(record) => {
+                    SealedProfileCacheLookup::UnusableClockRollback(record.profile().clone())
+                }
+            },
+        )
+    }
+
     pub fn clear(&self) -> Result<(), SealedProfileCacheError> {
         self.store.delete(PROFILE_CACHE_RECORD_NAME)?;
         Ok(())
@@ -70,6 +101,14 @@ impl<'a> SealedProfileCache<'a> {
 pub enum SealedProfileCacheState {
     Missing,
     Loaded(VerifiedProfileCache),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SealedProfileCacheLookup {
+    Missing,
+    Fresh(VerifiedNostrProfile),
+    OfflineStale(VerifiedNostrProfile),
+    UnusableClockRollback(VerifiedNostrProfile),
 }
 
 #[derive(Debug)]

@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -131,6 +131,12 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["show-profile", public_key] => Ok((
+            Command::ShowProfile {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
         ["panic", "--confirm", confirmation] => Ok((
             Command::Panic {
                 confirmation: (*confirmation).into(),
@@ -190,6 +196,25 @@ mod tests {
             command,
             Command::DiscoverProfile {
                 public_key: "22".repeat(32),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_offline_profile_lookup() {
+        let arguments = [
+            std::ffi::OsString::from("show-profile"),
+            std::ffi::OsString::from("33".repeat(32)),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("profile lookup command did not parse"),
+        };
+        assert!(mode == OutputMode::Human);
+        assert_eq!(
+            command,
+            Command::ShowProfile {
+                public_key: "33".repeat(32),
             }
         );
     }

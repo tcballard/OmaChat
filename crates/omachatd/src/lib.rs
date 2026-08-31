@@ -29,5 +29,6 @@ pub use dm_relay_cache_store::{
 pub use ipc_server::{EventHub, IpcServer, RequestHandler, ServerError};
 pub use nostr_service::{NostrHandle, NostrService};
 pub use profile_cache_store::{
-    PROFILE_CACHE_RECORD_NAME, SealedProfileCache, SealedProfileCacheError, SealedProfileCacheState,
+    PROFILE_CACHE_RECORD_NAME, SealedProfileCache, SealedProfileCacheError,
+    SealedProfileCacheLookup, SealedProfileCacheState,
 };

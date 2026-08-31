@@ -444,6 +444,28 @@ impl DaemonCore {
         Ok((mutation, discovered.profile))
     }
 
+    pub fn cached_profile(
+        &self,
+        participant_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<crate::profile_cache_store::SealedProfileCacheLookup, CoreError> {
+        self.with_active_transition(|| {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            crate::profile_cache_store::SealedProfileCache::new(&self.inner.store)
+                .lookup(
+                    participant_public_key,
+                    now,
+                    omachat_nostr::profile_cache::DEFAULT_PROFILE_FRESHNESS_SECONDS,
+                    &EventLimits::default(),
+                )
+                .map_err(CoreError::ProfileCache)
+        })
+    }
+
     pub async fn start_dm_inbox(
         &self,
         inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
@@ -832,6 +854,49 @@ impl DaemonCore {
                     "picture": profile.picture(),
                     "global_handle_verified": false,
                 }))
+            }
+            Command::ShowProfile { public_key } => {
+                let participant = decode_xonly(&public_key)?;
+                let lookup = self.cached_profile(&participant, unix_time()?)?;
+                let value =
+                    |profile: &omachat_nostr::profile_verification::VerifiedNostrProfile,
+                     cache_status: &str| {
+                        let name_classification = profile.name_classification().map(|classification| {
+                        match classification {
+                            omachat_nostr::profile_verification::ProfileNameClassification::HandleSyntaxCandidate => "handle-syntax-candidate",
+                            omachat_nostr::profile_verification::ProfileNameClassification::PresentationOnly => "presentation-only",
+                        }
+                    });
+                        serde_json::json!({
+                            "public_key": hex::encode(profile.public_key()),
+                            "source_event_id": profile.source_event_id(),
+                            "cache_status": cache_status,
+                            "nostr_name": profile.nostr_name(),
+                            "name_classification": name_classification,
+                            "display_name": profile.display_name(),
+                            "about": profile.about(),
+                            "picture": profile.picture(),
+                            "global_handle_verified": false,
+                        })
+                    };
+                Ok(match lookup {
+                    crate::profile_cache_store::SealedProfileCacheLookup::Missing => {
+                        serde_json::json!({
+                            "public_key": hex::encode(participant),
+                            "cache_status": "missing",
+                            "global_handle_verified": false,
+                        })
+                    }
+                    crate::profile_cache_store::SealedProfileCacheLookup::Fresh(profile) => {
+                        value(&profile, "fresh")
+                    }
+                    crate::profile_cache_store::SealedProfileCacheLookup::OfflineStale(profile) => {
+                        value(&profile, "offline-stale")
+                    }
+                    crate::profile_cache_store::SealedProfileCacheLookup::UnusableClockRollback(
+                        profile,
+                    ) => value(&profile, "unusable-clock-rollback"),
+                })
             }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),

@@ -40,6 +40,9 @@ pub enum Command {
     DiscoverProfile {
         public_key: String,
     },
+    ShowProfile {
+        public_key: String,
+    },
     Who {
         geohash: String,
     },
@@ -123,6 +126,11 @@ enum StrictRequestWire {
         params: PublicKeyParams,
     },
     DiscoverProfile {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
+    },
+    ShowProfile {
         version: u16,
         id: String,
         params: PublicKeyParams,
@@ -233,6 +241,11 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: PublicKeyParams { public_key },
             } => (version, id, Command::DiscoverProfile { public_key }),
+            StrictRequestWire::ShowProfile {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::ShowProfile { public_key }),
             StrictRequestWire::Who {
                 version,
                 id,
