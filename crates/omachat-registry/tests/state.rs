@@ -349,3 +349,49 @@ fn claim_signer_must_match_bound_account() {
         Err(RegistryError::ClaimAccountMismatch)
     );
 }
+
+#[test]
+fn accepted_claim_records_are_queryable_and_bound_to_both_indexes() {
+    let alice = account(1);
+    let alice_id = alice.public_identity().account_id;
+    let alice_handle = GlobalHandle::parse("alice").unwrap();
+    let alice_claim = claim(&alice, 1, "alice", 0);
+    let mut registry = RegistryState::from_signing_seed([90; 32]);
+    let receipt = registry.apply(alice_claim.clone(), 100).unwrap();
+
+    let by_account = registry.account_record(&alice_id).unwrap().unwrap();
+    assert_eq!(by_account.claim, alice_claim);
+    assert_eq!(by_account.receipt, receipt);
+    assert_eq!(
+        registry.handle_record(&alice_handle).unwrap(),
+        Some(by_account)
+    );
+    assert!(
+        registry
+            .handle_record(&GlobalHandle::parse("nobody").unwrap())
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn historical_snapshot_without_claim_evidence_fails_lookup_closed() {
+    let alice = account(1);
+    let alice_id = alice.public_identity().account_id;
+    let alice_handle = GlobalHandle::parse("alice").unwrap();
+    let mut registry = RegistryState::from_signing_seed([90; 32]);
+    registry.apply(claim(&alice, 1, "alice", 0), 100).unwrap();
+
+    let mut snapshot = registry.snapshot();
+    snapshot.commands[0].claim = None;
+    let restored = RegistryState::restore([90; 32], snapshot).unwrap();
+
+    assert_eq!(
+        restored.account_record(&alice_id),
+        Err(RegistryError::HistoricalClaimUnavailable)
+    );
+    assert_eq!(
+        restored.handle_record(&alice_handle),
+        Err(RegistryError::HistoricalClaimUnavailable)
+    );
+}
