@@ -4,6 +4,7 @@ pub mod auth;
 pub mod courier_drop;
 pub mod discovery;
 pub mod dm_delivery;
+pub mod dm_inbox;
 pub mod envelope;
 pub mod event;
 pub mod frame;
