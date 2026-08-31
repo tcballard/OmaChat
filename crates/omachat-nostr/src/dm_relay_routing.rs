@@ -9,6 +9,7 @@ use crate::dm_relay_cache::{
     DmRelayCacheLookup, MAX_DM_RELAY_ENDPOINT_BYTES, MAX_DM_RELAYS_PER_RECIPIENT,
     VerifiedDmRelayCache, VerifiedDmRelayRecord,
 };
+use crate::inbox::VerifiedDmInbox;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DmRelayRoutingPolicy {
@@ -82,6 +83,31 @@ pub fn route_dm_relays(
         }
         DmRelayCacheLookup::Missing => Err(DmRelayRoutingError::MissingMetadata),
     }
+}
+
+/// Convert already signature-verified kind 10050 metadata into an immediate
+/// route without discarding the recipient or source-event binding.
+pub fn route_verified_dm_inbox(
+    inbox: &VerifiedDmInbox,
+) -> Result<DmRelayRoute, DmRelayRoutingError> {
+    let mut recipient_public_key = [0; 32];
+    hex::decode_to_slice(inbox.recipient_public_key(), &mut recipient_public_key)
+        .map_err(|_| DmRelayRoutingError::InvalidRecipientPublicKey)?;
+    SchnorrVerifyingKey::from_bytes(&recipient_public_key)
+        .map_err(|_| DmRelayRoutingError::InvalidRecipientPublicKey)?;
+
+    let mut source_event_id = [0; 32];
+    hex::decode_to_slice(inbox.source_event_id(), &mut source_event_id)
+        .map_err(|_| DmRelayRoutingError::InvalidSourceEventId)?;
+    if inbox.relay_urls().is_empty() {
+        return Err(DmRelayRoutingError::NoRelayEndpoints);
+    }
+
+    Ok(route(
+        recipient_public_key,
+        inbox.relay_urls().to_vec(),
+        DmRelayRouteProvenance::VerifiedFresh { source_event_id },
+    ))
 }
 
 fn route_verified(
@@ -163,6 +189,7 @@ fn route(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DmRelayRoutingError {
     InvalidRecipientPublicKey,
+    InvalidSourceEventId,
     MissingMetadata,
     StaleMetadata,
     ClockRollback,
@@ -177,6 +204,7 @@ impl fmt::Display for DmRelayRoutingError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
             Self::InvalidRecipientPublicKey => "recipient public key is not a valid x-only key",
+            Self::InvalidSourceEventId => "verified inbox has an invalid source event ID",
             Self::MissingMetadata => "recipient has no verified DM relay metadata",
             Self::StaleMetadata => "recipient DM relay metadata is stale",
             Self::ClockRollback => "local time precedes recipient DM relay metadata",

@@ -2,7 +2,7 @@
 
 use crate::{
     auth::RelayAuthSigner,
-    inbox::DmPublishPlan,
+    dm_routed_publish::RoutedDmPublishPlan,
     pool::{PoolPublishResult, RelayPool, RelayPoolConfig, RelayPoolError},
     relay::{RelayConfig, RelayNotification, RelayRoute},
 };
@@ -16,32 +16,32 @@ use std::{
 /// Owns every relay task used for one recipient-specific DM delivery.
 pub struct AuthenticatedDmDelivery {
     pool: RelayPool,
-    plan: DmPublishPlan,
+    plan: RoutedDmPublishPlan,
     authentication: AuthenticatedRelayState,
 }
 
 impl AuthenticatedDmDelivery {
     /// Spawn exactly the relays named by the verified inbox plan.
     pub fn spawn(
-        plan: DmPublishPlan,
-        route: RelayRoute,
+        plan: RoutedDmPublishPlan,
+        transport_route: RelayRoute,
         auth_signer: RelayAuthSigner,
     ) -> Result<Self, DmDeliveryError> {
         let authentication_public_key = hex::encode(auth_signer.public_key());
-        if authentication_public_key == plan.event.pubkey {
+        if authentication_public_key == plan.event().pubkey {
             return Err(DmDeliveryError::EphemeralAuthenticationIdentity);
         }
-        if plan.relay_urls.is_empty()
-            || plan.required_acknowledgements == 0
-            || plan.required_acknowledgements > plan.relay_urls.len()
+        if plan.relay_urls().is_empty()
+            || plan.required_acknowledgements() == 0
+            || plan.required_acknowledgements() > plan.relay_urls().len()
         {
             return Err(DmDeliveryError::InvalidPlan);
         }
         let relay_configs = plan
-            .relay_urls
+            .relay_urls()
             .iter()
             .map(|url| {
-                let mut config = RelayConfig::new(url.clone(), route.clone());
+                let mut config = RelayConfig::new(url.clone(), transport_route.clone());
                 config.auth = Some(auth_signer.clone());
                 config
             })
@@ -49,7 +49,7 @@ impl AuthenticatedDmDelivery {
         let pool = RelayPool::spawn(
             relay_configs,
             RelayPoolConfig {
-                acknowledgement_threshold: plan.required_acknowledgements,
+                acknowledgement_threshold: plan.required_acknowledgements(),
                 ..RelayPoolConfig::default()
             },
         )?;
@@ -70,7 +70,7 @@ impl AuthenticatedDmDelivery {
             return Err(DmDeliveryError::AuthenticationTimeout);
         }
         let deadline = Instant::now() + timeout;
-        while self.authentication.authenticated.len() < self.plan.required_acknowledgements {
+        while self.authentication.authenticated.len() < self.plan.required_acknowledgements() {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Err(DmDeliveryError::AuthenticationTimeout);
@@ -91,9 +91,9 @@ impl AuthenticatedDmDelivery {
         Ok(self
             .pool
             .publish_to_indices(
-                self.plan.event.clone(),
+                self.plan.event().clone(),
                 &self.authentication.authenticated,
-                self.plan.required_acknowledgements,
+                self.plan.required_acknowledgements(),
             )
             .await?)
     }

@@ -3,12 +3,14 @@ use omachat_nostr::{
     auth::{NIP42_AUTH_KIND, RelayAuthSigner},
     discovery::NIP17_DM_RELAY_LIST_KIND,
     dm_delivery::AuthenticatedDmDelivery,
+    dm_relay_routing::route_verified_dm_inbox,
+    dm_routed_publish::plan_routed_dm_publish,
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
     gift_wrap::{
         ChatRecipient, GiftWrapMaterial, GiftWrapPersistence, create_chat_rumor,
         create_gift_wrap_with_material, open_gift_wrap,
     },
-    inbox::{DmInboxPolicy, plan_dm_publish, verify_dm_inbox},
+    inbox::{DmInboxPolicy, verify_dm_inbox},
     relay::RelayRoute,
 };
 use serde_json::{Value, json};
@@ -172,8 +174,9 @@ async fn external_identity_crosses_two_authenticated_inbox_relays_unchanged() {
         &limits,
     )
     .unwrap();
-    let plan = plan_dm_publish(gift_wrap, &inbox, timestamp, &limits).unwrap();
-    assert_eq!(plan.required_acknowledgements, 2);
+    let route = route_verified_dm_inbox(&inbox).unwrap();
+    let plan = plan_routed_dm_publish(gift_wrap, route, timestamp, &limits).unwrap();
+    assert_eq!(plan.required_acknowledgements(), 2);
 
     let auth = RelayAuthSigner::from_secret_key(external_sender_secret).unwrap();
     let mut delivery = AuthenticatedDmDelivery::spawn(plan, RelayRoute::Direct, auth).unwrap();
