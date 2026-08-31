@@ -28,10 +28,118 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU8, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PanicState {
+    Active = 0,
+    Erasing = 1,
+    CleanupComplete = 2,
+    CleanupFailed = 3,
+    Stopping = 4,
+}
+
+impl PanicState {
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::CleanupComplete | Self::CleanupFailed)
+    }
+
+    fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Active,
+            1 => Self::Erasing,
+            2 => Self::CleanupComplete,
+            3 => Self::CleanupFailed,
+            4 => Self::Stopping,
+            _ => unreachable!("panic lifecycle contains a valid state"),
+        }
+    }
+}
+
+struct PanicLifecycle {
+    state: AtomicU8,
+    terminal: tokio::sync::watch::Sender<PanicState>,
+    transition: Mutex<()>,
+}
+
+impl Default for PanicLifecycle {
+    fn default() -> Self {
+        let (terminal, _) = tokio::sync::watch::channel(PanicState::Active);
+        Self {
+            state: AtomicU8::new(PanicState::Active as u8),
+            terminal,
+            transition: Mutex::new(()),
+        }
+    }
+}
+
+impl PanicLifecycle {
+    fn state(&self) -> PanicState {
+        PanicState::from_u8(self.state.load(Ordering::Acquire))
+    }
+
+    fn begin(&self) -> bool {
+        let _transition = self.transition();
+        self.state
+            .compare_exchange(
+                PanicState::Active as u8,
+                PanicState::Erasing as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    /// Atomically prevent a late panic from starting, or report that an
+    /// already-started panic must reach a terminal cleanup state first.
+    fn begin_process_shutdown(&self) -> bool {
+        let _transition = self.transition();
+        match self.state() {
+            PanicState::Active => {
+                self.state
+                    .store(PanicState::Stopping as u8, Ordering::Release);
+                false
+            }
+            PanicState::Erasing => true,
+            PanicState::CleanupComplete | PanicState::CleanupFailed | PanicState::Stopping => false,
+        }
+    }
+
+    fn transition(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.transition
+            .lock()
+            .expect("lifecycle transition mutex poisoned")
+    }
+
+    fn finish(&self, succeeded: bool) {
+        let terminal = if succeeded {
+            PanicState::CleanupComplete
+        } else {
+            PanicState::CleanupFailed
+        };
+        self.state.store(terminal as u8, Ordering::Release);
+        self.terminal.send_replace(terminal);
+    }
+
+    async fn wait_for_terminal(&self) -> PanicState {
+        let mut terminal = self.terminal.subscribe();
+        loop {
+            let state = self.state();
+            if state.is_terminal() {
+                return state;
+            }
+            terminal
+                .changed()
+                .await
+                .expect("panic lifecycle sender is owned by the core");
+        }
+    }
+}
 
 #[derive(Default)]
 struct RuntimeState {
@@ -43,9 +151,10 @@ struct CoreInner {
     identity: Mutex<Option<IdentitySecrets>>,
     account: Mutex<Option<LocalAccount>>,
     storage_transaction: Mutex<()>,
+    operations: tokio::sync::RwLock<()>,
     subscription_transaction: tokio::sync::Mutex<()>,
     outbox_drain: tokio::sync::Mutex<()>,
-    panicked: AtomicBool,
+    panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
     mailbox: Mutex<PrivateMailbox>,
     state: Mutex<RuntimeState>,
@@ -133,9 +242,10 @@ impl DaemonCore {
                 identity: Mutex::new(Some(identity)),
                 account: Mutex::new(Some(account)),
                 storage_transaction: Mutex::new(()),
+                operations: tokio::sync::RwLock::new(()),
                 subscription_transaction: tokio::sync::Mutex::new(()),
                 outbox_drain: tokio::sync::Mutex::new(()),
-                panicked: AtomicBool::new(false),
+                panic: PanicLifecycle::default(),
                 nostr: Mutex::new(None),
                 mailbox: Mutex::new(mailbox),
                 state: Mutex::new(RuntimeState { joined, blocked }),
@@ -153,15 +263,41 @@ impl DaemonCore {
 
     #[must_use]
     pub fn is_panicked(&self) -> bool {
-        self.inner.panicked.load(Ordering::Acquire)
+        matches!(
+            self.panic_state(),
+            PanicState::Erasing | PanicState::CleanupComplete | PanicState::CleanupFailed
+        )
     }
 
-    pub fn attach_nostr(&self, handle: NostrHandle) {
-        *self
-            .inner
-            .nostr
-            .lock()
-            .expect("Nostr handle mutex poisoned") = Some(handle);
+    #[must_use]
+    pub fn panic_state(&self) -> PanicState {
+        self.inner.panic.state()
+    }
+
+    /// Wait until panic cleanup has either completed or failed. Merely
+    /// entering the erasing state does not satisfy this wait.
+    pub async fn wait_for_panic_terminal(&self) -> PanicState {
+        self.inner.panic.wait_for_terminal().await
+    }
+
+    /// Fence process shutdown against panic erasure. If panic has already
+    /// started, this waits for cleanup; otherwise it prevents a late panic
+    /// request from starting while the runtime is being dismantled.
+    pub async fn prepare_for_shutdown(&self) {
+        if self.inner.panic.begin_process_shutdown() {
+            self.inner.panic.wait_for_terminal().await;
+        }
+    }
+
+    pub fn attach_nostr(&self, handle: NostrHandle) -> Result<(), CoreError> {
+        self.with_active_transition(move || {
+            *self
+                .inner
+                .nostr
+                .lock()
+                .expect("Nostr handle mutex poisoned") = Some(handle);
+            Ok(())
+        })
     }
 
     #[must_use]
@@ -208,9 +344,17 @@ impl DaemonCore {
     }
 
     pub fn receive_nostr_notification(&self, notification: PoolNotification) {
-        if self.is_panicked() {
+        // Notification processing is synchronous but can copy the private key
+        // for envelope decryption and publish plaintext locally. Serialize the
+        // whole transition so panic cannot begin between those two actions.
+        let _transition = self.inner.panic.transition();
+        if self.ensure_active().is_err() {
             return;
         }
+        self.receive_active_nostr_notification(notification);
+    }
+
+    fn receive_active_nostr_notification(&self, notification: PoolNotification) {
         let event = match notification.notification {
             RelayNotification::Connected => {
                 let core = self.clone();
@@ -295,6 +439,10 @@ impl DaemonCore {
     /// Parse and validate completely before replacing the active config.
     pub fn reload(&self, path: impl AsRef<Path>) -> Result<(), CoreError> {
         let replacement = DaemonConfig::load(path)?;
+        self.with_active_transition(|| self.apply_reload(replacement))
+    }
+
+    fn apply_reload(&self, replacement: DaemonConfig) -> Result<(), CoreError> {
         if self
             .inner
             .config
@@ -354,26 +502,33 @@ impl DaemonCore {
         Ok(())
     }
 
+    fn with_active_transition<T>(
+        &self,
+        transition: impl FnOnce() -> Result<T, CoreError>,
+    ) -> Result<T, CoreError> {
+        let _transition = self.inner.panic.transition();
+        self.ensure_active()?;
+        transition()
+    }
+
     async fn dispatch(&self, command: Command) -> ResponseOutcome {
-        if self.inner.panicked.load(Ordering::Acquire) {
-            return ResponseOutcome::Error {
-                error: ErrorBody {
-                    code: ErrorCode::Unavailable,
-                    message: "daemon has completed panic erasure and must exit".into(),
-                },
-            };
-        }
         let result = match command {
-            Command::Status => self.status_value(),
-            Command::Fingerprint => self.fingerprint_value(),
-            Command::Join { geohash } => self.join(geohash).await,
-            Command::Leave { geohash } => self.leave(geohash).await,
-            Command::Send { conversation, text } => self.send(&conversation, &text).await,
-            Command::Who { geohash } => self.who(&geohash),
-            Command::Block { public_key } => self.block(&public_key),
-            Command::Panic { confirmation } => self.panic_erase(&confirmation).await,
-            Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),
-            Command::Hello { .. } => Err(CoreError::InvalidCommand),
+            Command::Panic { confirmation } => {
+                if !self.is_active() {
+                    return panic_unavailable();
+                }
+                self.panic_erase(&confirmation).await
+            }
+            command => {
+                if !self.is_active() {
+                    return panic_unavailable();
+                }
+                let _operation = self.inner.operations.read().await;
+                if !self.is_active() {
+                    return panic_unavailable();
+                }
+                self.dispatch_active(command).await
+            }
         };
         match result {
             Ok(result) => ResponseOutcome::Ok { result },
@@ -383,6 +538,20 @@ impl DaemonCore {
                     message: error.to_string(),
                 },
             },
+        }
+    }
+
+    async fn dispatch_active(&self, command: Command) -> Result<serde_json::Value, CoreError> {
+        match command {
+            Command::Status => self.status_value(),
+            Command::Fingerprint => self.fingerprint_value(),
+            Command::Join { geohash } => self.join(geohash).await,
+            Command::Leave { geohash } => self.leave(geohash).await,
+            Command::Send { conversation, text } => self.send(&conversation, &text).await,
+            Command::Who { geohash } => self.who(&geohash),
+            Command::Block { public_key } => self.block(&public_key),
+            Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),
+            Command::Panic { .. } | Command::Hello { .. } => Err(CoreError::InvalidCommand),
         }
     }
 
@@ -810,11 +979,15 @@ impl DaemonCore {
     }
 
     fn ensure_active(&self) -> Result<(), CoreError> {
-        if self.is_panicked() {
-            Err(CoreError::Panicked)
-        } else {
+        if self.is_active() {
             Ok(())
+        } else {
+            Err(CoreError::Panicked)
         }
+    }
+
+    fn is_active(&self) -> bool {
+        self.panic_state() == PanicState::Active
     }
 
     fn account_status(&self) -> Result<AccountStatus, CoreError> {
@@ -847,19 +1020,56 @@ impl DaemonCore {
         if confirmation != "ERASE" {
             return Err(CoreError::ConfirmationRequired);
         }
-        if self
-            .inner
-            .panicked
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        if !self.inner.panic.begin() {
             return Err(CoreError::Panicked);
         }
+        // The request task is not the cleanup owner. A client disconnect,
+        // task abort, or server shutdown can drop this await without dropping
+        // the independently supervised cleanup operation.
+        let supervisor_core = self.clone();
+        let supervisor = tokio::spawn(async move {
+            let worker_core = supervisor_core.clone();
+            let worker = tokio::spawn(async move { worker_core.perform_panic_cleanup().await });
+            let result = match worker.await {
+                Ok(result) => result,
+                Err(_) => Err(CoreError::PanicErase),
+            };
+            supervisor_core.inner.panic.finish(result.is_ok());
+            result
+        });
+        match supervisor.await {
+            Ok(result) => result,
+            Err(_) => {
+                self.inner.panic.finish(false);
+                Err(CoreError::PanicErase)
+            }
+        }
+    }
+
+    async fn perform_panic_cleanup(&self) -> Result<serde_json::Value, CoreError> {
+        // Stop relay work before dropping keys. Quiescing rejects new
+        // commands, cancels the active publish/subscribe, discards the outer
+        // queue, closes every relay, and only then returns.
+        let nostr = self
+            .inner
+            .nostr
+            .lock()
+            .expect("Nostr handle mutex poisoned")
+            .take();
+        if let Some(handle) = nostr {
+            handle.quiesce().await;
+        }
+
+        // Relay cancellation releases commands that were awaiting a publish
+        // acknowledgement. The exclusive guard then waits for all other IPC
+        // operations to finish and prevents any post-panic mutation or local
+        // event publication.
+        let _operations = self.inner.operations.write().await;
+
         // Follow the same identity -> account -> storage lock order used by
         // status/reload, wait for in-flight store work, then destroy all
-        // in-process authorities before beginning irreversible external
-        // cleanup. Once panic starts, any cleanup failure is terminal and the
-        // daemon remains unavailable.
+        // in-process authorities before irreversible external cleanup. A
+        // cleanup failure remains terminal.
         {
             let mut identity = self.inner.identity.lock().expect("identity mutex poisoned");
             let mut account = self.inner.account.lock().expect("account mutex poisoned");
@@ -871,17 +1081,19 @@ impl DaemonCore {
             identity.take();
             account.take();
         }
-        self.inner
+        let erase_result = self
+            .inner
             .store
             .panic_erase()
             .await
-            .map_err(CoreError::Store)?;
+            .map_err(CoreError::Store);
         self.inner
             .state
             .lock()
             .expect("runtime state mutex poisoned")
             .blocked
             .clear();
+        erase_result?;
         Ok(serde_json::json!({"erased": true, "restart_required": true}))
     }
 
@@ -917,6 +1129,15 @@ impl RequestHandler for DaemonCore {
         request: Request,
     ) -> Pin<Box<dyn Future<Output = ResponseOutcome> + Send + '_>> {
         Box::pin(async move { self.dispatch(request.command).await })
+    }
+}
+
+fn panic_unavailable() -> ResponseOutcome {
+    ResponseOutcome::Error {
+        error: ErrorBody {
+            code: ErrorCode::Unavailable,
+            message: "daemon is shutting down and unavailable".into(),
+        },
     }
 }
 
@@ -964,4 +1185,151 @@ fn random_valid_secp() -> Result<[u8; 32], CoreError> {
 fn decode_xonly(value: &str) -> Result<[u8; 32], CoreError> {
     let bytes = hex::decode(value).map_err(|_| CoreError::InvalidPublicKey)?;
     <[u8; 32]>::try_from(bytes).map_err(|_| CoreError::InvalidPublicKey)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DaemonCore, PanicLifecycle, PanicState};
+    use crate::{DaemonConfig, EventHub, StorageProviderConfig};
+    use std::{sync::Arc, time::Duration};
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn terminal_wait_does_not_complete_when_erasure_only_started() {
+        let lifecycle = Arc::new(PanicLifecycle::default());
+        assert!(lifecycle.begin());
+        assert_eq!(lifecycle.state(), PanicState::Erasing);
+
+        let (release, delayed) = tokio::sync::oneshot::channel();
+        let cleanup_lifecycle = Arc::clone(&lifecycle);
+        let cleanup = tokio::spawn(async move {
+            delayed.await.expect("release delayed cleanup");
+            cleanup_lifecycle.finish(true);
+        });
+        let wait_lifecycle = Arc::clone(&lifecycle);
+        let waiter = tokio::spawn(async move { wait_lifecycle.wait_for_terminal().await });
+
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+        release.send(()).expect("cleanup receiver remains live");
+        cleanup.await.expect("cleanup task");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), waiter)
+                .await
+                .expect("terminal waiter wakes")
+                .expect("terminal waiter task"),
+            PanicState::CleanupComplete
+        );
+    }
+
+    #[tokio::test]
+    async fn panic_cleanup_waits_for_inflight_ipc_operations() {
+        let temporary = tempdir().expect("temporary directory");
+        let core = DaemonCore::open(
+            temporary.path(),
+            DaemonConfig {
+                storage_provider: StorageProviderConfig::File,
+                ..DaemonConfig::default()
+            },
+            EventHub::default(),
+        )
+        .await
+        .expect("open core");
+        let operation = core.inner.operations.read().await;
+        let waiting_core = core.clone();
+        let waiter = tokio::spawn(async move { waiting_core.wait_for_panic_terminal().await });
+        let panic_core = core.clone();
+        let panic = tokio::spawn(async move { panic_core.panic_erase("ERASE").await });
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while core.panic_state() != PanicState::Erasing {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("panic enters erasing state");
+        assert!(!waiter.is_finished());
+        assert!(temporary.path().exists(), "store is not erased early");
+        let shutdown_core = core.clone();
+        let shutdown = tokio::spawn(async move { shutdown_core.prepare_for_shutdown().await });
+        tokio::task::yield_now().await;
+        assert!(
+            !shutdown.is_finished(),
+            "process shutdown must wait for terminal panic cleanup"
+        );
+        panic.abort();
+        assert!(
+            panic
+                .await
+                .expect_err("initiating panic task is aborted")
+                .is_cancelled()
+        );
+
+        drop(operation);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), waiter)
+                .await
+                .expect("independent cleanup reaches terminal state")
+                .expect("terminal waiter"),
+            PanicState::CleanupComplete
+        );
+        tokio::time::timeout(Duration::from_secs(1), shutdown)
+            .await
+            .expect("process shutdown fence completes")
+            .expect("process shutdown task");
+        assert!(!temporary.path().exists());
+    }
+
+    #[tokio::test]
+    async fn process_shutdown_prevents_a_late_panic_from_starting() {
+        let temporary = tempdir().expect("temporary directory");
+        let core = DaemonCore::open(
+            temporary.path(),
+            DaemonConfig {
+                storage_provider: StorageProviderConfig::File,
+                ..DaemonConfig::default()
+            },
+            EventHub::default(),
+        )
+        .await
+        .expect("open core");
+
+        core.prepare_for_shutdown().await;
+        assert_eq!(core.panic_state(), PanicState::Stopping);
+        assert!(core.panic_erase("ERASE").await.is_err());
+        assert!(temporary.path().exists(), "late panic did not erase state");
+    }
+
+    #[test]
+    fn panic_begin_waits_for_an_active_reload_transition() {
+        let lifecycle = Arc::new(PanicLifecycle::default());
+        let transition = lifecycle.transition();
+        let (started_sender, started_receiver) = std::sync::mpsc::channel();
+        let (result_sender, result_receiver) = std::sync::mpsc::channel();
+        let panic_lifecycle = Arc::clone(&lifecycle);
+        let panic = std::thread::spawn(move || {
+            started_sender.send(()).expect("signal panic thread");
+            result_sender
+                .send(panic_lifecycle.begin())
+                .expect("return panic begin result");
+        });
+
+        started_receiver.recv().expect("panic thread started");
+        assert!(
+            result_receiver
+                .recv_timeout(Duration::from_millis(25))
+                .is_err(),
+            "panic must not begin while reload owns the transition"
+        );
+        assert_eq!(lifecycle.state(), PanicState::Active);
+
+        drop(transition);
+        assert!(
+            result_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .expect("panic begins after transition releases")
+        );
+        panic.join().expect("panic thread");
+        assert_eq!(lifecycle.state(), PanicState::Erasing);
+    }
 }
