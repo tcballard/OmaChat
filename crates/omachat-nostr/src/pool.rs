@@ -258,6 +258,8 @@ impl RelayPool {
     }
 
     /// Shut every connection down concurrently and await all owned tasks.
+    /// Each connection owns its graceful deadline and aborts then joins a
+    /// wedged actor, so completion cannot leave a relay task detached.
     pub async fn shutdown(self) -> Vec<Result<(), RelayError>> {
         join_all(self.connections.into_iter().map(RelayConnection::shutdown)).await
     }
