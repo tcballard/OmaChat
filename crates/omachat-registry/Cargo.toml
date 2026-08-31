@@ -1,0 +1,15 @@
+[package]
+name = "omachat-registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ed25519-dalek = "=2.2.0"
+omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+sha2 = "=0.10.9"
+
+[lints]
+workspace = true

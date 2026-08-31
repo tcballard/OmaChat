@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/omachat-proto",
     "crates/omachat-crypto",
+    "crates/omachat-registry",
     "crates/omachat-mesh",
     "crates/omachat-nostr",
     "crates/omachat-store",

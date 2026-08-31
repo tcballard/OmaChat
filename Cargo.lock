@@ -1462,6 +1462,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "omachat-registry"
+version = "0.0.1"
+dependencies = [
+ "ed25519-dalek",
+ "omachat-crypto",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "omachat-store"
 version = "0.0.1"
 dependencies = [
