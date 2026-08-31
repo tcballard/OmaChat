@@ -1,5 +1,6 @@
 //! Fail-closed master-key selection and sealed atomic records.
 
+mod account;
 mod archive;
 mod courier;
 mod erase;
@@ -8,6 +9,7 @@ mod outbox;
 mod sealed;
 mod trust;
 
+pub use account::{AccountVault, AccountVaultError, LocalAccount};
 pub use archive::{ArchiveError, PublicArchive, PublicArchiveEntry, TransientPublicCaches};
 pub use courier::{CourierPool, CourierPoolError, CourierTier, Handover, StoredCourier};
 pub use erase::PanicEraseReport;
