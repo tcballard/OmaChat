@@ -110,6 +110,42 @@ pub struct HandleClaim {
     proof: [u8; SIGNATURE_BYTES],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandleClaimSnapshot {
+    pub version: u16,
+    pub command_id: CommandId,
+    pub expected_revision: u64,
+    pub binding: SignedLocalAccountBinding,
+    #[serde(with = "serde_signature")]
+    pub proof: [u8; SIGNATURE_BYTES],
+}
+
+impl HandleClaimSnapshot {
+    #[must_use]
+    pub fn from_claim(claim: &HandleClaim) -> Self {
+        Self {
+            version: claim.version,
+            command_id: claim.command_id,
+            expected_revision: claim.expected_revision,
+            binding: claim.binding.clone(),
+            proof: claim.proof,
+        }
+    }
+
+    pub fn to_claim(&self) -> Result<HandleClaim, RegistryError> {
+        if self.version != CLAIM_VERSION {
+            return Err(RegistryError::UnsupportedClaimVersion(self.version));
+        }
+        HandleClaim::from_signed_parts(
+            self.command_id,
+            self.expected_revision,
+            self.binding.clone(),
+            self.proof,
+        )
+    }
+}
+
 impl HandleClaim {
     /// Build and sign a claim with the account root that signed `binding`.
     pub fn sign(
@@ -233,6 +269,20 @@ pub struct RegistryReceipt {
     pub accepted_at: u64,
     #[serde(with = "serde_signature")]
     pub signature: [u8; SIGNATURE_BYTES],
+}
+
+/// Complete, independently verifiable evidence for one accepted claim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptedRegistryRecord {
+    pub claim: HandleClaim,
+    pub receipt: RegistryReceipt,
+}
+
+impl AcceptedRegistryRecord {
+    pub fn verify(&self, pinned_registry_key: &[u8; KEY_BYTES]) -> Result<(), RegistryError> {
+        self.receipt
+            .verify_for_claim(pinned_registry_key, &self.claim)
+    }
 }
 
 impl RegistryReceipt {
@@ -392,6 +442,7 @@ struct AccountRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AcceptedCommand {
+    claim: Option<HandleClaim>,
     claim_hash: [u8; KEY_BYTES],
     receipt: RegistryReceipt,
 }
@@ -421,6 +472,8 @@ pub struct RegistryCommandSnapshot {
     pub command_id: CommandId,
     pub claim_hash: [u8; KEY_BYTES],
     pub receipt: RegistryReceipt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<HandleClaimSnapshot>,
 }
 
 /// Single-authority in-memory registry state.
@@ -550,6 +603,7 @@ impl RegistryState {
         self.commands.insert(
             claim.command_id,
             AcceptedCommand {
+                claim: Some(claim),
                 claim_hash,
                 receipt: receipt.clone(),
             },
@@ -590,6 +644,41 @@ impl RegistryState {
             .map(|record| record.last_receipt_hash)
     }
 
+    /// Return complete claim evidence for an account, failing closed when a
+    /// legacy snapshot predates persisted claim proofs.
+    pub fn account_record(
+        &self,
+        account_id: &AccountId,
+    ) -> Result<Option<AcceptedRegistryRecord>, RegistryError> {
+        let Some(account) = self.accounts.get(account_id) else {
+            return Ok(None);
+        };
+        let command = self
+            .commands
+            .values()
+            .find(|command| command.receipt.receipt_hash() == account.last_receipt_hash)
+            .ok_or(RegistryError::InvalidRegistryState)?;
+        let claim = command
+            .claim
+            .clone()
+            .ok_or(RegistryError::HistoricalClaimUnavailable)?;
+        Ok(Some(AcceptedRegistryRecord {
+            claim,
+            receipt: command.receipt.clone(),
+        }))
+    }
+
+    /// Resolve a registered handle to complete accepted claim evidence.
+    pub fn handle_record(
+        &self,
+        handle: &GlobalHandle,
+    ) -> Result<Option<AcceptedRegistryRecord>, RegistryError> {
+        let Some(account_id) = self.handle_owner(handle) else {
+            return Ok(None);
+        };
+        self.account_record(account_id)
+    }
+
     #[must_use]
     pub const fn head(&self) -> Option<&RegistryReceipt> {
         self.head.as_ref()
@@ -618,6 +707,7 @@ impl RegistryState {
                     command_id: *command_id,
                     claim_hash: command.claim_hash,
                     receipt: command.receipt.clone(),
+                    claim: command.claim.as_ref().map(HandleClaimSnapshot::from_claim),
                 })
                 .collect(),
             head: self.head.clone(),
@@ -639,6 +729,7 @@ impl RegistryState {
                 .insert(
                     command.command_id,
                     AcceptedCommand {
+                        claim: command.claim.map(|claim| claim.to_claim()).transpose()?,
                         claim_hash: command.claim_hash,
                         receipt: command.receipt,
                     },
@@ -660,6 +751,12 @@ impl RegistryState {
                     return Err(RegistryError::InvalidRegistryState);
                 }
                 command.receipt.verify(&pinned_key)?;
+                if let Some(claim) = &command.claim {
+                    if claim.command_id != *command_id || claim.claim_hash() != command.claim_hash {
+                        return Err(RegistryError::InvalidRegistryState);
+                    }
+                    command.receipt.verify_for_claim(&pinned_key, claim)?;
+                }
                 Ok(command.receipt.clone())
             })
             .collect::<Result<_, RegistryError>>()?;
@@ -734,6 +831,14 @@ impl RegistryState {
             if latest.account_id != account_snapshot.account_id
                 || latest.account_revision != account_snapshot.registry_revision
                 || latest.handle != account_snapshot.registered_handle
+            {
+                return Err(RegistryError::InvalidRegistryState);
+            }
+            let latest_command = commands
+                .get(&latest.command_id)
+                .ok_or(RegistryError::InvalidRegistryState)?;
+            if let Some(claim) = &latest_command.claim
+                && claim.binding != account_snapshot.binding
             {
                 return Err(RegistryError::InvalidRegistryState);
             }
@@ -824,6 +929,7 @@ pub enum RegistryError {
     InvalidReceiptChain,
     InvalidAccountReceiptChain,
     ReceiptClaimMismatch,
+    HistoricalClaimUnavailable,
 }
 
 impl fmt::Display for RegistryError {
@@ -883,6 +989,8 @@ impl fmt::Display for RegistryError {
             Self::ReceiptClaimMismatch => {
                 formatter.write_str("registry receipt does not match the exact handle claim")
             }
+            Self::HistoricalClaimUnavailable => formatter
+                .write_str("legacy registry state does not contain the accepted claim proof"),
         }
     }
 }

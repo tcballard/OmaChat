@@ -4,9 +4,10 @@ use omachat_crypto::{
 };
 use omachat_registry::{CommandId, HandleClaim, RegistryError, RegistryState};
 use omachat_registry_transport::{
-    MAX_REGISTRY_MESSAGE_BYTES, RegistryClient, RegistryClientError, RegistryProtocolError,
-    RegistryRemoteCode, RegistryRequest, RegistryResponse, RegistryResponseOutcome,
-    RegistryService, RegistryServiceError, RegistryTransport, decode_request, encode_response,
+    MAX_REGISTRY_MESSAGE_BYTES, REGISTRY_TRANSPORT_VERSION, RegistryClient, RegistryClientError,
+    RegistryProtocolError, RegistryRecord, RegistryRemoteCode, RegistryRequest, RegistryResponse,
+    RegistryResponseOutcome, RegistryService, RegistryServiceError, RegistryTransport,
+    decode_request, encode_response,
 };
 use omachat_store::{RequestedProvider, SealedStore};
 use std::{convert::Infallible, future::Ready, future::ready};
@@ -126,6 +127,59 @@ async fn verified_claim_is_durable_and_idempotent_across_restart() {
 }
 
 #[tokio::test]
+async fn verified_handle_and_account_lookups_survive_restart() {
+    let temporary = tempdir().unwrap();
+    let store = SealedStore::open(temporary.path(), RequestedProvider::File)
+        .await
+        .unwrap();
+    let alice = account(1);
+    let alice_id = alice.public_identity().account_id;
+    let alice_handle = GlobalHandle::parse("alice").unwrap();
+    let alice_claim = claim(&alice, 1, "alice", 0);
+    let receipt;
+
+    {
+        let mut service = RegistryService::open(&store, [90; 32]).unwrap();
+        let pinned_key = service.verifying_key();
+        let transport = LocalTransport {
+            service: &mut service,
+            accepted_at: 100,
+        };
+        let mut client = RegistryClient::new(transport, pinned_key);
+        receipt = client.claim(&alice_claim).await.unwrap();
+    }
+
+    let mut restarted = RegistryService::open(&store, [90; 32]).unwrap();
+    let pinned_key = restarted.verifying_key();
+    let transport = LocalTransport {
+        service: &mut restarted,
+        accepted_at: 200,
+    };
+    let mut client = RegistryClient::new(transport, pinned_key);
+
+    let by_handle = client.lookup_handle(&alice_handle).await.unwrap().unwrap();
+    assert_eq!(by_handle.claim, alice_claim);
+    assert_eq!(by_handle.receipt, receipt);
+    let by_account = client.lookup_account(&alice_id).await.unwrap().unwrap();
+    assert_eq!(by_account, by_handle);
+
+    assert!(
+        client
+            .lookup_handle(&GlobalHandle::parse("nobody").unwrap())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        client
+            .lookup_account(&account(9).public_identity().account_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn duplicate_handle_rejection_crosses_the_adapter_without_mutation() {
     let temporary = tempdir().unwrap();
     let store = SealedStore::open(temporary.path(), RequestedProvider::File)
@@ -162,7 +216,7 @@ async fn client_rejects_forged_and_mismatched_responses() {
     let mut hostile_registry = RegistryState::from_signing_seed([91; 32]);
     let forged = hostile_registry.apply(alice_claim.clone(), 100).unwrap();
     let forged_response = encode_response(&RegistryResponse {
-        version: 1,
+        version: REGISTRY_TRANSPORT_VERSION,
         request_id: 1,
         outcome: RegistryResponseOutcome::Accepted {
             receipt: Box::new(forged),
@@ -183,7 +237,7 @@ async fn client_rejects_forged_and_mismatched_responses() {
     ));
 
     let mismatched_response = encode_response(&RegistryResponse {
-        version: 1,
+        version: REGISTRY_TRANSPORT_VERSION,
         request_id: 99,
         outcome: RegistryResponseOutcome::Accepted {
             receipt: Box::new(hostile_registry.head().unwrap().clone()),
@@ -202,6 +256,58 @@ async fn client_rejects_forged_and_mismatched_responses() {
             expected: 1,
             actual: 99
         })
+    ));
+}
+
+#[tokio::test]
+async fn client_rejects_forged_and_query_mismatched_lookup_records() {
+    let alice = account(1);
+    let alice_claim = claim(&alice, 1, "alice", 0);
+    let trusted_key = RegistryState::from_signing_seed([90; 32]).verifying_key();
+    let mut hostile_registry = RegistryState::from_signing_seed([91; 32]);
+    hostile_registry.apply(alice_claim.clone(), 100).unwrap();
+    let forged_record = hostile_registry
+        .handle_record(&GlobalHandle::parse("alice").unwrap())
+        .unwrap()
+        .unwrap();
+    let response = encode_response(&RegistryResponse {
+        version: REGISTRY_TRANSPORT_VERSION,
+        request_id: 1,
+        outcome: RegistryResponseOutcome::Found {
+            record: Box::new(RegistryRecord::from_record(forged_record)),
+        },
+    })
+    .unwrap();
+    let mut client = RegistryClient::new(FixedTransport { response }, trusted_key);
+    assert!(matches!(
+        client
+            .lookup_handle(&GlobalHandle::parse("alice").unwrap())
+            .await,
+        Err(RegistryClientError::InvalidReceipt(
+            RegistryError::InvalidReceiptSignature
+        ))
+    ));
+
+    let mut trusted_registry = RegistryState::from_signing_seed([90; 32]);
+    trusted_registry.apply(alice_claim, 100).unwrap();
+    let valid_record = trusted_registry
+        .handle_record(&GlobalHandle::parse("alice").unwrap())
+        .unwrap()
+        .unwrap();
+    let response = encode_response(&RegistryResponse {
+        version: REGISTRY_TRANSPORT_VERSION,
+        request_id: 1,
+        outcome: RegistryResponseOutcome::Found {
+            record: Box::new(RegistryRecord::from_record(valid_record)),
+        },
+    })
+    .unwrap();
+    let mut client = RegistryClient::new(FixedTransport { response }, trusted_key);
+    assert!(matches!(
+        client
+            .lookup_handle(&GlobalHandle::parse("bob").unwrap())
+            .await,
+        Err(RegistryClientError::LookupMismatch)
     ));
 }
 

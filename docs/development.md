@@ -13,7 +13,7 @@ check suite on the proposed toolchain.
 | `omachat-proto` | library | Protocol codec boundary and shared compatibility metadata |
 | `omachat-crypto` | library | Protocol cryptography boundary |
 | `omachat-registry` | library | Account identity and authoritative handle-registry boundary |
-| `omachat-registry-transport` | library | Bounded registry service protocol and verified client adapter |
+| `omachat-registry-transport` | library | Bounded registry claim/lookup protocol and verified client adapter |
 | `omachat-mesh` | library | BlueZ mesh transport boundary |
 | `omachat-nostr` | library | Nostr relay transport boundary |
 | `omachat-store` | library | Sealed persistence boundary |

@@ -5,13 +5,15 @@
 //! bytes, while clients accept a receipt only after verifying a separately
 //! pinned registry key and the exact signed claim.
 
-use omachat_crypto::SignedLocalAccountBinding;
-use omachat_registry::{CommandId, HandleClaim, RegistryError, RegistryReceipt, RegistryState};
+use omachat_crypto::{AccountId, GlobalHandle, SignedLocalAccountBinding};
+use omachat_registry::{
+    AcceptedRegistryRecord, CommandId, HandleClaim, RegistryError, RegistryReceipt, RegistryState,
+};
 use omachat_store::{RegistryVault, RegistryVaultError, SealedStore};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{error::Error, fmt, future::Future};
 
-pub const REGISTRY_TRANSPORT_VERSION: u16 = 1;
+pub const REGISTRY_TRANSPORT_VERSION: u16 = 2;
 pub const MAX_REGISTRY_MESSAGE_BYTES: usize = 64 * 1024;
 const CLAIM_WIRE_VERSION: u16 = 1;
 const SIGNATURE_BYTES: usize = 64;
@@ -61,7 +63,15 @@ impl RegistryClaim {
 pub struct RegistryRequest {
     pub version: u16,
     pub request_id: u64,
-    pub claim: RegistryClaim,
+    pub operation: RegistryOperation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RegistryOperation {
+    Claim { claim: Box<RegistryClaim> },
+    LookupHandle { handle: GlobalHandle },
+    LookupAccount { account_id: AccountId },
 }
 
 impl RegistryRequest {
@@ -70,8 +80,52 @@ impl RegistryRequest {
         Self {
             version: REGISTRY_TRANSPORT_VERSION,
             request_id,
-            claim: RegistryClaim::from_claim(claim),
+            operation: RegistryOperation::Claim {
+                claim: Box::new(RegistryClaim::from_claim(claim)),
+            },
         }
+    }
+
+    #[must_use]
+    pub fn lookup_handle(request_id: u64, handle: GlobalHandle) -> Self {
+        Self {
+            version: REGISTRY_TRANSPORT_VERSION,
+            request_id,
+            operation: RegistryOperation::LookupHandle { handle },
+        }
+    }
+
+    #[must_use]
+    pub const fn lookup_account(request_id: u64, account_id: AccountId) -> Self {
+        Self {
+            version: REGISTRY_TRANSPORT_VERSION,
+            request_id,
+            operation: RegistryOperation::LookupAccount { account_id },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryRecord {
+    pub claim: RegistryClaim,
+    pub receipt: Box<RegistryReceipt>,
+}
+
+impl RegistryRecord {
+    #[must_use]
+    pub fn from_record(record: AcceptedRegistryRecord) -> Self {
+        Self {
+            claim: RegistryClaim::from_claim(&record.claim),
+            receipt: Box::new(record.receipt),
+        }
+    }
+
+    pub fn to_record(&self) -> Result<AcceptedRegistryRecord, RegistryError> {
+        Ok(AcceptedRegistryRecord {
+            claim: self.claim.to_claim()?,
+            receipt: (*self.receipt).clone(),
+        })
     }
 }
 
@@ -87,6 +141,8 @@ pub struct RegistryResponse {
 #[serde(tag = "status", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RegistryResponseOutcome {
     Accepted { receipt: Box<RegistryReceipt> },
+    Found { record: Box<RegistryRecord> },
+    NotFound,
     Rejected { error: RegistryRemoteError },
 }
 
@@ -135,7 +191,8 @@ impl From<&RegistryError> for RegistryRemoteCode {
             | RegistryError::InvalidReceiptSignature
             | RegistryError::InvalidReceiptChain
             | RegistryError::InvalidAccountReceiptChain
-            | RegistryError::ReceiptClaimMismatch => Self::InvalidState,
+            | RegistryError::ReceiptClaimMismatch
+            | RegistryError::HistoricalClaimUnavailable => Self::InvalidState,
             RegistryError::InvalidBinding(_)
             | RegistryError::MissingHandle
             | RegistryError::ClaimAccountMismatch
@@ -244,13 +301,68 @@ impl<T: RegistryTransport> RegistryClient<T> {
         &mut self,
         claim: &HandleClaim,
     ) -> Result<RegistryReceipt, RegistryClientError<T::Error>> {
+        let outcome = self
+            .request(RegistryOperation::Claim {
+                claim: Box::new(RegistryClaim::from_claim(claim)),
+            })
+            .await?;
+        match outcome {
+            RegistryResponseOutcome::Accepted { receipt } => {
+                receipt
+                    .verify_for_claim(&self.pinned_registry_key, claim)
+                    .map_err(RegistryClientError::InvalidReceipt)?;
+                Ok(*receipt)
+            }
+            RegistryResponseOutcome::Rejected { error } => {
+                Err(RegistryClientError::Rejected(error))
+            }
+            RegistryResponseOutcome::Found { .. } | RegistryResponseOutcome::NotFound => {
+                Err(RegistryClientError::UnexpectedOutcome)
+            }
+        }
+    }
+
+    pub async fn lookup_handle(
+        &mut self,
+        handle: &GlobalHandle,
+    ) -> Result<Option<AcceptedRegistryRecord>, RegistryClientError<T::Error>> {
+        let outcome = self
+            .request(RegistryOperation::LookupHandle {
+                handle: handle.clone(),
+            })
+            .await?;
+        self.verify_lookup(outcome, |record| {
+            record.receipt.handle.as_global_handle() == handle
+        })
+    }
+
+    pub async fn lookup_account(
+        &mut self,
+        account_id: &AccountId,
+    ) -> Result<Option<AcceptedRegistryRecord>, RegistryClientError<T::Error>> {
+        let outcome = self
+            .request(RegistryOperation::LookupAccount {
+                account_id: account_id.clone(),
+            })
+            .await?;
+        self.verify_lookup(outcome, |record| record.receipt.account_id == *account_id)
+    }
+
+    async fn request(
+        &mut self,
+        operation: RegistryOperation,
+    ) -> Result<RegistryResponseOutcome, RegistryClientError<T::Error>> {
         let request_id = self.next_request_id;
         self.next_request_id = self
             .next_request_id
             .checked_add(1)
             .ok_or(RegistryClientError::RequestIdExhausted)?;
-        let request = encode_request(&RegistryRequest::claim(request_id, claim))
-            .map_err(RegistryClientError::Protocol)?;
+        let request = encode_request(&RegistryRequest {
+            version: REGISTRY_TRANSPORT_VERSION,
+            request_id,
+            operation,
+        })
+        .map_err(RegistryClientError::Protocol)?;
         let encoded_response = self
             .transport
             .exchange(request)
@@ -263,16 +375,32 @@ impl<T: RegistryTransport> RegistryClient<T> {
                 actual: response.request_id,
             });
         }
-        match response.outcome {
-            RegistryResponseOutcome::Accepted { receipt } => {
-                receipt
-                    .verify_for_claim(&self.pinned_registry_key, claim)
+        Ok(response.outcome)
+    }
+
+    fn verify_lookup(
+        &self,
+        outcome: RegistryResponseOutcome,
+        matches_query: impl FnOnce(&AcceptedRegistryRecord) -> bool,
+    ) -> Result<Option<AcceptedRegistryRecord>, RegistryClientError<T::Error>> {
+        match outcome {
+            RegistryResponseOutcome::Found { record } => {
+                let record = record
+                    .to_record()
                     .map_err(RegistryClientError::InvalidReceipt)?;
-                Ok(*receipt)
+                record
+                    .verify(&self.pinned_registry_key)
+                    .map_err(RegistryClientError::InvalidReceipt)?;
+                if !matches_query(&record) {
+                    return Err(RegistryClientError::LookupMismatch);
+                }
+                Ok(Some(record))
             }
+            RegistryResponseOutcome::NotFound => Ok(None),
             RegistryResponseOutcome::Rejected { error } => {
                 Err(RegistryClientError::Rejected(error))
             }
+            RegistryResponseOutcome::Accepted { .. } => Err(RegistryClientError::UnexpectedOutcome),
         }
     }
 
@@ -288,6 +416,8 @@ pub enum RegistryClientError<E> {
     CorrelationMismatch { expected: u64, actual: u64 },
     Rejected(RegistryRemoteError),
     InvalidReceipt(RegistryError),
+    LookupMismatch,
+    UnexpectedOutcome,
     RequestIdExhausted,
 }
 
@@ -309,6 +439,12 @@ impl<E: fmt::Display> fmt::Display for RegistryClientError<E> {
             }
             Self::InvalidReceipt(error) => {
                 write!(formatter, "registry returned an invalid receipt: {error}")
+            }
+            Self::LookupMismatch => {
+                formatter.write_str("registry lookup result does not match the query")
+            }
+            Self::UnexpectedOutcome => {
+                formatter.write_str("registry returned an unexpected outcome")
             }
             Self::RequestIdExhausted => formatter.write_str("registry request IDs are exhausted"),
         }
@@ -366,24 +502,46 @@ impl<'store> RegistryService<'store> {
         }
         let request = decode_request(encoded_request).map_err(RegistryServiceError::Protocol)?;
         let request_id = request.request_id;
-        let outcome = match request.claim.to_claim() {
-            Ok(claim) => match self.state.apply(claim, accepted_at) {
-                Ok(receipt) => {
-                    if let Err(error) = RegistryVault::persist(self.store, &self.state) {
-                        self.unavailable = true;
-                        return Err(RegistryServiceError::Persistence(error));
+        let outcome = match request.operation {
+            RegistryOperation::Claim { claim } => match claim.to_claim() {
+                Ok(claim) => match self.state.apply(claim, accepted_at) {
+                    Ok(receipt) => {
+                        if let Err(error) = RegistryVault::persist(self.store, &self.state) {
+                            self.unavailable = true;
+                            return Err(RegistryServiceError::Persistence(error));
+                        }
+                        RegistryResponseOutcome::Accepted {
+                            receipt: Box::new(receipt),
+                        }
                     }
-                    RegistryResponseOutcome::Accepted {
-                        receipt: Box::new(receipt),
-                    }
-                }
+                    Err(error) => RegistryResponseOutcome::Rejected {
+                        error: RegistryRemoteError::from_registry(&error),
+                    },
+                },
                 Err(error) => RegistryResponseOutcome::Rejected {
                     error: RegistryRemoteError::from_registry(&error),
                 },
             },
-            Err(error) => RegistryResponseOutcome::Rejected {
-                error: RegistryRemoteError::from_registry(&error),
+            RegistryOperation::LookupHandle { handle } => match self.state.handle_record(&handle) {
+                Ok(Some(record)) => RegistryResponseOutcome::Found {
+                    record: Box::new(RegistryRecord::from_record(record)),
+                },
+                Ok(None) => RegistryResponseOutcome::NotFound,
+                Err(error) => RegistryResponseOutcome::Rejected {
+                    error: RegistryRemoteError::from_registry(&error),
+                },
             },
+            RegistryOperation::LookupAccount { account_id } => {
+                match self.state.account_record(&account_id) {
+                    Ok(Some(record)) => RegistryResponseOutcome::Found {
+                        record: Box::new(RegistryRecord::from_record(record)),
+                    },
+                    Ok(None) => RegistryResponseOutcome::NotFound,
+                    Err(error) => RegistryResponseOutcome::Rejected {
+                        error: RegistryRemoteError::from_registry(&error),
+                    },
+                }
+            }
         };
         encode_response(&RegistryResponse {
             version: REGISTRY_TRANSPORT_VERSION,
