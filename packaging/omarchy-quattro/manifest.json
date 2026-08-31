@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "tcballard.omachat-status",
+  "name": "OmaChat status",
+  "version": "0.0.1",
+  "author": "OmaChat contributors",
+  "description": "Bounded asynchronous OmaChat daemon status indicator",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "Widget.qml" },
+  "barWidget": {
+    "displayName": "OmaChat",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

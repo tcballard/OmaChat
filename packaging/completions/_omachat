@@ -1,0 +1,2 @@
+#compdef omachat
+_arguments '--socket[daemon socket]:path:_files' '--version[show version]'

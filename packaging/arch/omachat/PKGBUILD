@@ -1,0 +1,44 @@
+# Maintainer: OmaChat contributors
+pkgname=omachat
+pkgver=0.0.1
+pkgrel=1
+pkgdesc='Always-on bitchat-compatible mesh node and terminal client'
+arch=('x86_64')
+url='https://github.com/tcballard/OmaChat'
+license=('0BSD')
+depends=('dbus' 'ca-certificates' 'gcc-libs' 'qrencode')
+makedepends=('cargo' 'rust')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# Release automation must replace this marker with the published archive hash.
+sha256sums=('REPLACE_WITH_RELEASE_ARCHIVE_SHA256')
+
+prepare() {
+  cd "OmaChat-$pkgver"
+  cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
+
+build() {
+  cd "OmaChat-$pkgver"
+  CARGO_TARGET_DIR=target cargo build --frozen --release --workspace --bins
+}
+
+check() {
+  cd "OmaChat-$pkgver"
+  CARGO_TARGET_DIR=target cargo test --frozen --workspace
+}
+
+package() {
+  cd "OmaChat-$pkgver"
+  install -Dm755 target/release/{omachat,omachat-ctl,omachatd} -t "$pkgdir/usr/bin"
+  install -Dm644 packaging/systemd/omachatd.service "$pkgdir/usr/lib/systemd/user/omachatd.service"
+  install -Dm644 packaging/desktop/omachat.desktop "$pkgdir/usr/share/applications/omachat.desktop"
+  install -Dm644 packaging/man/*.1 -t "$pkgdir/usr/share/man/man1"
+  install -Dm644 packaging/man/*.7 -t "$pkgdir/usr/share/man/man7"
+  install -Dm644 packaging/man/*.8 -t "$pkgdir/usr/share/man/man8"
+  install -Dm644 packaging/completions/omachat-ctl.bash "$pkgdir/usr/share/bash-completion/completions/omachat-ctl"
+  install -Dm644 packaging/completions/omachat.bash "$pkgdir/usr/share/bash-completion/completions/omachat"
+  install -Dm644 packaging/completions/_omachat-ctl "$pkgdir/usr/share/zsh/site-functions/_omachat-ctl"
+  install -Dm644 packaging/completions/_omachat "$pkgdir/usr/share/zsh/site-functions/_omachat"
+  install -Dm644 packaging/completions/*.fish -t "$pkgdir/usr/share/fish/vendor_completions.d"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

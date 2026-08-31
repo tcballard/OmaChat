@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=OmaChat
+Comment=Open the OmaChat terminal client
+Exec=omachat
+Icon=utilities-terminal
+Terminal=true
+Categories=Network;Chat;
+Keywords=mesh;nostr;chat;terminal;
+StartupNotify=false

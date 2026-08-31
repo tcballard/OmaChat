@@ -1,0 +1,17 @@
+.TH OMACHAT 1 "August 2026" "OmaChat 0.0.1"
+.SH NAME
+omachat \- OmaChat terminal client
+.SH SYNOPSIS
+.B omachat
+[\fB--socket\fR \fIPATH\fR]
+.SH DESCRIPTION
+Opens the bounded ANSI terminal interface and connects to the per-user daemon.
+Commands include /join, /leave, /who, /block, /send, /panic ERASE, and /detach.
+Panic erasure is destructive and cannot remove copies already held by relays,
+peers, backups, or filesystem snapshots.
+.SH FILES
+.I $XDG_RUNTIME_DIR/omachat/omachat.sock
+.SH SEE ALSO
+.BR omachat-ctl (1),
+.BR omachatd (8),
+.BR omachat-protocol (7)
