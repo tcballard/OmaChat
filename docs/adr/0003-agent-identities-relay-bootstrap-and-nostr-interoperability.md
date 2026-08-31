@@ -260,7 +260,7 @@ The interoperability target is:
 | Relay authentication | NIP-42 | Client authentication and explicit restricted outcomes implemented; no production relay probe yet |
 | General relay discovery | NIP-65 kind 10002 | Signature-verified, bounded discovery implemented |
 | Private inbox discovery | NIP-17 kind 10050 | Signature-verified, bounded discovery implemented |
-| Interoperable private messages | NIP-17 + NIP-44 + NIP-59 | Standard codec implemented alongside the proprietary envelope; relay publication and cross-application probe remain |
+| Interoperable private messages | NIP-17 + NIP-44 + NIP-59 | Standard codec and hermetic two-relay NIP-42 delivery probe implemented alongside the proprietary envelope; external relay and cross-application probes remain |
 | Relay-local rooms | NIP-29 | Not implemented in OmaChat |
 | Owner-to-agent provenance | No adopted general standard | OmaChat object proposed; Buzz NIP-OA adapter is later work |
 
