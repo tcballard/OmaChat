@@ -33,10 +33,13 @@ conformance/
 ├── harnesses/
 │   ├── README.md
 │   ├── android/
+│   ├── generate-account-registry-vector.py
+│   ├── requirements-account-registry.txt
 │   └── swift/
 ├── loader.rs
 ├── manifest.json
 └── fixtures/
+    ├── omachat-account-registry-v1/
     ├── schema-smoke-v1/
     └── <captured-fixture-id>/
         ├── inputs.json
@@ -86,7 +89,7 @@ Before committing a future fixture, inspect every artifact and confirm that all
 secret-shaped values are synthetic. If that cannot be proven, discard the
 capture and regenerate it with newly created test-only keys.
 
-## Regenerating fixtures
+## Regenerating captured upstream fixtures
 
 1. Check out the exact source commit recorded by the active compatibility
    profile in a clean upstream worktree.
@@ -108,6 +111,51 @@ capture and regenerate it with newly created test-only keys.
 
 Fixture changes require review like protocol code. Replacing bytes without
 updating their provenance and digest is a test failure, not an accepted update.
+
+## Regenerating the account/registry reference vector
+
+`omachat-account-registry-v1` is different from the captured upstream
+fixtures. It is a same-project, independently implemented Python calculation
+of OmaChat's new account/registry protocol. It does not establish compatibility
+with a deployed registry or the pinned mobile clients. Its manifest producer
+therefore remains `synthetic`, with null repository, release, and commit fields.
+
+Use CPython 3.12.13 to create a disposable virtual environment, install the
+exact package versions, then generate two replicas into new directories and
+compare every byte:
+
+```sh
+python3 -m venv <venv-directory>
+<venv-directory>/bin/python -m pip install \
+  -r conformance/harnesses/requirements-account-registry.txt
+
+capture_root=$(mktemp -d)
+<venv-directory>/bin/python \
+  conformance/harnesses/generate-account-registry-vector.py \
+  --output-dir "$capture_root/first"
+<venv-directory>/bin/python \
+  conformance/harnesses/generate-account-registry-vector.py \
+  --output-dir "$capture_root/second"
+diff -ru "$capture_root/first" "$capture_root/second"
+diff -ru conformance/fixtures/omachat-account-registry-v1 \
+  "$capture_root/first"
+```
+
+Before updating the manifest, inspect the inputs to confirm every private key
+is the documented fixed synthetic value, then obtain the exact artifact
+metadata with:
+
+```sh
+wc -c "$capture_root/first"/*.json
+sha256sum "$capture_root/first"/*.json
+cargo test -p omachat-proto --test conformance_manifest --locked
+cargo test -p omachat-crypto --test account_conformance --locked
+cargo test -p omachat-registry --test conformance --locked
+```
+
+The Python generator owns only its independent reference calculation. Rust
+tests consume the committed outputs; the generator must never import or call
+OmaChat code, nor consume values produced by it.
 
 ## OC-004 capture normalization
 

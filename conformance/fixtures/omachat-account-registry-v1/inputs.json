@@ -1,0 +1,61 @@
+{
+  "accounts": [
+    {
+      "account_root_seed_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+      "device": {
+        "noise_secret_hex": "1414141414141414141414141414141414141414141414141414141414141414",
+        "nostr_secret_hex": "1515151515151515151515151515151515151515151515151515151515151515",
+        "signing_seed_hex": "1313131313131313131313131313131313131313131313131313131313131313"
+      },
+      "id": "alice",
+      "recovery_seed_hex": "1212121212121212121212121212121212121212121212121212121212121212"
+    },
+    {
+      "account_root_seed_hex": "2121212121212121212121212121212121212121212121212121212121212121",
+      "device": {
+        "noise_secret_hex": "2424242424242424242424242424242424242424242424242424242424242424",
+        "nostr_secret_hex": "2525252525252525252525252525252525252525252525252525252525252525",
+        "signing_seed_hex": "2323232323232323232323232323232323232323232323232323232323232323"
+      },
+      "id": "bob",
+      "recovery_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ],
+  "registry_signing_seed_hex": "7777777777777777777777777777777777777777777777777777777777777777",
+  "schema_version": 1,
+  "transitions": [
+    {
+      "accepted_at": 1788000101,
+      "account": "alice",
+      "binding_revision": 1,
+      "command_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+      "display_name": "Alice Example",
+      "expected_registry_revision": 0,
+      "handle": "alice",
+      "id": "alice-initial",
+      "issued_at": 1788000001
+    },
+    {
+      "accepted_at": 1788000102,
+      "account": "bob",
+      "binding_revision": 1,
+      "command_id_hex": "b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1",
+      "display_name": "Bob Example",
+      "expected_registry_revision": 0,
+      "handle": "bob",
+      "id": "bob-initial",
+      "issued_at": 1788000002
+    },
+    {
+      "accepted_at": 1788000103,
+      "account": "alice",
+      "binding_revision": 2,
+      "command_id_hex": "a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2",
+      "display_name": "Alice Example Updated",
+      "expected_registry_revision": 1,
+      "handle": "alice",
+      "id": "alice-update-after-bob",
+      "issued_at": 1788000003
+    }
+  ]
+}
