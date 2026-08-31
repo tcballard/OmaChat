@@ -4,6 +4,13 @@
 //! outside this library. A production process should expose this loopback-only
 //! listener through a separately configured TLS reverse proxy.
 
+mod process;
+
+pub use process::{
+    REGISTRYD_HELP, RegistryProcessCommand, RegistryProcessConfig, RegistryProcessConfigError,
+    load_registry_signing_seed, parse_registry_process_args,
+};
+
 use omachat_registry_transport::{
     PendingRegistryWebSocketRequest, RegistryService, RegistryServiceError,
     RegistryWebSocketServerError, accept_registry_websocket_request,
@@ -94,7 +101,7 @@ pub async fn run_registry_host<C, S>(
     shutdown: S,
 ) -> Result<RegistryHostReport, RegistryHostError>
 where
-    C: FnMut() -> u64,
+    C: FnMut() -> Result<u64, RegistryHostError>,
     S: Future<Output = ()>,
 {
     let limits = limits.validate()?;
@@ -214,11 +221,11 @@ fn process_admission<C>(
     report: &mut RegistryHostReport,
 ) -> Result<(), RegistryHostError>
 where
-    C: FnMut() -> u64,
+    C: FnMut() -> Result<u64, RegistryHostError>,
 {
     let (ip, result) = joined.map_err(RegistryHostError::Task)?;
     match result {
-        Ok(pending) => match service.handle(pending.request(), accepted_at()) {
+        Ok(pending) => match service.handle(pending.request(), accepted_at()?) {
             Ok(response) => {
                 responses.spawn(async move { (ip, pending.respond(response).await) });
             }
@@ -282,6 +289,7 @@ pub enum RegistryHostError {
     Listener(std::io::Error),
     Service(RegistryServiceError),
     Task(JoinError),
+    ClockBeforeUnixEpoch,
     InvalidRuntimeState,
 }
 
@@ -298,6 +306,9 @@ impl fmt::Display for RegistryHostError {
             Self::Listener(error) => write!(formatter, "registry listener failed: {error}"),
             Self::Service(error) => write!(formatter, "registry service failed: {error}"),
             Self::Task(error) => write!(formatter, "registry connection task failed: {error}"),
+            Self::ClockBeforeUnixEpoch => {
+                formatter.write_str("registry host clock is before the Unix epoch")
+            }
             Self::InvalidRuntimeState => {
                 formatter.write_str("registry host connection accounting is inconsistent")
             }

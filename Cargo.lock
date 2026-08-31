@@ -1481,12 +1481,15 @@ dependencies = [
 name = "omachat-registry-host"
 version = "0.0.1"
 dependencies = [
+ "hex",
  "omachat-crypto",
  "omachat-registry",
  "omachat-registry-transport",
  "omachat-store",
+ "rustix",
  "tempfile",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

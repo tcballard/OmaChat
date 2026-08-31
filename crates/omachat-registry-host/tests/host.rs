@@ -59,7 +59,7 @@ async fn host_serves_verified_claim_and_drains_cleanly() {
         listener,
         &mut service,
         RegistryHostLimits::default(),
-        || 100,
+        || Ok(100),
         async {
             let _ = shutdown_rx.await;
         },
@@ -97,7 +97,7 @@ async fn per_ip_limit_recovers_after_idle_admission_timeout() {
         shutdown_grace: Duration::from_secs(1),
     };
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let host = run_registry_host(listener, &mut service, limits, || 100, async {
+    let host = run_registry_host(listener, &mut service, limits, || Ok(100), async {
         let _ = shutdown_rx.await;
     });
     let client = async {
@@ -147,7 +147,7 @@ async fn shutdown_grace_aborts_an_idle_connection() {
         shutdown_grace: Duration::from_millis(30),
     };
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
-    let host = run_registry_host(listener, &mut service, limits, || 100, async {
+    let host = run_registry_host(listener, &mut service, limits, || Ok(100), async {
         let _ = shutdown_rx.await;
     });
     let client = async {
