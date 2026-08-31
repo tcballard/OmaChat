@@ -21,20 +21,21 @@ OC-065 is open. Its first local slice now implements cryptographically distinct,
 co-resident account/recovery roots, stable account/device IDs, strict candidate
 handles, signed device/profile binding, sealed account state, and truthful
 daemon status. A transport-independent authoritative state machine now proves
-atomic uniqueness, revision CAS, idempotency, permanent rename tombstones, and
-signed hash-chained receipts hermetically. A normalized local handle is not
-globally unique until a deployed registry adapter returns a receipt that the
-client verifies and caches.
+atomic uniqueness, revision CAS, idempotency, exact claim-to-receipt binding,
+and signed global/per-account hash chains hermetically. Handle rename and reuse
+policy is deliberately deferred. A normalized local handle is not globally
+unique until a deployed registry adapter returns a receipt that the client
+verifies and caches.
 
 | Area | Implemented in this branch | Still requires external evidence or work |
 |---|---|---|
 | G0 prerequisites | Frozen pins, fixtures, georelay policy, BlueR/proxy/keyring probes | Named-adapter dual-role capture; Omarchy keyring/service lifecycle matrix; live system-Tor/Arti observations |
 | G1 Nostr product | Sealed providers/records and explicit migration; four independent identity roots; strict event/envelope/relay/pool/georelay/mailbox/outbox code; versioned IPC; CLI/TUI; daemon relay actor, subscriptions, publish/receive, reload and restart tests | Pinned iOS/Android live chat/presence/private delivery; real relay/proxy gate; target-host keyring lifecycle; TUI remains line-input rather than a ratatui/crossterm raw-event loop |
-| G1 account foundation | Distinct, provisionally co-resident sealed account/recovery roots; stable account/device IDs; strict candidate handles/display names; signed local device/profile binding; restart-stable daemon status that labels configured handles `local-only`; authoritative in-memory uniqueness/CAS/idempotency/tombstone state; pinned-key, hash-chained receipts | Off-device recovery custody; registry persistence/deployment/client adapter; sealed verified cache; device enrollment/revocation/recovery; key-transparency evidence; no live claim |
+| G1 account foundation | Distinct, provisionally co-resident sealed account/recovery roots; stable account/device IDs; strict candidate handles/display names; signed local device/profile binding; restart-stable daemon status that labels configured handles `local-only`; authoritative in-memory uniqueness/CAS/idempotency state; exact claim-bound, pinned-key global/per-account hash-chained receipts; rename/reuse policy explicitly deferred | Off-device recovery custody; registry persistence/deployment/client adapter; sealed verified cache; device enrollment/revocation/recovery; key-transparency evidence; no live claim |
 | G2 public mesh (retained, deferred) | Bounded v1/v2 packet, compression/signing, announce, fragmentation, GCS/request-sync, presence/routing/dedup/source-route logic, six-hour sealed public archive, 15-minute transient caches, bounded RSR backfill selection, production BlueR GATT/advertise/discover/read/write runtime, duplicate-link and adapter-loss state | Daemon-level mesh orchestration; real BlueZ policy/adapter qualification; pinned Swift/Android one/two-hop corpus and live tests; long-running radio convergence |
 | G3 private mesh (retained, deferred) | Exact captured Noise XX transcript/transport; replay/reorder/rekey state; authenticated pins; private messages/receipts/dedup; favorite/challenge/vouch controls; sealed favorites/verification/blocks; deterministic mesh/Nostr/queue route policy; transport-attempt history; ANSI QR output through packaged `qrencode` | Live Noise/QR/favorite exchange against pinned phones; daemon-level mesh session/outbox orchestration; scanned-QR input workflow |
 | G4 courier/bridge (retained, deferred) | Exact pinned courier v1/v2/day-tag captures; prekey grace; sealed quotas/deposits/spray/handover; kind-1401 relay drops; carrier type 28 bounded TLVs; signed rendezvous `r`/optional `m`; bridge identity domain, loop guard and metrics; persisted public/courier restart tests | Exact upstream carrier golden capture; daemon bridge orchestration/health gating; pinned iOS live courier and bridge tests; two-hour multi-node backfill rig |
-| G5 hardening/release | Cryptographic panic transaction and proof; persisted block state; hardened user unit; desktop entry; shell completions; man pages; tagged/`-git` PKGBUILDs; Quattro widget; legacy Waybar example; security/privacy/install docs; nightly parser fuzz workflow | Omarchy v4.0.1 validation/install/upgrade/removal; Secret Service panic test; package archive checksum after an authorized tag; clean-chroot/namcap; widget live validation; 72-hour soak and signed release evidence |
+| G5 hardening/release | Cryptographic panic transaction and proof; persisted block state; hardened user unit; desktop entry; shell completions; man pages; tagged/`-git` PKGBUILDs; Quattro widget; legacy Waybar example; security/privacy/install docs; nightly parser fuzz workflow; size-optimized release profile and hard installed-binary aggregate ceiling | Omarchy v4.0.1 validation/install/upgrade/removal; Secret Service panic test; package archive checksum after an authorized tag; clean-chroot/namcap; widget live validation; 72-hour soak and signed release evidence |
 
 ## Local verification
 
