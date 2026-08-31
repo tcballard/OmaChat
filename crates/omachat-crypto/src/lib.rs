@@ -1,5 +1,11 @@
 //! Compatibility-critical cryptographic primitives backed by captured vectors.
 
+mod identity;
+
+pub use identity::{
+    DerivationSource, DerivedNostrIdentity, IdentityError, IdentitySecrets, PublicIdentity,
+};
+
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chacha20poly1305::{
     Key, XChaCha20Poly1305, XNonce,
