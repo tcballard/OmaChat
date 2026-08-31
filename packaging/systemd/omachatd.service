@@ -1,0 +1,36 @@
+[Unit]
+Description=OmaChat Nostr and IPC daemon
+Documentation=man:omachatd(8)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/omachatd
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=omachat
+RuntimeDirectoryMode=0700
+StateDirectory=omachat
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%S/omachat %t/omachat
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_BLUETOOTH
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target

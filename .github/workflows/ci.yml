@@ -46,6 +46,9 @@ jobs:
       - name: Check binary version contract
         run: ./scripts/check-version-contract.sh
 
+      - name: Check packaging and man pages
+        run: sh ./scripts/check-packaging.sh
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest

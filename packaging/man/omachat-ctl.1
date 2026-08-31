@@ -1,0 +1,33 @@
+.TH OMACHAT-CTL 1 "August 2026" "OmaChat 0.0.1"
+.SH NAME
+omachat-ctl \- control an OmaChat daemon
+.SH SYNOPSIS
+.B omachat-ctl
+[\fB--socket\fR \fIPATH\fR] \fICOMMAND\fR
+.SH COMMANDS
+.TP
+.B status [--json]
+Show daemon, relay, storage, join, and outbox state.
+.TP
+.B fingerprint
+Print the stable Noise fingerprint.
+.TP
+.B fingerprint --qr
+Render the same fingerprint as an ANSI QR code using qrencode.
+.TP
+.B join GEOHASH
+Join a public geohash conversation.
+.TP
+.B leave GEOHASH
+Leave a public geohash conversation.
+.TP
+.B send CONVERSATION TEXT
+Queue a public or private message.
+.TP
+.B panic --confirm ERASE
+Cryptographically erase local state and stop the daemon.
+.SH EXIT STATUS
+0 success; 2 usage; 3 connection; 4 protocol/remote error; 5 timeout.
+.SH SEE ALSO
+.BR omachat (1),
+.BR omachatd (8)

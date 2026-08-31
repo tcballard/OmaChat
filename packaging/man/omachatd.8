@@ -1,0 +1,24 @@
+.TH OMACHATD 8 "August 2026" "OmaChat 0.0.1"
+.SH NAME
+omachatd \- per-user OmaChat daemon
+.SH SYNOPSIS
+.B omachatd
+[\fB--config\fR \fIPATH\fR] [\fB--state\fR \fIPATH\fR]
+[\fB--socket\fR \fIPATH\fR] [\fB--file-key\fR]
+.SH DESCRIPTION
+Owns identities, sealed state, the Nostr transport, and the versioned IPC socket.
+Only the Nostr transport is currently wired into the daemon; the mesh transport
+is not yet integrated.
+SIGHUP validates a replacement configuration before applying it. SIGINT stops cleanly.
+.SH STORAGE
+Secret Service is preferred. --file-key selects a 0600 master key in the 0700
+state directory. A missing selected key is fatal; it is never silently regenerated.
+.SH SYSTEMD
+Start with "systemctl --user enable --now omachatd.service". To keep a powered,
+awake machine serving after logout, the owner may explicitly run
+"loginctl enable-linger $USER"; reverse with "loginctl disable-linger $USER".
+Suspend, power loss, radio loss, and network loss interrupt service.
+.SH SEE ALSO
+.BR omachat (1),
+.BR omachat-ctl (1),
+.BR omachat-protocol (7)

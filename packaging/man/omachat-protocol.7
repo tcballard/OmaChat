@@ -1,0 +1,12 @@
+.TH OMACHAT-PROTOCOL 7 "August 2026" "OmaChat 0.0.1"
+.SH NAME
+omachat-protocol \- OmaChat compatibility and IPC contract
+.SH DESCRIPTION
+IPC v1 is newline-delimited JSON over a 0600 Unix socket. Clients must begin
+with hello and a supported version range. Lines are limited to 65536 bytes;
+unknown fields and unsupported versions are rejected. Responses retain request IDs.
+.PP
+Wire behavior targets the immutable upstream pins documented in
+docs/compatibility-profile.md. A codec passing hermetic tests is not a live
+interoperability claim. Courier v1 and v2, Android limitations, bridge health,
+and uncompleted hardware/live gates are documented there and in SECURITY.md.
