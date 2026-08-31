@@ -1,5 +1,6 @@
 use crate::{RegistryClient, RegistryClientError, RegistryTransport};
 use omachat_crypto::{AccountId, GlobalHandle};
+use omachat_registry::{AcceptedRegistryRecord, HandleClaim};
 use omachat_store::{RegistryCacheError, RegistryCacheLookup, SealedStore, VerifiedRegistryCache};
 use std::{error::Error, fmt};
 
@@ -51,6 +52,38 @@ impl<'store, T: RegistryTransport> RegistryEvidenceClient<'store, T> {
             cache,
             max_age_seconds,
         })
+    }
+
+    /// Submit one signed, idempotent handle claim and seal its exact verified
+    /// receipt before reporting success. A transport failure is deliberately an
+    /// unknown mutation outcome: callers must retry this same `HandleClaim`
+    /// rather than create a new command ID.
+    pub async fn claim_handle(
+        &mut self,
+        claim: &HandleClaim,
+        now: u64,
+    ) -> Result<RegistryCacheLookup, RegistryEvidenceError<T::Error>> {
+        let receipt = match self.client.claim(claim).await {
+            Ok(receipt) => receipt,
+            Err(RegistryClientError::Transport(error)) => {
+                return Err(RegistryEvidenceError::ClaimOutcomeUnknown(error));
+            }
+            Err(error) => return Err(RegistryEvidenceError::Client(error)),
+        };
+        let account_id = receipt.account_id.clone();
+        self.cache
+            .observe(
+                self.store,
+                AcceptedRegistryRecord {
+                    claim: claim.clone(),
+                    receipt,
+                },
+                now,
+            )
+            .map_err(RegistryEvidenceError::Cache)?;
+        Ok(self
+            .cache
+            .lookup_account(&account_id, now, self.max_age_seconds))
     }
 
     /// Resolve a handle online. Only a transport outage permits explicit cached
@@ -162,6 +195,7 @@ impl<'store, T: RegistryTransport> RegistryEvidenceClient<'store, T> {
 pub enum RegistryEvidenceError<E> {
     Client(RegistryClientError<E>),
     Cache(RegistryCacheError),
+    ClaimOutcomeUnknown(E),
     AuthoritativeRollback,
 }
 
@@ -170,6 +204,10 @@ impl<E: fmt::Display> fmt::Display for RegistryEvidenceError<E> {
         match self {
             Self::Client(error) => error.fmt(formatter),
             Self::Cache(error) => error.fmt(formatter),
+            Self::ClaimOutcomeUnknown(error) => write!(
+                formatter,
+                "registry claim outcome is unknown after transport failure: {error}"
+            ),
             Self::AuthoritativeRollback => formatter
                 .write_str("registry returned not-found for previously verified cached evidence"),
         }
@@ -181,6 +219,7 @@ impl<E: Error + 'static> Error for RegistryEvidenceError<E> {
         match self {
             Self::Client(error) => Some(error),
             Self::Cache(error) => Some(error),
+            Self::ClaimOutcomeUnknown(error) => Some(error),
             Self::AuthoritativeRollback => None,
         }
     }

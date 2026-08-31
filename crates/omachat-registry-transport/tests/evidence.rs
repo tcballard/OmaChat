@@ -302,3 +302,67 @@ async fn forged_online_evidence_is_not_cached_or_used_offline() {
     );
     assert!(evidence.cache().is_empty());
 }
+
+#[tokio::test]
+async fn verified_claim_is_sealed_and_idempotent_replay_refreshes_it() {
+    let service_directory = tempdir().unwrap();
+    let cache_directory = tempdir().unwrap();
+    let service_store = SealedStore::open(service_directory.path(), RequestedProvider::File)
+        .await
+        .unwrap();
+    let cache_store = SealedStore::open(cache_directory.path(), RequestedProvider::File)
+        .await
+        .unwrap();
+    let mut service = RegistryService::open(&service_store, [94; 32]).unwrap();
+    let pinned_key = service.verifying_key();
+    let alice_claim = claim(&account(4), 1, "alice");
+    let transport = LocalTransport {
+        service: &mut service,
+        accepted_at: 100,
+    };
+    let mut evidence =
+        RegistryEvidenceClient::open(transport, &cache_store, pinned_key, 100).unwrap();
+
+    let first = evidence.claim_handle(&alice_claim, 1_000).await.unwrap();
+    let first_receipt = match first {
+        RegistryCacheLookup::Fresh(cached) => cached.record.receipt,
+        other => panic!("verified online claim must be fresh, got {other:?}"),
+    };
+    let replay = evidence.claim_handle(&alice_claim, 1_001).await.unwrap();
+    assert!(matches!(
+        replay,
+        RegistryCacheLookup::Fresh(ref cached)
+            if cached.record.receipt == first_receipt && cached.verified_at == 1_001
+    ));
+    assert_eq!(evidence.cache().len(), 1);
+}
+
+#[tokio::test]
+async fn claim_transport_failure_is_an_explicit_unknown_outcome() {
+    let service_directory = tempdir().unwrap();
+    let cache_directory = tempdir().unwrap();
+    let service_store = SealedStore::open(service_directory.path(), RequestedProvider::File)
+        .await
+        .unwrap();
+    let cache_store = SealedStore::open(cache_directory.path(), RequestedProvider::File)
+        .await
+        .unwrap();
+    let mut service = RegistryService::open(&service_store, [95; 32]).unwrap();
+    let pinned_key = service.verifying_key();
+    let transport = ControlledTransport {
+        service: &mut service,
+        offline: Arc::new(AtomicBool::new(true)),
+    };
+    let mut evidence =
+        RegistryEvidenceClient::open(transport, &cache_store, pinned_key, 100).unwrap();
+
+    assert!(matches!(
+        evidence
+            .claim_handle(&claim(&account(5), 1, "alice"), 1_000)
+            .await,
+        Err(RegistryEvidenceError::ClaimOutcomeUnknown(
+            ControlledError::Offline
+        ))
+    ));
+    assert!(evidence.cache().is_empty());
+}
