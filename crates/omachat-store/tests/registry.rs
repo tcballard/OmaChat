@@ -28,7 +28,7 @@ fn device_keys(seed: u8) -> DevicePublicKeys {
     let signing = account(seed).public_identity();
     let nostr = identity(seed).device_nostr_identity().unwrap();
     DevicePublicKeys {
-        signing_public_key: signing.signing_public_key,
+        signing_public_key: signing.account_root_public_key,
         noise_public_key: [seed.wrapping_add(30); 32],
         nostr_public_key: *nostr.public_key(),
     }
@@ -60,7 +60,7 @@ fn claim(
 }
 
 fn write_snapshot(store: &SealedStore, snapshot: &RegistryStateSnapshot) {
-    let mut encoded = Zeroizing::new([0_u8; MAX_REGISTRY_RECORD_PLAINTEXT_BYTES]);
+    let mut encoded = Zeroizing::new(vec![0_u8; MAX_REGISTRY_RECORD_PLAINTEXT_BYTES]);
     let encoded_bytes = {
         let mut writer = Cursor::new(&mut encoded[..]);
         to_writer(&mut writer, snapshot).unwrap();
