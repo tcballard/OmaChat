@@ -22,6 +22,7 @@ pub struct VerifiedNostrProfile {
     display_name: Option<String>,
     about: Option<String>,
     picture: Option<String>,
+    source_event: SignedEvent,
 }
 
 impl VerifiedNostrProfile {
@@ -55,6 +56,10 @@ impl VerifiedNostrProfile {
 
     pub fn picture(&self) -> Option<&str> {
         self.picture.as_deref()
+    }
+
+    pub(crate) fn source_event(&self) -> &SignedEvent {
+        &self.source_event
     }
 }
 
@@ -107,6 +112,7 @@ pub fn verify_profile_metadata(
         display_name: raw.display_name,
         about: raw.about,
         picture: raw.picture,
+        source_event: event.clone(),
     })
 }
 
