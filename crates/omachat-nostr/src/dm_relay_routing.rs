@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use k256::schnorr::VerifyingKey as SchnorrVerifyingKey;
 use url::Url;
 
 use crate::dm_relay_cache::{
@@ -28,12 +29,17 @@ impl Default for DmRelayRoutingPolicy {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DmRelayRoute {
+    recipient_public_key: [u8; 32],
     relay_urls: Vec<String>,
     provenance: DmRelayRouteProvenance,
     required_acknowledgements: usize,
 }
 
 impl DmRelayRoute {
+    pub fn recipient_public_key(&self) -> &[u8; 32] {
+        &self.recipient_public_key
+    }
+
     pub fn relay_urls(&self) -> &[String] {
         &self.relay_urls
     }
@@ -61,6 +67,9 @@ pub fn route_dm_relays(
     bootstrap_relays: &[String],
     policy: DmRelayRoutingPolicy,
 ) -> Result<DmRelayRoute, DmRelayRoutingError> {
+    SchnorrVerifyingKey::from_bytes(recipient_pubkey)
+        .map_err(|_| DmRelayRoutingError::InvalidRecipientPublicKey)?;
+
     match cache.lookup(recipient_pubkey, now, policy.freshness_window_seconds) {
         DmRelayCacheLookup::Fresh(record) => route_verified(record, false),
         DmRelayCacheLookup::OfflineStale(record) if policy.allow_stale_offline => {
@@ -69,7 +78,7 @@ pub fn route_dm_relays(
         DmRelayCacheLookup::OfflineStale(_) => Err(DmRelayRoutingError::StaleMetadata),
         DmRelayCacheLookup::UnusableClockRollback(_) => Err(DmRelayRoutingError::ClockRollback),
         DmRelayCacheLookup::Missing if policy.allow_bootstrap_when_missing => {
-            route_bootstrap(bootstrap_relays)
+            route_bootstrap(recipient_pubkey, bootstrap_relays)
         }
         DmRelayCacheLookup::Missing => Err(DmRelayRoutingError::MissingMetadata),
     }
@@ -91,10 +100,17 @@ fn route_verified(
             source_event_id: *record.source_event_id(),
         }
     };
-    Ok(route(record.relays().to_vec(), provenance))
+    Ok(route(
+        *record.recipient_pubkey(),
+        record.relays().to_vec(),
+        provenance,
+    ))
 }
 
-fn route_bootstrap(bootstrap_relays: &[String]) -> Result<DmRelayRoute, DmRelayRoutingError> {
+fn route_bootstrap(
+    recipient_public_key: &[u8; 32],
+    bootstrap_relays: &[String],
+) -> Result<DmRelayRoute, DmRelayRoutingError> {
     if bootstrap_relays.is_empty() {
         return Err(DmRelayRoutingError::NoRelayEndpoints);
     }
@@ -125,13 +141,19 @@ fn route_bootstrap(bootstrap_relays: &[String]) -> Result<DmRelayRoute, DmRelayR
     }
     canonical.sort();
     Ok(route(
+        *recipient_public_key,
         canonical,
         DmRelayRouteProvenance::BootstrapMissingMetadata,
     ))
 }
 
-fn route(relay_urls: Vec<String>, provenance: DmRelayRouteProvenance) -> DmRelayRoute {
+fn route(
+    recipient_public_key: [u8; 32],
+    relay_urls: Vec<String>,
+    provenance: DmRelayRouteProvenance,
+) -> DmRelayRoute {
     DmRelayRoute {
+        recipient_public_key,
         required_acknowledgements: relay_urls.len().min(2),
         relay_urls,
         provenance,
@@ -140,6 +162,7 @@ fn route(relay_urls: Vec<String>, provenance: DmRelayRouteProvenance) -> DmRelay
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DmRelayRoutingError {
+    InvalidRecipientPublicKey,
     MissingMetadata,
     StaleMetadata,
     ClockRollback,
@@ -153,6 +176,7 @@ pub enum DmRelayRoutingError {
 impl fmt::Display for DmRelayRoutingError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::InvalidRecipientPublicKey => "recipient public key is not a valid x-only key",
             Self::MissingMetadata => "recipient has no verified DM relay metadata",
             Self::StaleMetadata => "recipient DM relay metadata is stale",
             Self::ClockRollback => "local time precedes recipient DM relay metadata",
@@ -227,6 +251,7 @@ mod tests {
         )
         .expect("verified route");
         assert_eq!(route.relay_urls(), &["wss://recipient.example/"]);
+        assert_eq!(route.recipient_public_key(), &recipient);
         assert!(matches!(
             route.provenance(),
             DmRelayRouteProvenance::VerifiedFresh { .. }
@@ -237,7 +262,7 @@ mod tests {
     #[test]
     fn bootstrap_fallback_is_explicit_and_only_for_missing_metadata() {
         let cache = VerifiedDmRelayCache::new();
-        let recipient = [42; 32];
+        let recipient = xonly_public_key(&[42; 32]).expect("recipient public key");
         assert_eq!(
             route_dm_relays(
                 &cache,
@@ -267,7 +292,25 @@ mod tests {
             route.provenance(),
             &DmRelayRouteProvenance::BootstrapMissingMetadata
         );
+        assert_eq!(route.recipient_public_key(), &recipient);
         assert_eq!(route.required_acknowledgements(), 2);
+    }
+
+    #[test]
+    fn invalid_recipient_public_key_is_rejected_before_routing() {
+        assert_eq!(
+            route_dm_relays(
+                &VerifiedDmRelayCache::new(),
+                &[u8::MAX; 32],
+                NOW,
+                &["wss://bootstrap.example".into()],
+                DmRelayRoutingPolicy {
+                    allow_bootstrap_when_missing: true,
+                    ..DmRelayRoutingPolicy::default()
+                },
+            ),
+            Err(DmRelayRoutingError::InvalidRecipientPublicKey)
+        );
     }
 
     #[test]

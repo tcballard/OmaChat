@@ -9,6 +9,7 @@ pub mod dm_inbox_runtime;
 pub mod dm_relay_cache;
 pub mod dm_relay_list;
 pub mod dm_relay_routing;
+pub mod dm_routed_publish;
 pub mod envelope;
 pub mod event;
 pub mod frame;
