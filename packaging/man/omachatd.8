@@ -1,4 +1,4 @@
-.TH OMACHATD 8 "August 2026" "OmaChat 0.0.1"
+.TH OMACHATD 8 "2026-08-31" "OmaChat 0.0.1"
 .SH NAME
 omachatd \- per-user OmaChat daemon
 .SH SYNOPSIS
@@ -6,10 +6,12 @@ omachatd \- per-user OmaChat daemon
 [\fB--config\fR \fIPATH\fR] [\fB--state\fR \fIPATH\fR]
 [\fB--socket\fR \fIPATH\fR] [\fB--file-key\fR]
 .SH DESCRIPTION
-Owns identities, sealed state, the Nostr transport, and the versioned IPC socket.
+Owns identities, sealed state, the Nostr transport, and the versioned IPC
+socket.
 Only the Nostr transport is currently wired into the daemon; the mesh transport
 is not yet integrated.
-SIGHUP validates a replacement configuration before applying it. SIGINT stops cleanly.
+SIGHUP validates a replacement configuration before applying it.
+SIGINT stops cleanly.
 .SH ACCOUNT
 The JSON configuration may set account_handle and account_display_name. These
 values are sealed into a root-signed local account binding and survive restart.
@@ -17,8 +19,9 @@ A configured handle is reported as local-only until a signed central-registry
 receipt proves global uniqueness. The separate nickname setting remains the
 public geohash-chat nickname and is never populated from the account handle.
 .SH STORAGE
-Secret Service is preferred. --file-key selects a 0600 master key in the 0700
-state directory. A missing selected key is fatal; it is never silently regenerated.
+Secret Service is preferred. --file-key selects a 0600 master key in the
+0700 state directory. A missing selected key is fatal; it is never silently
+regenerated.
 .SH SYSTEMD
 Start with "systemctl --user enable --now omachatd.service". To keep a powered,
 awake machine serving after logout, the owner may explicitly run
