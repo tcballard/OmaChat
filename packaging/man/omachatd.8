@@ -10,6 +10,12 @@ Owns identities, sealed state, the Nostr transport, and the versioned IPC socket
 Only the Nostr transport is currently wired into the daemon; the mesh transport
 is not yet integrated.
 SIGHUP validates a replacement configuration before applying it. SIGINT stops cleanly.
+.SH ACCOUNT
+The JSON configuration may set account_handle and account_display_name. These
+values are sealed into a root-signed local account binding and survive restart.
+A configured handle is reported as local-only until a signed central-registry
+receipt proves global uniqueness. The separate nickname setting remains the
+public geohash-chat nickname and is never populated from the account handle.
 .SH STORAGE
 Secret Service is preferred. --file-key selects a 0600 master key in the 0700
 state directory. A missing selected key is fatal; it is never silently regenerated.

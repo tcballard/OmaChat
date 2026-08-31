@@ -75,7 +75,31 @@ pub struct SealedStore {
     pub(crate) state_directory: PathBuf,
     pub(crate) records_directory: PathBuf,
     pub(crate) provider: ProviderKind,
-    pub(crate) key: Mutex<MasterKey>,
+    pub(crate) key_state: Mutex<KeyState>,
+}
+
+pub(crate) struct KeyState {
+    key: MasterKey,
+    erased: bool,
+}
+
+impl KeyState {
+    pub(crate) fn erase(&mut self) -> Result<(), StoreError> {
+        if self.erased {
+            return Err(StoreError::Erased);
+        }
+        self.key.zeroize();
+        self.erased = true;
+        Ok(())
+    }
+
+    fn key(&self) -> Result<&[u8; KEY_BYTES], StoreError> {
+        if self.erased {
+            Err(StoreError::Erased)
+        } else {
+            Ok(self.key.expose())
+        }
+    }
 }
 
 impl SealedStore {
@@ -114,7 +138,7 @@ impl SealedStore {
             state_directory,
             records_directory,
             provider,
-            key: Mutex::new(key),
+            key_state: Mutex::new(KeyState { key, erased: false }),
         })
     }
 
@@ -216,11 +240,20 @@ impl SealedStore {
         }
         let mut nonce = [0_u8; NONCE_BYTES];
         getrandom::fill(&mut nonce).map_err(|_| StoreError::Random)?;
-        self.write_with_nonce(name, plaintext, &nonce)
+        let key_state = self
+            .key_state
+            .lock()
+            .expect("master-key state mutex poisoned");
+        self.write_with_nonce(name, plaintext, &nonce, key_state.key()?)
     }
 
     pub fn read(&self, name: &str) -> Result<Vec<u8>, StoreError> {
         validate_record_name(name)?;
+        let key_state = self
+            .key_state
+            .lock()
+            .expect("master-key state mutex poisoned");
+        let key = key_state.key()?;
         let path = self.records_directory.join(name);
         let mut bytes = Vec::new();
         OpenOptions::new()
@@ -253,21 +286,24 @@ impl SealedStore {
             <[u8; NONCE_BYTES]>::try_from(&bytes[nonce_start..ciphertext_start])
                 .expect("validated fixed nonce slice"),
         );
-        XChaCha20Poly1305::new(&Key::from(
-            *self.key.lock().expect("master-key mutex poisoned").expose(),
-        ))
-        .decrypt(
-            &nonce,
-            Payload {
-                msg: &bytes[ciphertext_start..],
-                aad: record_aad(name).as_slice(),
-            },
-        )
-        .map_err(|_| StoreError::Authentication)
+        XChaCha20Poly1305::new(&Key::from(*key))
+            .decrypt(
+                &nonce,
+                Payload {
+                    msg: &bytes[ciphertext_start..],
+                    aad: record_aad(name).as_slice(),
+                },
+            )
+            .map_err(|_| StoreError::Authentication)
     }
 
     pub fn delete(&self, name: &str) -> Result<(), StoreError> {
         validate_record_name(name)?;
+        let key_state = self
+            .key_state
+            .lock()
+            .expect("master-key state mutex poisoned");
+        key_state.key()?;
         match fs::remove_file(self.records_directory.join(name)) {
             Ok(()) => sync_directory(&self.records_directory),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -280,18 +316,17 @@ impl SealedStore {
         name: &str,
         plaintext: &[u8],
         nonce: &[u8; NONCE_BYTES],
+        key: &[u8; KEY_BYTES],
     ) -> Result<(), StoreError> {
-        let ciphertext = XChaCha20Poly1305::new(&Key::from(
-            *self.key.lock().expect("master-key mutex poisoned").expose(),
-        ))
-        .encrypt(
-            &XNonce::from(*nonce),
-            Payload {
-                msg: plaintext,
-                aad: record_aad(name).as_slice(),
-            },
-        )
-        .map_err(|_| StoreError::Encryption)?;
+        let ciphertext = XChaCha20Poly1305::new(&Key::from(*key))
+            .encrypt(
+                &XNonce::from(*nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: record_aad(name).as_slice(),
+                },
+            )
+            .map_err(|_| StoreError::Encryption)?;
         let mut envelope =
             Vec::with_capacity(RECORD_MAGIC.len() + 1 + NONCE_BYTES + ciphertext.len());
         envelope.extend_from_slice(RECORD_MAGIC);
@@ -570,6 +605,7 @@ pub enum StoreError {
     Encryption,
     Authentication,
     UnsafeEraseTarget,
+    Erased,
 }
 
 impl fmt::Display for StoreError {
@@ -607,6 +643,7 @@ impl fmt::Display for StoreError {
             Self::Encryption => formatter.write_str("record encryption failed"),
             Self::Authentication => formatter.write_str("record authentication failed"),
             Self::UnsafeEraseTarget => formatter.write_str("refusing unsafe panic-erase target"),
+            Self::Erased => formatter.write_str("sealed store has been terminally erased"),
         }
     }
 }

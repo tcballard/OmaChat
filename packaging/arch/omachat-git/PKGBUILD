@@ -2,7 +2,7 @@
 pkgname=omachat-git
 pkgver=0.0.1.r0.g0000000
 pkgrel=1
-pkgdesc='Always-on bitchat-compatible mesh node and terminal client (git)'
+pkgdesc='Tiny encrypted text collaboration for Omarchy (git)'
 arch=('x86_64')
 url='https://github.com/tcballard/OmaChat'
 license=('0BSD')

@@ -6,6 +6,7 @@ pub enum CoreError {
     Io(std::io::Error),
     Store(omachat_store::StoreError),
     IdentityStore(omachat_store::IdentityStoreError),
+    AccountVault(omachat_store::AccountVaultError),
     Identity(omachat_crypto::IdentityError),
     Outbox(omachat_store::OutboxError),
     RelayPool(omachat_nostr::pool::RelayPoolError),
@@ -19,6 +20,7 @@ pub enum CoreError {
     Encoding,
     Clock,
     Random,
+    Subscription,
     ConfirmationRequired,
     PanicErase,
     Panicked,
@@ -39,13 +41,15 @@ impl CoreError {
             Self::Io(_)
             | Self::Store(_)
             | Self::IdentityStore(_)
+            | Self::AccountVault(_)
             | Self::Identity(_)
             | Self::Outbox(_)
             | Self::RelayPool(_)
             | Self::Nostr
             | Self::Encoding
             | Self::Clock
-            | Self::Random => ErrorCode::Internal,
+            | Self::Random
+            | Self::Subscription => ErrorCode::Internal,
             Self::PanicErase => ErrorCode::Internal,
         }
     }
@@ -57,6 +61,7 @@ impl fmt::Display for CoreError {
             Self::Io(error) => write!(formatter, "daemon I/O failed: {error}"),
             Self::Store(error) => write!(formatter, "sealed store failed: {error}"),
             Self::IdentityStore(error) => write!(formatter, "identity store failed: {error}"),
+            Self::AccountVault(error) => write!(formatter, "account store failed: {error}"),
             Self::Identity(error) => write!(formatter, "identity operation failed: {error}"),
             Self::Outbox(error) => write!(formatter, "outbox failed: {error}"),
             Self::RelayPool(error) => write!(formatter, "relay pool failed: {error}"),
@@ -70,6 +75,7 @@ impl fmt::Display for CoreError {
             Self::Encoding => formatter.write_str("daemon state encoding failed"),
             Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
             Self::Random => formatter.write_str("secure random generation failed"),
+            Self::Subscription => formatter.write_str("Nostr subscription refresh failed"),
             Self::ConfirmationRequired => {
                 formatter.write_str("panic erase requires exact confirmation ERASE")
             }
@@ -88,6 +94,7 @@ impl Error for CoreError {
             Self::Io(error) => Some(error),
             Self::Store(error) => Some(error),
             Self::IdentityStore(error) => Some(error),
+            Self::AccountVault(error) => Some(error),
             Self::Identity(error) => Some(error),
             Self::Outbox(error) => Some(error),
             Self::RelayPool(error) => Some(error),

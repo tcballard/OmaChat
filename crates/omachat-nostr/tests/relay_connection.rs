@@ -4,8 +4,11 @@ use omachat_nostr::{
     relay::{RelayConfig, RelayConnection, RelayError, RelayNotification, RelayRoute},
 };
 use serde_json::{Value, json};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::{TcpListener, TcpStream};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::{
+    io::AsyncReadExt,
+    net::{TcpListener, TcpStream},
+};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
 fn now() -> u64 {
@@ -297,4 +300,53 @@ async fn slow_notification_consumer_is_bounded_and_disconnects() {
         RelayError::Backpressure
     );
     server.await.unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_aborts_and_awaits_an_actor_wedged_in_handshake() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (handshake_sender, handshake_receiver) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0_u8; 256];
+        loop {
+            let read = stream.read(&mut chunk).await.unwrap();
+            assert_ne!(read, 0, "client closed before sending its handshake");
+            request.extend_from_slice(&chunk[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        handshake_sender.send(()).unwrap();
+
+        // Never answer the WebSocket handshake. The client socket reaching
+        // EOF proves shutdown did not merely detach its blocked actor.
+        let mut byte = [0_u8; 1];
+        assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
+    });
+
+    let mut relay_config = config(address);
+    relay_config.connect_timeout = Duration::from_secs(30);
+    relay_config.shutdown_timeout = Duration::from_millis(25);
+    let connection = RelayConnection::spawn(relay_config).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), handshake_receiver)
+        .await
+        .expect("client starts WebSocket handshake")
+        .expect("handshake signal");
+
+    let started = Instant::now();
+    assert_eq!(
+        connection.shutdown().await.unwrap_err(),
+        RelayError::ShutdownTimeout
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "shutdown exceeded its actor-owned deadline"
+    );
+    tokio::time::timeout(Duration::from_secs(1), server)
+        .await
+        .expect("aborted actor drops its socket before shutdown returns")
+        .expect("handshake server task");
 }

@@ -25,6 +25,16 @@ roots are independent. Geohash identities and bridge identities are separated
 by derivation domains. Authenticated Noise state, not public announcements,
 pins peer keys. A changed pinned key fails closed until the user resolves it.
 
+The persistent account and recovery roots are cryptographically distinct from
+the device roots and from each other, but are provisionally co-resident in the
+same sealed local account record. This is key separation, not operational
+recovery: device compromise can currently expose both roots, and device loss or
+panic erase removes both unless the future off-device custody flow has been
+completed. The record binds the current device signing, Noise, and Nostr keys
+under the account root. A configured handle is only a local candidate. No
+global uniqueness, registry freshness, recovery, revocation, or
+key-transparency claim exists until their complete verification paths ship.
+
 IPC is versioned, length bounded, and carried over a 0600 Unix socket. The
 systemd user service restricts writable paths and privileges, but Bluetooth,
 network, Unix-socket, and user-session D-Bus access remain necessary.
@@ -37,6 +47,9 @@ selection, approximate geohash participation, radio presence, routing tags,
 message sizes, and availability. Rotating courier tags are routing identifiers,
 not secrets from a peer that retained the recipient's public key. Nostr events
 remain visible to relays according to their outer format and retention policy.
+The future central registry will necessarily learn handles, public account and
+device keys, revocation state, and workspace membership metadata; it must not
+receive message/file plaintext or private keys.
 
 OmaChat cannot retract messages, courier envelopes, event metadata, or keys
 already copied to peers, relays, logs, backups, or monitoring systems. Blocking

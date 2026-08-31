@@ -14,6 +14,13 @@ impl SealedStore {
     /// This is not a claim of physical overwrite on CoW, SSD, snapshot, backup,
     /// or networked storage.
     pub async fn panic_erase(&self) -> Result<PanicEraseReport, StoreError> {
+        // Once the user confirms panic erase, destroy the in-process key even
+        // if a later filesystem or Secret Service cleanup step fails. Callers
+        // must treat every failure after this point as terminal.
+        self.key_state
+            .lock()
+            .expect("master-key state mutex poisoned")
+            .erase()?;
         let metadata = fs::symlink_metadata(&self.state_directory).map_err(StoreError::Io)?;
         if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
             return Err(StoreError::UnsafeEraseTarget);
@@ -26,22 +33,25 @@ impl SealedStore {
         if self.state_directory == Path::new("/") || self.state_directory.file_name().is_none() {
             return Err(StoreError::UnsafeEraseTarget);
         }
-        match self.provider {
+        let key_cleanup = match self.provider {
             ProviderKind::File => match fs::remove_file(self.state_directory.join(FILE_KEY_NAME)) {
-                Ok(()) => sync_directory(&self.state_directory)?,
+                Ok(()) => sync_directory(&self.state_directory),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(StoreError::MissingMasterKey);
+                    Err(StoreError::MissingMasterKey)
                 }
-                Err(error) => return Err(StoreError::Io(error)),
+                Err(error) => Err(StoreError::Io(error)),
             },
-            ProviderKind::SecretService => delete_secret_service_key().await?,
-        }
-        self.key
-            .lock()
-            .expect("master-key mutex poisoned")
-            .zeroize();
-        fs::remove_dir_all(&self.state_directory).map_err(StoreError::Io)?;
-        sync_directory(&parent)?;
+            ProviderKind::SecretService => delete_secret_service_key().await,
+        };
+        // Even if external key deletion fails, make a best effort to remove
+        // the ciphertext before returning the key-cleanup error. This keeps a
+        // failed Secret Service operation from leaving both halves available
+        // to a later process restart.
+        let ciphertext_cleanup = fs::remove_dir_all(&self.state_directory)
+            .map_err(StoreError::Io)
+            .and_then(|()| sync_directory(&parent));
+        key_cleanup?;
+        ciphertext_cleanup?;
         Ok(PanicEraseReport {
             provider: self.provider,
         })

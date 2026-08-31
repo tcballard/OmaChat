@@ -74,7 +74,7 @@ fn release_critical_crypto_vectors_have_upstream_provenance() {
     let mut captured_ids = manifest
         .fixtures
         .iter()
-        .filter(|fixture| fixture.id != "schema-smoke-v1")
+        .filter(|fixture| fixture.producer.kind == ProducerKind::CapturedUpstream)
         .map(|fixture| fixture.id.as_str())
         .collect::<Vec<_>>();
     captured_ids.sort_unstable();
@@ -175,6 +175,112 @@ fn release_critical_crypto_vectors_have_upstream_provenance() {
         saw_test_only_private,
         "synthetic test-only private material must be classified"
     );
+}
+
+#[test]
+fn account_registry_vector_has_independent_synthetic_provenance() {
+    let manifest = load_manifest(&workspace_root(), expected_profile())
+        .expect("the committed conformance manifest must validate");
+    let fixture = manifest
+        .fixtures
+        .iter()
+        .find(|fixture| fixture.id == "omachat-account-registry-v1")
+        .expect("the account/registry vector must remain in the manifest");
+
+    assert_eq!(fixture.protocol_area, "account-registry");
+    assert_eq!(fixture.producer.kind, ProducerKind::Synthetic);
+    assert_eq!(
+        fixture.producer.implementation,
+        "independent Python account/registry reference generator"
+    );
+    assert_eq!(fixture.producer.repository, None);
+    assert_eq!(fixture.producer.release, None);
+    assert_eq!(fixture.producer.commit, None);
+    assert!(
+        fixture
+            .producer
+            .build
+            .toolchain
+            .contains("cryptography 46.0.0")
+    );
+    assert!(
+        fixture
+            .producer
+            .build
+            .toolchain
+            .contains("cryptography OpenSSL backend 3.5.3")
+    );
+    assert!(
+        fixture
+            .producer
+            .build
+            .configuration
+            .contains("does not import, call, or consume output from OmaChat Rust")
+    );
+    assert_eq!(
+        fixture.producer.build.command,
+        [
+            "python3",
+            "conformance/harnesses/generate-account-registry-vector.py",
+            "--output-dir",
+            "<output-directory>",
+        ]
+    );
+
+    let inputs = fixture
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.id == "inputs-json")
+        .expect("seed-bearing inputs must be declared");
+    assert_eq!(inputs.role, ArtifactRole::Input);
+    assert_eq!(inputs.disclosure, Disclosure::TestOnlyPrivate);
+    let intermediates = fixture
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.id == "intermediates-json")
+        .expect("public transcripts must be declared");
+    assert_eq!(intermediates.role, ArtifactRole::Intermediate);
+    assert_eq!(intermediates.disclosure, Disclosure::PublicCommitted);
+    let outputs = fixture
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.id == "outputs-json")
+        .expect("public outputs must be declared");
+    assert_eq!(outputs.role, ArtifactRole::Output);
+    assert_eq!(outputs.disclosure, Disclosure::PublicCommitted);
+
+    for artifact in &fixture.artifacts {
+        load_artifact(&workspace_root(), fixture, &artifact.id)
+            .expect("every account/registry artifact must match its manifest entry");
+    }
+
+    let fixture_directory = workspace_root()
+        .join("conformance/fixtures")
+        .join(&fixture.id);
+    let mut files_on_disk = fs::read_dir(&fixture_directory)
+        .expect("the account/registry fixture directory must exist")
+        .map(|entry| {
+            entry
+                .expect("fixture directory entries must be readable")
+                .file_name()
+                .into_string()
+                .expect("fixture artifact names must be UTF-8")
+        })
+        .collect::<Vec<_>>();
+    files_on_disk.sort_unstable();
+    let mut declared_files = fixture
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            Path::new(&artifact.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("manifest artifact paths must end in a UTF-8 file name")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    declared_files.sort_unstable();
+    assert_eq!(files_on_disk, declared_files);
 }
 
 #[test]

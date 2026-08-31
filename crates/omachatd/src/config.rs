@@ -1,4 +1,5 @@
 use crate::core_error::CoreError;
+use omachat_crypto::{DisplayName, GlobalHandle};
 use omachat_proto::geohash::Geohash;
 use omachat_store::RequestedProvider;
 use serde::Deserialize;
@@ -28,6 +29,12 @@ pub struct DaemonConfig {
     pub storage_provider: StorageProviderConfig,
     pub relays: Vec<String>,
     pub joined_geohashes: Vec<String>,
+    /// Candidate global account handle. This remains local-only until a
+    /// verified central-registry receipt is stored.
+    pub account_handle: Option<String>,
+    pub account_display_name: Option<String>,
+    /// Public geohash-chat nickname. This is deliberately independent from
+    /// the persistent global account profile.
     pub nickname: Option<String>,
 }
 
@@ -48,6 +55,12 @@ impl DaemonConfig {
         }
         for geohash in &self.joined_geohashes {
             Geohash::parse(geohash).map_err(|_| CoreError::InvalidConfig)?;
+        }
+        if let Some(handle) = &self.account_handle {
+            GlobalHandle::parse(handle).map_err(|_| CoreError::InvalidConfig)?;
+        }
+        if let Some(display_name) = &self.account_display_name {
+            DisplayName::parse(display_name).map_err(|_| CoreError::InvalidConfig)?;
         }
         if self
             .nickname

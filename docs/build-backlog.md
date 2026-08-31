@@ -8,10 +8,13 @@ Planning date: 2026-08-30
 
 Target release: `0.0.1`
 
-Every issue from OC-001 through OC-064 is part of the single 0.0.1 release
-train. Completing an issue or gate does not advance the product version, and no
-intermediate release is planned. Version 0.0.1 is eligible to ship only after
-OC-064 and all prerequisite gates close.
+OC-001 through OC-064 preserve the original compatibility-led 0.0.1 release
+train. [ADR 0002](adr/0002-account-registry-and-text-collaboration.md)
+adds OC-065 for persistent accounts/the central registry and OC-066 for the
+installed-size budget. Bluetooth G2 through G4 remain recorded, but are
+substantially deferred from the current text-collaboration critical path. This
+direction change does not close any issue or make the existing release train
+eligible to ship.
 
 ## Delivery rules
 
@@ -35,10 +38,11 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 |---|---|---|
 | G0 | Source, legal, hardware, key-storage, relay, and proxy risks closed | `OC-001`–`OC-009` |
 | G1 | Usable Nostr-only daemon, CLI, and TUI | `OC-010`–`OC-026` |
-| G2 | Public BLE mesh and gossip | `OC-027`–`OC-041` |
-| G3 | Live private messaging and fallback | `OC-042`–`OC-049` |
-| G4 | Courier infrastructure and current bridge paths | `OC-050`–`OC-057` |
-| G5 | Installable, documented, hardened release | `OC-058`–`OC-064` |
+| G1 account foundation | Persistent central accounts and globally unique handle receipts over an encrypted Nostr data plane | `OC-065` |
+| G2 (substantially deferred) | Public BLE mesh and gossip; existing compatibility work retained | `OC-027`–`OC-041` |
+| G3 (substantially deferred) | Live private mesh messaging and fallback; existing compatibility work retained | `OC-042`–`OC-049` |
+| G4 (substantially deferred) | Courier infrastructure and current bridge paths; existing compatibility work retained | `OC-050`–`OC-057` |
+| G5 | Installable, documented, hardened, size-bounded release | `OC-058`–`OC-064`, `OC-066` |
 
 ## Bootstrap exception
 
@@ -235,7 +239,24 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 - **Acceptance:** every G1 row in `upstream-validation.md` is green or the gate remains open; failures become linked issues rather than prose waivers.
 - **Excludes:** public release packaging.
 
-## G2 — Public BLE mesh and gossip
+### OC-065 — Implement persistent accounts and the central handle registry
+
+The body of [GitHub issue #73](https://github.com/tcballard/OmaChat/issues/73)
+is authoritative for this issue's scope and acceptance.
+
+- **Gate:** G1 — text-collaboration account foundation.
+- **Product direction:** OmaChat uses a central identity/control plane for persistent accounts and globally unique handles, while Nostr relays carry end-to-end encrypted collaboration data. Bluetooth/mesh is not on this critical path.
+- **Depends on:** `OC-010`, `OC-011`.
+- **Deliverable:** an immutable cryptographic account ID independent of mutable profile data; a separate recovery authority; signed device bindings; normalized globally unique handles; signed, versioned registry receipts; sealed local account/cache state; rollback/equivocation detection; daemon status and account-management surfaces.
+- **Acceptance:** account and device IDs survive restart; existing `identity-v1` records remain readable; handle normalization rejects ambiguous or hostile input; duplicate claims conflict atomically; forged, altered, stale, rolled-back, or account-mismatched receipts fail closed; a previously verified cached record remains explicitly usable offline without claiming freshness; revocation/recovery cannot be performed by the registry alone; panic erasure removes account secrets and cached registry state.
+- **Initial slice:** local account/recovery roots, stable IDs, signed device/profile binding, sealed persistence, and daemon status. Global uniqueness remains unclaimed until an authoritative registry state machine/adapter returns a verified receipt.
+- **Excludes:** registry hosting/deployment, relay operation, plaintext messages/files, workspace membership/RBAC/channels, custodial recovery, handle dispute policy, and Bluetooth/mesh.
+
+## G2 — Public BLE mesh and gossip (substantially deferred)
+
+This compatibility backlog and its existing implementation evidence are
+retained. It is not on the current persistent-account and text-collaboration
+critical path.
 
 ### OC-027 — Implement the bounded packet codec
 
@@ -342,7 +363,11 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 - **Acceptance:** all G2 criteria are green and fuzz/property CI is stable; deviations are explicitly classified as compatibility bugs or intentional local policy.
 - **Excludes:** private DMs.
 
-## G3 — Live private messaging and fallback
+## G3 — Live private messaging and fallback (substantially deferred)
+
+This compatibility backlog and its existing implementation evidence are
+retained. It is not on the current persistent-account and text-collaboration
+critical path.
 
 ### OC-042 — Implement Noise XX handshakes
 
@@ -400,7 +425,11 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 - **Acceptance:** every G3 criterion is green; private plaintext is absent from packet captures and sealed-state inspection.
 - **Excludes:** courier claims.
 
-## G4 — Courier infrastructure and current bridge paths
+## G4 — Courier infrastructure and current bridge paths (substantially deferred)
+
+This compatibility backlog and its existing implementation evidence are
+retained. It is not on the current persistent-account and text-collaboration
+critical path.
 
 ### OC-050 — Implement courier envelope, day tags, and v1 seals
 
@@ -509,14 +538,33 @@ Suggested labels: `gate:g0` through `gate:g5`, `area:proto`, `area:crypto`, `are
 - **Acceptance:** zero panics, unbounded growth, secret-bearing logs, or unexplained interop failures; all G0–G5 reports are linked; release notes state exact pins and known deviations.
 - **Excludes:** merging, tagging, AUR publishing, or announcement without owner approval.
 
+### OC-066 — Enforce the installed binary size budget
+
+The body of [GitHub issue #74](https://github.com/tcballard/OmaChat/issues/74)
+is authoritative for this issue's scope and acceptance.
+
+- **Gate:** G5 — tiny release artifacts.
+- **Depends on:** `OC-002`, `OC-061`.
+- **Deliverable:** a size-optimized Rust release profile and CI measurement of `omachat`, `omachat-ctl`, and `omachatd` under a 10 MiB aggregate hard ceiling.
+- **Acceptance:** each executable and the aggregate byte count are printed; missing binaries or an exceeded ceiling fail CI; packaging excludes Cargo targets and build caches.
+- **Baseline:** approximately 3.77 MiB aggregate before the persistent-account/registry slice; the ceiling is a guardrail, not a target.
+- **Excludes:** Cargo target-directory size, debug/test artifacts, shared system-library usage, AUR publication, and runtime soak evidence.
+
 ## Critical dependency spine
 
-The minimum path to a meaningful demo is:
+The current product-priority path begins with:
+
+`OC-010/011 → OC-065 initial slice → authoritative registry receipts → later workspace/channel issues`
+
+The original minimum path to the compatibility demo remains recorded as:
 
 `BOOT-000 → OC-001 → OC-003 → OC-004 → OC-009 → OC-010/011/013/014 → OC-015/016/019 → OC-021/023/025 → OC-026`
 
-The minimum path to the infrastructure thesis is:
+The deferred path to the Bluetooth infrastructure thesis is:
 
 `G1 → OC-027/028/035/037/039/040 → G2 → OC-042/043/045/048 → G3 → OC-050/051/052/053/054/055/056 → G4`
 
-The project should stop and revisit scope if G0 cannot prove the 33-byte ECDH representation, stable geo-relay interoperability, or simultaneous BLE roles on named hardware. Those are feasibility facts, not implementation polish.
+Failure to prove the 33-byte ECDH representation or stable relay behavior still
+blocks the compatibility claims that depend on them. Simultaneous BLE roles on
+named hardware remain an unresolved feasibility fact for G2 through G4, but do
+not block OC-065 or the Nostr text-collaboration data plane.

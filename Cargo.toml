@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/omachat-proto",
     "crates/omachat-crypto",
+    "crates/omachat-registry",
     "crates/omachat-mesh",
     "crates/omachat-nostr",
     "crates/omachat-store",
@@ -23,3 +24,12 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# Release artifacts are installed on every OmaChat host, so optimize the
+# shipped binaries for size rather than build speed.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

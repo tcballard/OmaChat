@@ -11,15 +11,18 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
     sync::{mpsc, watch},
+    task::JoinSet,
 };
 
 const EVENT_QUEUE_CAPACITY: usize = 64;
 const CLIENT_READ_CHUNK: usize = 8 * 1024;
+const CLIENT_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub trait RequestHandler: Send + Sync + 'static {
     fn handle(
@@ -99,24 +102,60 @@ impl<H: RequestHandler> IpcServer<H> {
     }
 
     pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<(), ServerError> {
+        let mut clients = JoinSet::new();
+        let mut terminal_error = None;
+        let (client_shutdown_sender, client_shutdown) = watch::channel(false);
         loop {
+            if *shutdown.borrow() {
+                break;
+            }
             tokio::select! {
+                biased;
                 changed = shutdown.changed() => {
                     if changed.is_err() || *shutdown.borrow() {
                         break;
                     }
                 }
                 accepted = self.listener.accept() => {
-                    let (stream, _) = accepted.map_err(ServerError::Io)?;
+                    let (stream, _) = match accepted {
+                        Ok(accepted) => accepted,
+                        Err(error) => {
+                            terminal_error = Some(ServerError::Io(error));
+                            break;
+                        }
+                    };
                     let handler = Arc::clone(&self.handler);
                     let events = self.events.clone();
-                    tokio::spawn(async move {
-                        let _ = serve_client(stream, handler, events).await;
+                    let client_shutdown = client_shutdown.clone();
+                    clients.spawn(async move {
+                        serve_client(stream, handler, events, client_shutdown).await
                     });
+                }
+                completed = clients.join_next(), if !clients.is_empty() => {
+                    let _ = completed;
                 }
             }
         }
-        Ok(())
+        // Prevent new connections through the filesystem path while existing
+        // clients receive their local shutdown signal and drain.
+        let _ = fs::remove_file(&self.socket_path);
+        client_shutdown_sender.send_replace(true);
+        // Idle clients observe the shutdown receiver and exit immediately.
+        // A client already inside RequestHandler::handle is intentionally not
+        // cancelled: it writes that response, observes shutdown at the next
+        // boundary, and then exits. This is what keeps a panic result from
+        // being lost during runtime teardown. The deadline prevents a wedged
+        // handler or non-reading client from blocking process shutdown.
+        if tokio::time::timeout(CLIENT_DRAIN_TIMEOUT, async {
+            while clients.join_next().await.is_some() {}
+        })
+        .await
+        .is_err()
+        {
+            clients.abort_all();
+            while clients.join_next().await.is_some() {}
+        }
+        terminal_error.map_or(Ok(()), Err)
     }
 
     #[must_use]
@@ -135,6 +174,7 @@ async fn serve_client<H: RequestHandler>(
     mut stream: UnixStream,
     handler: Arc<H>,
     events: EventHub,
+    mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), ServerError> {
     let mut decoder = RequestDecoder::default();
     let mut read_buffer = [0_u8; CLIENT_READ_CHUNK];
@@ -143,7 +183,16 @@ async fn serve_client<H: RequestHandler>(
     let mut event_receiver = events.subscribe();
 
     loop {
+        if *shutdown.borrow() {
+            return Ok(());
+        }
         tokio::select! {
+            biased;
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return Ok(());
+                }
+            }
             read = stream.read(&mut read_buffer) => {
                 let count = read.map_err(ServerError::Io)?;
                 if count == 0 {
@@ -186,17 +235,25 @@ async fn serve_client<H: RequestHandler>(
                         .write_all(&encode_line(&response).map_err(ServerError::Protocol)?)
                         .await
                         .map_err(ServerError::Io)?;
-                    if !negotiated {
+                    if !negotiated || *shutdown.borrow() {
                         return Ok(());
                     }
                 }
             }
             event = event_receiver.recv(), if subscribed => {
                 let Some(event) = event else { return Ok(()) };
-                stream
-                    .write_all(&encode_line(&event).map_err(ServerError::Protocol)?)
-                    .await
-                    .map_err(ServerError::Io)?;
+                let encoded = encode_line(&event).map_err(ServerError::Protocol)?;
+                tokio::select! {
+                    biased;
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            return Ok(());
+                        }
+                    }
+                    result = stream.write_all(&encoded) => {
+                        result.map_err(ServerError::Io)?;
+                    }
+                }
             }
         }
     }
