@@ -7,9 +7,14 @@
 
 mod evidence;
 mod websocket;
+mod websocket_server;
 
 pub use evidence::{RegistryEvidenceClient, RegistryEvidenceError, RegistryEvidenceResolution};
 pub use websocket::{RegistryWebSocketError, RegistryWebSocketTransport};
+pub use websocket_server::{
+    MAX_REGISTRY_REQUESTS_PER_CONNECTION, RegistryWebSocketServerError,
+    serve_registry_websocket_connection,
+};
 
 use omachat_crypto::{AccountId, GlobalHandle, SignedLocalAccountBinding};
 use omachat_registry::{

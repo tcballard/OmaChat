@@ -76,7 +76,9 @@ impl RegistryTransport for RegistryWebSocketTransport {
                         if response.len() > MAX_REGISTRY_MESSAGE_BYTES {
                             return Err(RegistryWebSocketError::MessageTooLarge);
                         }
-                        return Ok(response.to_vec());
+                        let response = response.to_vec();
+                        let _ = socket.close(None).await;
+                        return Ok(response);
                     }
                     Message::Ping(payload) => socket
                         .send(Message::Pong(payload))
