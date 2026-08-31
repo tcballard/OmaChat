@@ -726,6 +726,20 @@ impl DaemonCore {
             Command::Join { geohash } => self.join(geohash).await,
             Command::Leave { geohash } => self.leave(geohash).await,
             Command::Send { conversation, text } => self.send(&conversation, &text).await,
+            Command::DiscoverDmRelays { public_key } => {
+                let recipient = decode_xonly(&public_key)?;
+                let mutation = self
+                    .discover_dm_relay_list(&recipient, unix_time()?)
+                    .await?;
+                let status = match mutation {
+                    omachat_nostr::dm_relay_cache::CacheMutation::Stored => "stored",
+                    omachat_nostr::dm_relay_cache::CacheMutation::Unchanged => "unchanged",
+                };
+                Ok(serde_json::json!({
+                    "public_key": hex::encode(recipient),
+                    "status": status,
+                }))
+            }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
             Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),

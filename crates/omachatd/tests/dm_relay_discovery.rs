@@ -6,7 +6,8 @@ use omachat_nostr::{
     dm_relay_cache::CacheMutation,
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
 };
-use omachatd::{DaemonConfig, DaemonCore, EventHub, StorageProviderConfig};
+use omachat_proto::ipc::{Command, Request, ResponseOutcome, VERSION};
+use omachatd::{DaemonConfig, DaemonCore, EventHub, RequestHandler, StorageProviderConfig};
 use serde_json::{Value, json};
 use tempfile::tempdir;
 use tokio::net::{TcpListener, TcpStream};
@@ -40,10 +41,19 @@ async fn daemon_discovers_and_seals_recipient_metadata_across_restart() {
     let core = DaemonCore::open(state.path(), config.clone(), EventHub::default())
         .await
         .unwrap();
-    assert_eq!(
-        core.discover_dm_relay_list(&recipient, now).await.unwrap(),
-        CacheMutation::Stored
-    );
+    let response = core
+        .handle(Request {
+            version: VERSION,
+            id: "discover-dm-relays".into(),
+            command: Command::DiscoverDmRelays {
+                public_key: hex::encode(recipient),
+            },
+        })
+        .await;
+    let ResponseOutcome::Ok { result } = response else {
+        panic!("discovery IPC failed");
+    };
+    assert_eq!(result["status"], "stored");
     relay.await.unwrap();
     drop(core);
 

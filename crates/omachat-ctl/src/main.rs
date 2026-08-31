@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -119,6 +119,12 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["discover-dm-relays", public_key] => Ok((
+            Command::DiscoverDmRelays {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
         ["panic", "--confirm", confirmation] => Ok((
             Command::Panic {
                 confirmation: (*confirmation).into(),
@@ -138,4 +144,28 @@ fn default_socket() -> Result<PathBuf, CliError> {
 enum CliError {
     Usage(String),
     Client(ClientError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_explicit_dm_relay_discovery() {
+        let arguments = [
+            std::ffi::OsString::from("discover-dm-relays"),
+            std::ffi::OsString::from("11".repeat(32)),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("discovery command did not parse"),
+        };
+        assert!(mode == OutputMode::Human);
+        assert_eq!(
+            command,
+            Command::DiscoverDmRelays {
+                public_key: "11".repeat(32),
+            }
+        );
+    }
 }

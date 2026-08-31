@@ -34,6 +34,9 @@ pub enum Command {
         conversation: String,
         text: String,
     },
+    DiscoverDmRelays {
+        public_key: String,
+    },
     Who {
         geohash: String,
     },
@@ -110,6 +113,11 @@ enum StrictRequestWire {
         version: u16,
         id: String,
         params: SendParams,
+    },
+    DiscoverDmRelays {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
     },
     Who {
         version: u16,
@@ -207,6 +215,11 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: SendParams { conversation, text },
             } => (version, id, Command::Send { conversation, text }),
+            StrictRequestWire::DiscoverDmRelays {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::DiscoverDmRelays { public_key }),
             StrictRequestWire::Who {
                 version,
                 id,
