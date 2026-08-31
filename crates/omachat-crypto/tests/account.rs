@@ -1,6 +1,6 @@
 use omachat_crypto::{
-    AccountError, AccountId, AccountSecrets, DeviceId, DevicePublicKeys, DisplayName, GlobalHandle,
-    IdentitySecrets,
+    AccountError, AccountId, AccountSecrets, AgentAuthorizationRequest, AgentError, DeviceId,
+    DevicePublicKeys, DisplayName, GlobalHandle, IdentitySecrets,
 };
 
 fn device_keys() -> DevicePublicKeys {
@@ -187,4 +187,118 @@ fn serde_preserves_strict_validated_public_types() {
 
     assert!(serde_json::from_str::<GlobalHandle>("\"Tom\"").is_err());
     assert!(serde_json::from_str::<AccountId>("\"oa1_00\"").is_err());
+}
+
+fn authorize_agent(
+    owner: &AccountSecrets,
+    agent_secret: &[u8; 32],
+    label: &str,
+) -> omachat_crypto::SignedAgentAuthorization {
+    let request = AgentAuthorizationRequest::sign(
+        agent_secret,
+        owner.public_identity().account_id,
+        Some(DisplayName::parse(label).unwrap()),
+        1_788_100_000,
+        &[0x42; 32],
+    )
+    .unwrap();
+    owner.authorize_agent(request, 1, 1_788_100_001).unwrap()
+}
+
+#[test]
+fn agent_authorization_preserves_independent_principals() {
+    let owner = AccountSecrets::from_seeds([1; 32], [2; 32]);
+    let first = authorize_agent(&owner, &[0x31; 32], "Codex");
+    let second = authorize_agent(&owner, &[0x32; 32], "Research");
+
+    first.verify_current(None).unwrap();
+    second.verify_current(None).unwrap();
+    assert_ne!(first.agent_public_key(), second.agent_public_key());
+    assert_ne!(first.authorization_id, second.authorization_id);
+    assert_ne!(
+        *first.agent_public_key(),
+        owner.public_identity().account_root_public_key
+    );
+}
+
+#[test]
+fn forged_owner_and_agent_claims_fail_closed() {
+    let owner = AccountSecrets::from_seeds([1; 32], [2; 32]);
+    let attacker = AccountSecrets::from_seeds([9; 32], [10; 32]);
+    let authorization = authorize_agent(&owner, &[0x31; 32], "Codex");
+
+    let attacker_request = AgentAuthorizationRequest::sign(
+        &[0x31; 32],
+        owner.public_identity().account_id,
+        Some(DisplayName::parse("Codex").unwrap()),
+        1_788_100_000,
+        &[0x42; 32],
+    )
+    .unwrap();
+    assert_eq!(
+        attacker.authorize_agent(attacker_request, 1, 1_788_100_001),
+        Err(AgentError::AccountMismatch)
+    );
+
+    let mut forged_owner = authorization.clone();
+    forged_owner.account_root_public_key = attacker.public_identity().account_root_public_key;
+    assert_eq!(forged_owner.verify(), Err(AgentError::AccountMismatch));
+
+    let mut forged_agent = authorization;
+    forged_agent.request.agent_public_key = [0x55; 32];
+    assert!(matches!(
+        forged_agent.verify(),
+        Err(AgentError::InvalidAgentPublicKey | AgentError::InvalidAgentProof)
+    ));
+}
+
+#[test]
+fn revocation_changes_current_authorization_without_rewriting_history() {
+    let owner = AccountSecrets::from_seeds([1; 32], [2; 32]);
+    let authorization = authorize_agent(&owner, &[0x31; 32], "Codex");
+    let revocation = owner
+        .revoke_agent(&authorization, 2, 1_788_100_100)
+        .unwrap();
+
+    authorization.verify().unwrap();
+    revocation.verify(&authorization).unwrap();
+    assert_eq!(
+        authorization.verify_current(Some(&revocation)),
+        Err(AgentError::Revoked)
+    );
+
+    let other = authorize_agent(&owner, &[0x32; 32], "Research");
+    assert_eq!(
+        other.verify_current(Some(&revocation)),
+        Err(AgentError::AuthorizationMismatch)
+    );
+}
+
+#[test]
+fn agent_authorization_json_is_strict_and_restart_stable() {
+    let owner = AccountSecrets::from_seeds([1; 32], [2; 32]);
+    let authorization = authorize_agent(&owner, &[0x31; 32], "Codex");
+    let revocation = owner
+        .revoke_agent(&authorization, 2, 1_788_100_100)
+        .unwrap();
+
+    let authorization_json = serde_json::to_vec(&authorization).unwrap();
+    let decoded =
+        serde_json::from_slice::<omachat_crypto::SignedAgentAuthorization>(&authorization_json)
+            .unwrap();
+    assert_eq!(decoded, authorization);
+    decoded.verify().unwrap();
+
+    let revocation_json = serde_json::to_vec(&revocation).unwrap();
+    let decoded_revocation =
+        serde_json::from_slice::<omachat_crypto::SignedAgentRevocation>(&revocation_json).unwrap();
+    assert_eq!(decoded_revocation, revocation);
+    decoded_revocation.verify(&authorization).unwrap();
+
+    let mut value = serde_json::to_value(&authorization).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("trusted_by_relay".into(), serde_json::Value::Bool(true));
+    assert!(serde_json::from_value::<omachat_crypto::SignedAgentAuthorization>(value).is_err());
 }

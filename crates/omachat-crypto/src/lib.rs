@@ -1,11 +1,16 @@
 //! Compatibility-critical cryptographic primitives backed by captured vectors.
 
 mod account;
+mod agent;
 mod identity;
 
 pub use account::{
     AccountError, AccountId, AccountPublicIdentity, AccountSecrets, DeviceId, DevicePublicKeys,
     DisplayName, GlobalHandle, SignedLocalAccountBinding, verify_registry_handle_claim,
+};
+pub use agent::{
+    AgentAuthorizationId, AgentAuthorizationRequest, AgentError, PrincipalType,
+    SignedAgentAuthorization, SignedAgentRevocation,
 };
 pub use identity::{
     DerivationSource, DerivedNostrIdentity, IdentityError, IdentitySecrets, PublicIdentity,
