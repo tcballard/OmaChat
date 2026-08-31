@@ -1478,6 +1478,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "omachat-registry-host"
+version = "0.0.1"
+dependencies = [
+ "omachat-crypto",
+ "omachat-registry",
+ "omachat-registry-transport",
+ "omachat-store",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "omachat-registry-transport"
 version = "0.0.1"
 dependencies = [
