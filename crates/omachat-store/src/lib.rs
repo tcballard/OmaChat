@@ -16,8 +16,8 @@ pub use courier::{CourierPool, CourierPoolError, CourierTier, Handover, StoredCo
 pub use erase::PanicEraseReport;
 pub use identity::{IdentityStoreError, IdentityVault};
 pub use outbox::{
-    AttemptOutcome, NostrOutbox, OutboxError, OutboxMessage, OutboxState, OutboxTransport,
-    TransportAttempt,
+    AttemptOutcome, NostrDeliveryProfile, NostrOutbox, OutboxError, OutboxMessage, OutboxState,
+    OutboxTransport, TransportAttempt,
 };
 pub use registry::{RegistryVault, RegistryVaultError};
 pub use sealed::{
