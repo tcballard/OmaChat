@@ -46,6 +46,9 @@ jobs:
       - name: Check binary version contract
         run: ./scripts/check-version-contract.sh
 
+      - name: Test release binary size guard
+        run: ./scripts/test-check-release-size.sh
+
       - name: Build size-optimized release binaries
         run: cargo build --workspace --bins --release --locked
 
