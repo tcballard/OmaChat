@@ -4,6 +4,7 @@ mod agent_lifecycle_store;
 mod config;
 mod core;
 mod core_error;
+mod dm_delivery_service;
 mod dm_inbox_service;
 mod dm_relay_cache_store;
 mod ipc_server;
@@ -17,6 +18,9 @@ pub use agent_lifecycle_store::{
 pub use config::{DaemonConfig, StorageProviderConfig};
 pub use core::{DaemonCore, PanicState};
 pub use core_error::CoreError;
+pub use dm_delivery_service::{
+    DmDeliveryHandle, DmDeliveryService, DmDeliveryServiceConfig, DmDeliveryServiceError,
+};
 pub use dm_inbox_service::{DmInboxHandle, DmInboxService, DmInboxServiceError};
 pub use dm_relay_cache_store::{
     DM_RELAY_CACHE_RECORD_NAME, SealedDmRelayCache, SealedDmRelayCacheError,
