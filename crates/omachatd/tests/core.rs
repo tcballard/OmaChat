@@ -84,6 +84,15 @@ async fn identity_outbox_and_commands_survive_restart() {
         .expect("reopen core");
     let second_status = command(&reopened, Command::Status).await;
     assert_eq!(first_status["fingerprint"], second_status["fingerprint"]);
+    assert_eq!(
+        first_status["account"]["account_id"],
+        second_status["account"]["account_id"]
+    );
+    assert_eq!(
+        first_status["account"]["device_id"],
+        second_status["account"]["device_id"]
+    );
+    assert_eq!(second_status["account"]["registry_state"], "unconfigured");
     assert_eq!(second_status["outbox_pending"], 1);
 
     let backing =
@@ -104,6 +113,8 @@ async fn invalid_reload_keeps_the_prior_configuration_active() {
             storage_provider: StorageProviderConfig::File,
             relays: vec!["wss://relay.example".into()],
             joined_geohashes: vec!["gcpvj".into()],
+            account_handle: None,
+            account_display_name: None,
             nickname: None,
         },
         EventHub::default(),
@@ -117,6 +128,188 @@ async fn invalid_reload_keeps_the_prior_configuration_active() {
     let after = command(&core, Command::Status).await;
     assert_eq!(before["relay_count"], after["relay_count"]);
     assert_eq!(before["joined_geohashes"], after["joined_geohashes"]);
+}
+
+#[tokio::test]
+async fn configured_account_profile_is_sealed_restart_stable_and_local_only() {
+    let temporary = tempdir().expect("temporary directory");
+    let state = temporary.path().join("state");
+    let configured = DaemonConfig {
+        storage_provider: StorageProviderConfig::File,
+        account_handle: Some("@tom".into()),
+        account_display_name: Some("Tom Ballard".into()),
+        ..DaemonConfig::default()
+    };
+    let core = DaemonCore::open(&state, configured, EventHub::default())
+        .await
+        .expect("open configured account");
+    let first = command(&core, Command::Status).await;
+    assert_eq!(first["account"]["handle"], "tom");
+    assert_eq!(first["account"]["display_name"], "Tom Ballard");
+    assert_eq!(first["account"]["binding_revision"], 1);
+    assert_eq!(first["account"]["registry_state"], "local-only");
+    let account_id = first["account"]["account_id"].clone();
+    let device_id = first["account"]["device_id"].clone();
+    drop(core);
+
+    let backing = fs::read(state.join("records/account-v1")).expect("sealed account backing");
+    assert!(!backing.windows(3).any(|window| window == b"tom"));
+    assert!(
+        !backing
+            .windows("Tom Ballard".len())
+            .any(|window| window == b"Tom Ballard")
+    );
+
+    let reopened = DaemonCore::open(
+        &state,
+        DaemonConfig {
+            storage_provider: StorageProviderConfig::File,
+            ..DaemonConfig::default()
+        },
+        EventHub::default(),
+    )
+    .await
+    .expect("reopen without repeating profile config");
+    let second = command(&reopened, Command::Status).await;
+    assert_eq!(second["account"]["account_id"], account_id);
+    assert_eq!(second["account"]["device_id"], device_id);
+    assert_eq!(second["account"]["handle"], "tom");
+    assert_eq!(second["account"]["display_name"], "Tom Ballard");
+    assert_eq!(second["account"]["binding_revision"], 1);
+    assert_eq!(second["account"]["registry_state"], "local-only");
+}
+
+#[tokio::test]
+async fn account_profile_reload_is_validated_revisioned_and_persisted() {
+    let temporary = tempdir().expect("temporary directory");
+    let state = temporary.path().join("state");
+    let core = DaemonCore::open(
+        &state,
+        DaemonConfig {
+            storage_provider: StorageProviderConfig::File,
+            ..DaemonConfig::default()
+        },
+        EventHub::default(),
+    )
+    .await
+    .expect("open unconfigured account");
+    let before = command(&core, Command::Status).await;
+    assert_eq!(before["account"]["binding_revision"], 1);
+    assert_eq!(before["account"]["registry_state"], "unconfigured");
+
+    let config_path = temporary.path().join("account.json");
+    fs::write(
+        &config_path,
+        br#"{"storage_provider":"file","account_handle":"@tom","account_display_name":"Tom"}"#,
+    )
+    .expect("write account config");
+    core.reload(&config_path).expect("reload account profile");
+    let reloaded = command(&core, Command::Status).await;
+    assert_eq!(
+        reloaded["account"]["account_id"],
+        before["account"]["account_id"]
+    );
+    assert_eq!(reloaded["account"]["handle"], "tom");
+    assert_eq!(reloaded["account"]["display_name"], "Tom");
+    assert_eq!(reloaded["account"]["binding_revision"], 2);
+    assert_eq!(reloaded["account"]["registry_state"], "local-only");
+    drop(core);
+
+    let reopened = DaemonCore::open(
+        &state,
+        DaemonConfig {
+            storage_provider: StorageProviderConfig::File,
+            ..DaemonConfig::default()
+        },
+        EventHub::default(),
+    )
+    .await
+    .expect("reopen updated profile");
+    let after_restart = command(&reopened, Command::Status).await;
+    assert_eq!(after_restart["account"]["handle"], "tom");
+    assert_eq!(after_restart["account"]["binding_revision"], 2);
+}
+
+#[tokio::test]
+async fn global_account_handle_is_not_reused_as_a_geohash_nickname() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let event_frame = next_json(&mut socket).await;
+        assert_eq!(event_frame[0], "EVENT");
+        assert_eq!(event_frame[1]["content"], "unlinkable hello");
+        assert!(
+            event_frame[1]["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|tag| tag[0] != "n")
+        );
+        socket
+            .send(Message::Text(
+                serde_json::json!(["OK", event_frame[1]["id"], true, "stored"])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        while let Some(Ok(message)) = socket.next().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+
+    let temporary = tempdir().unwrap();
+    let core = DaemonCore::open(
+        temporary.path(),
+        DaemonConfig {
+            storage_provider: StorageProviderConfig::File,
+            joined_geohashes: vec!["gcpvj".into()],
+            account_handle: Some("tom".into()),
+            nickname: None,
+            ..DaemonConfig::default()
+        },
+        EventHub::default(),
+    )
+    .await
+    .unwrap();
+    let (inbound, mut notifications) = tokio::sync::mpsc::channel(8);
+    let service = omachatd::NostrService::spawn(&[url], inbound).unwrap();
+    core.attach_nostr(service.handle());
+    wait_for_connected(&mut notifications).await;
+
+    let sent = command(
+        &core,
+        Command::Send {
+            conversation: "#gcpvj".into(),
+            text: "unlinkable hello".into(),
+        },
+    )
+    .await;
+    assert_eq!(sent["delivery"], "stored");
+
+    service.shutdown().await.unwrap();
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn invalid_account_profile_configuration_fails_before_core_start() {
+    let temporary = tempdir().expect("temporary directory");
+    let result = DaemonCore::open(
+        temporary.path(),
+        DaemonConfig {
+            storage_provider: StorageProviderConfig::File,
+            account_handle: Some("Tom".into()),
+            ..DaemonConfig::default()
+        },
+        EventHub::default(),
+    )
+    .await;
+    assert!(result.is_err());
+    assert!(!temporary.path().join("storage-mode").exists());
 }
 
 #[tokio::test]
@@ -155,6 +348,44 @@ async fn panic_requires_confirmation_erases_state_and_rejects_more_work() {
         .handle(Request {
             version: VERSION,
             id: "after".into(),
+            command: Command::Status,
+        })
+        .await;
+    assert!(matches!(rejected, ResponseOutcome::Error { .. }));
+}
+
+#[tokio::test]
+async fn panic_cleanup_failure_is_terminal_and_never_reenables_the_daemon() {
+    let temporary = tempdir().expect("temporary directory");
+    let core = DaemonCore::open(
+        temporary.path(),
+        DaemonConfig {
+            storage_provider: StorageProviderConfig::File,
+            account_handle: Some("tom".into()),
+            ..DaemonConfig::default()
+        },
+        EventHub::default(),
+    )
+    .await
+    .expect("open core");
+    fs::remove_file(temporary.path().join("master.key")).expect("inject key cleanup failure");
+
+    let failed = core
+        .handle(Request {
+            version: VERSION,
+            id: "panic-failure".into(),
+            command: Command::Panic {
+                confirmation: "ERASE".into(),
+            },
+        })
+        .await;
+    assert!(matches!(failed, ResponseOutcome::Error { .. }));
+    assert!(core.is_panicked());
+
+    let rejected = core
+        .handle(Request {
+            version: VERSION,
+            id: "after-failure".into(),
             command: Command::Status,
         })
         .await;
