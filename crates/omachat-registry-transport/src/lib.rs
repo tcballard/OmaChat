@@ -7,6 +7,7 @@
 
 mod evidence;
 mod principal_protocol;
+mod principal_service;
 mod websocket;
 mod websocket_server;
 
@@ -19,6 +20,7 @@ pub use principal_protocol::{
     VerifiedPrincipalRegistryRecord, decode_principal_request, decode_principal_response,
     encode_principal_request, encode_principal_response,
 };
+pub use principal_service::{PrincipalRegistryService, PrincipalRegistryServiceError};
 pub use websocket::{RegistryWebSocketError, RegistryWebSocketTransport};
 pub use websocket_server::{
     MAX_REGISTRY_REQUESTS_PER_CONNECTION, PendingRegistryWebSocketRequest,
