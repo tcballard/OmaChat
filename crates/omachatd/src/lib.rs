@@ -19,6 +19,7 @@ mod relay_list_cache_store;
 mod relay_list_discovery_service;
 mod relay_list_nostr_publisher;
 mod relay_list_publication_coordinator;
+mod relay_list_publication_runtime;
 mod relay_list_publication_store;
 
 pub use agent_lifecycle_store::{
@@ -79,6 +80,9 @@ pub use relay_list_publication_coordinator::{
     RelayListPublicationCoordinator, RelayListPublicationCoordinatorError,
     RelayListPublicationOutcome, RelayListPublicationOutcomeStatus, RelayListPublicationSource,
     RelayListPublishFuture, RelayListPublisher, RelayListRelayResult, RelayListRelayStatus,
+};
+pub use relay_list_publication_runtime::{
+    RelayListPublicationRuntime, RelayListPublicationRuntimeError,
 };
 pub use relay_list_publication_store::{
     PendingRelayListPublication, RELAY_LIST_PUBLICATION_INTENT_RECORD_NAME,
