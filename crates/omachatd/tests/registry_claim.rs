@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use omachat_crypto::GlobalHandle;
+use omachat_proto::ipc::{Command, ErrorCode, Request, ResponseOutcome, VERSION};
 use omachat_registry::{CommandId, RegistryState};
 use omachat_registry_host::{RegistryHostLimits, run_registry_host};
 use omachat_registry_transport::RegistryService;
@@ -9,7 +10,7 @@ use omachat_store::{
     SealedStore, VerifiedRegistryCache,
 };
 use omachatd::{
-    CoreError, DaemonConfig, DaemonCore, EventHub, RegistryClaimStatus, RegistryClientConfig,
+    CoreError, DaemonConfig, DaemonCore, EventHub, RegistryClientConfig, RequestHandler,
     StorageProviderConfig,
 };
 use tempfile::tempdir;
@@ -93,11 +94,21 @@ async fn pending_claim_replays_after_restart_and_clears_after_durable_receipt() 
         .await
         .expect("daemon core");
         let result = core
-            .claim_configured_registry_handle(&GlobalHandle::parse("alice").expect("handle"), now())
-            .await
-            .expect("claim handle");
-        assert_eq!(result.status, RegistryClaimStatus::Accepted);
-        assert!(matches!(result.evidence, RegistryCacheLookup::Fresh(_)));
+            .handle(Request {
+                version: VERSION,
+                id: "claim-handle".into(),
+                command: Command::ClaimRegistryHandle {
+                    handle: "alice".into(),
+                    confirmation: "alice".into(),
+                },
+            })
+            .await;
+        let ResponseOutcome::Ok { result } = result else {
+            panic!("claim command failed: {result:?}");
+        };
+        assert_eq!(result["claim_status"], "accepted");
+        assert_eq!(result["receipt_verified"], true);
+        assert_eq!(result["usable_current_evidence"], true);
         drop(core);
         shutdown_tx.send(()).expect("stop registry");
     };
@@ -143,6 +154,25 @@ async fn offline_preflight_never_creates_a_new_claim_intent() {
     )
     .await
     .expect("daemon core");
+    let rejected = core
+        .handle(Request {
+            version: VERSION,
+            id: "wrong-confirmation".into(),
+            command: Command::ClaimRegistryHandle {
+                handle: "alice".into(),
+                confirmation: "bob".into(),
+            },
+        })
+        .await;
+    assert!(matches!(
+        rejected,
+        ResponseOutcome::Error {
+            error: omachat_proto::ipc::ErrorBody {
+                code: ErrorCode::Conflict,
+                ..
+            }
+        }
+    ));
     assert!(matches!(
         core.claim_configured_registry_handle(
             &GlobalHandle::parse("alice").expect("handle"),

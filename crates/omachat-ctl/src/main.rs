@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -149,6 +149,20 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Json,
         )),
+        ["claim-handle", handle, "--confirm", confirmation] => Ok((
+            Command::ClaimRegistryHandle {
+                handle: (*handle).into(),
+                confirmation: (*confirmation).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["claim-handle", handle, "--confirm", confirmation, "--json"] => Ok((
+            Command::ClaimRegistryHandle {
+                handle: (*handle).into(),
+                confirmation: (*confirmation).into(),
+            },
+            OutputMode::Json,
+        )),
         ["panic", "--confirm", confirmation] => Ok((
             Command::Panic {
                 confirmation: (*confirmation).into(),
@@ -257,5 +271,35 @@ mod tests {
         assert_eq!(json_command, expected);
         assert!(human_mode == OutputMode::Human);
         assert!(json_mode == OutputMode::Json);
+    }
+
+    #[test]
+    fn parses_registry_claim_only_with_explicit_confirmation() {
+        let arguments = [
+            std::ffi::OsString::from("claim-handle"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--confirm"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("claim command did not parse"),
+        };
+        assert_eq!(
+            command,
+            Command::ClaimRegistryHandle {
+                handle: "alice".into(),
+                confirmation: "alice".into(),
+            }
+        );
+        assert!(mode == OutputMode::Json);
+        assert!(
+            parse_command(&[
+                std::ffi::OsString::from("claim-handle"),
+                std::ffi::OsString::from("alice"),
+            ])
+            .is_err()
+        );
     }
 }

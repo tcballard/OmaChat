@@ -24,6 +24,7 @@ pub enum CoreError {
     RegistryClaimIntent(omachat_store::RegistryClaimIntentError),
     RegistryClaimPreflightOffline,
     RegistryClaimPreflightUnusable,
+    RegistryClaimConfirmationRequired,
     RegistryHandleConflict,
     RegistryBindingChanged,
     RegistryUnconfigured,
@@ -54,6 +55,7 @@ impl CoreError {
             | Self::InvalidPublicKey
             | Self::InvalidMessage => ErrorCode::InvalidRequest,
             Self::ConfirmationRequired
+            | Self::RegistryClaimConfirmationRequired
             | Self::RegistryHandleConflict
             | Self::RegistryBindingChanged => ErrorCode::Conflict,
             Self::RegistryClaimIntent(
@@ -120,6 +122,9 @@ impl fmt::Display for CoreError {
             }
             Self::RegistryClaimPreflightUnusable => formatter
                 .write_str("registry preflight did not return usable current account state"),
+            Self::RegistryClaimConfirmationRequired => {
+                formatter.write_str("registry handle claim requires exact handle confirmation")
+            }
             Self::RegistryHandleConflict => formatter
                 .write_str("requested handle conflicts with local or authoritative account state"),
             Self::RegistryBindingChanged => {

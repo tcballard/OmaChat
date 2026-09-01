@@ -500,6 +500,15 @@ impl DaemonCore {
     ) -> Result<RegistryClaimResult, CoreError> {
         let _operation = self.inner.operations.read().await;
         self.ensure_active()?;
+        self.claim_configured_registry_handle_active(requested_handle, now)
+            .await
+    }
+
+    async fn claim_configured_registry_handle_active(
+        &self,
+        requested_handle: &GlobalHandle,
+        now: u64,
+    ) -> Result<RegistryClaimResult, CoreError> {
         let _claim = self.inner.registry_claim_transaction.lock().await;
         self.ensure_active()?;
         let registry = self
@@ -1058,6 +1067,19 @@ impl DaemonCore {
                     "offline"
                 };
                 Ok(registry_lookup_value(&handle, source, resolution.lookup()))
+            }
+            Command::ClaimRegistryHandle {
+                handle,
+                confirmation,
+            } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                if confirmation != handle.as_str() {
+                    return Err(CoreError::RegistryClaimConfirmationRequired);
+                }
+                let result = self
+                    .claim_configured_registry_handle_active(&handle, unix_time()?)
+                    .await?;
+                Ok(registry_claim_value(&handle, &result))
             }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
@@ -1901,6 +1923,19 @@ fn registry_lookup_value(
         "claim_hash": hex::encode(receipt.claim_hash),
         "receipt_hash": hex::encode(receipt.receipt_hash()),
     })
+}
+
+fn registry_claim_value(handle: &GlobalHandle, result: &RegistryClaimResult) -> serde_json::Value {
+    let mut value = registry_lookup_value(handle, "online", &result.evidence);
+    let claim_status = match result.status {
+        RegistryClaimStatus::AlreadyCurrent => "already-current",
+        RegistryClaimStatus::Accepted => "accepted",
+    };
+    value
+        .as_object_mut()
+        .expect("registry evidence output is an object")
+        .insert("claim_status".into(), claim_status.into());
+    value
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], CoreError> {

@@ -46,6 +46,10 @@ pub enum Command {
     ResolveRegistryHandle {
         handle: String,
     },
+    ClaimRegistryHandle {
+        handle: String,
+        confirmation: String,
+    },
     Who {
         geohash: String,
     },
@@ -143,6 +147,11 @@ enum StrictRequestWire {
         id: String,
         params: HandleParams,
     },
+    ClaimRegistryHandle {
+        version: u16,
+        id: String,
+        params: RegistryClaimParams,
+    },
     Who {
         version: u16,
         id: String,
@@ -195,6 +204,13 @@ struct PublicKeyParams {
 #[serde(deny_unknown_fields)]
 struct HandleParams {
     handle: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegistryClaimParams {
+    handle: String,
+    confirmation: String,
 }
 
 #[derive(Deserialize)]
@@ -265,6 +281,22 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: HandleParams { handle },
             } => (version, id, Command::ResolveRegistryHandle { handle }),
+            StrictRequestWire::ClaimRegistryHandle {
+                version,
+                id,
+                params:
+                    RegistryClaimParams {
+                        handle,
+                        confirmation,
+                    },
+            } => (
+                version,
+                id,
+                Command::ClaimRegistryHandle {
+                    handle,
+                    confirmation,
+                },
+            ),
             StrictRequestWire::Who {
                 version,
                 id,
