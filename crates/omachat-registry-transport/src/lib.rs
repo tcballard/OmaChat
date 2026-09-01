@@ -6,10 +6,19 @@
 //! pinned registry key and the exact signed claim.
 
 mod evidence;
+mod principal_protocol;
 mod websocket;
 mod websocket_server;
 
 pub use evidence::{RegistryEvidenceClient, RegistryEvidenceError, RegistryEvidenceResolution};
+pub use principal_protocol::{
+    MAX_PRINCIPAL_REGISTRY_MESSAGE_BYTES, PRINCIPAL_REGISTRY_TRANSPORT_VERSION,
+    PrincipalRegistryClaim, PrincipalRegistryOperation, PrincipalRegistryProtocolError,
+    PrincipalRegistryRecordWire, PrincipalRegistryRemoteCode, PrincipalRegistryRemoteError,
+    PrincipalRegistryRequest, PrincipalRegistryResponse, PrincipalRegistryResponseOutcome,
+    VerifiedPrincipalRegistryRecord, decode_principal_request, decode_principal_response,
+    encode_principal_request, encode_principal_response,
+};
 pub use websocket::{RegistryWebSocketError, RegistryWebSocketTransport};
 pub use websocket_server::{
     MAX_REGISTRY_REQUESTS_PER_CONNECTION, PendingRegistryWebSocketRequest,
