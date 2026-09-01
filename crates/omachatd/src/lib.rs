@@ -17,6 +17,7 @@ mod profile_publication_store;
 mod registry_evidence_service;
 mod relay_list_cache_store;
 mod relay_list_discovery_service;
+mod relay_list_nostr_publisher;
 mod relay_list_publication_coordinator;
 mod relay_list_publication_store;
 
@@ -69,6 +70,10 @@ pub use relay_list_cache_store::{
 pub use relay_list_discovery_service::{
     SealedRelayListDiscoveryResult, SealedRelayListDiscoveryService,
     SealedRelayListDiscoveryServiceError,
+};
+pub use relay_list_nostr_publisher::{
+    NostrRelayListPublisherConfig, NostrRelayListPublisherError, NostrRelayListPublisherHandle,
+    NostrRelayListPublisherService,
 };
 pub use relay_list_publication_coordinator::{
     RelayListPublicationCoordinator, RelayListPublicationCoordinatorError,
