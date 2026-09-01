@@ -50,6 +50,7 @@ pub enum Command {
         public_key: String,
     },
     PublishProfile,
+    PublishNip65Relays,
     ResolveRegistryHandle {
         handle: String,
     },
@@ -142,6 +143,16 @@ enum StrictRequestWire {
         id: String,
         params: PublicKeyParams,
     },
+    DiscoverNip65Relays {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
+    },
+    ShowNip65Relays {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
+    },
     DiscoverProfile {
         version: u16,
         id: String,
@@ -153,6 +164,10 @@ enum StrictRequestWire {
         params: PublicKeyParams,
     },
     PublishProfile {
+        version: u16,
+        id: String,
+    },
+    PublishNip65Relays {
         version: u16,
         id: String,
     },
@@ -285,6 +300,16 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: PublicKeyParams { public_key },
             } => (version, id, Command::DiscoverDmRelays { public_key }),
+            StrictRequestWire::DiscoverNip65Relays {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::DiscoverNip65Relays { public_key }),
+            StrictRequestWire::ShowNip65Relays {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::ShowNip65Relays { public_key }),
             StrictRequestWire::DiscoverProfile {
                 version,
                 id,
@@ -297,6 +322,9 @@ impl From<StrictRequestWire> for Request {
             } => (version, id, Command::ShowProfile { public_key }),
             StrictRequestWire::PublishProfile { version, id } => {
                 (version, id, Command::PublishProfile)
+            }
+            StrictRequestWire::PublishNip65Relays { version, id } => {
+                (version, id, Command::PublishNip65Relays)
             }
             StrictRequestWire::ResolveRegistryHandle {
                 version,
