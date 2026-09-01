@@ -13,7 +13,7 @@ use omachat_nostr::{
     auth::RelayAuthSigner,
     event::SignedEvent,
     pool::{PoolPublishResult, RelayPool, RelayPoolConfig, RelayPoolError},
-    relay::{RelayConfig, RelayNotification, RelayRoute},
+    relay::{RelayAuthenticationPolicy, RelayConfig, RelayNotification, RelayRoute},
 };
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -28,16 +28,16 @@ const INBOUND_POLL: Duration = Duration::from_millis(100);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProfilePublicationServiceConfig {
     pub command_capacity: usize,
-    pub authentication_wait_timeout: Duration,
-    pub authentication_settle_timeout: Duration,
+    pub relay_ready_wait_timeout: Duration,
+    pub relay_settle_timeout: Duration,
 }
 
 impl Default for ProfilePublicationServiceConfig {
     fn default() -> Self {
         Self {
             command_capacity: 8,
-            authentication_wait_timeout: Duration::from_secs(10),
-            authentication_settle_timeout: Duration::from_millis(100),
+            relay_ready_wait_timeout: Duration::from_secs(10),
+            relay_settle_timeout: Duration::from_millis(100),
         }
     }
 }
@@ -128,8 +128,8 @@ impl ProfilePublicationService {
     ) -> Result<Self, ProfilePublicationServiceError> {
         if relay_urls.is_empty()
             || config.command_capacity == 0
-            || config.authentication_wait_timeout.is_zero()
-            || config.authentication_settle_timeout.is_zero()
+            || config.relay_ready_wait_timeout.is_zero()
+            || config.relay_settle_timeout.is_zero()
         {
             return Err(ProfilePublicationServiceError::InvalidConfig);
         }
@@ -140,6 +140,7 @@ impl ProfilePublicationService {
             .map(|url| {
                 let mut relay = RelayConfig::new(url, RelayRoute::Direct);
                 relay.auth = Some(auth_signer.clone());
+                relay.authentication_policy = RelayAuthenticationPolicy::AuthenticateWhenChallenged;
                 relay
             })
             .collect();
@@ -169,7 +170,7 @@ impl ProfilePublicationService {
             stop_receiver,
             accepting,
             stopped_sender,
-            AuthenticatedRelayState::new((*expected_public_key).clone()),
+            ProfileRelayEligibilityState::new((*expected_public_key).clone()),
             config,
         ));
         Ok(Self {
@@ -218,16 +219,16 @@ async fn run(
     mut stop: watch::Receiver<bool>,
     accepting: Arc<AtomicBool>,
     stopped: watch::Sender<bool>,
-    mut authentication: AuthenticatedRelayState,
+    mut eligibility: ProfileRelayEligibilityState,
     config: ProfilePublicationServiceConfig,
 ) -> Result<(), RelayPoolError> {
     run_until_stopped(
         &mut pool,
         &mut commands,
         &mut stop,
-        &mut authentication,
-        config.authentication_wait_timeout,
-        config.authentication_settle_timeout,
+        &mut eligibility,
+        config.relay_ready_wait_timeout,
+        config.relay_settle_timeout,
     )
     .await;
     accepting.store(false, Ordering::Release);
@@ -247,9 +248,9 @@ async fn run_until_stopped(
     pool: &mut RelayPool,
     commands: &mut mpsc::Receiver<Command>,
     stop: &mut watch::Receiver<bool>,
-    authentication: &mut AuthenticatedRelayState,
-    authentication_wait_timeout: Duration,
-    authentication_settle_timeout: Duration,
+    eligibility: &mut ProfileRelayEligibilityState,
+    relay_ready_wait_timeout: Duration,
+    relay_settle_timeout: Duration,
 ) {
     loop {
         tokio::select! {
@@ -261,16 +262,16 @@ async fn run_until_stopped(
                     pool,
                     command,
                     stop,
-                    authentication,
-                    authentication_wait_timeout,
-                    authentication_settle_timeout,
+                    eligibility,
+                    relay_ready_wait_timeout,
+                    relay_settle_timeout,
                 ).await {
                     return;
                 }
             }
             notification = timeout(INBOUND_POLL, pool.next_notification()) => {
                 if let Ok(Some(notification)) = notification {
-                    authentication.apply(notification.relay_index, &notification.notification);
+                    eligibility.apply(notification.relay_index, &notification.notification);
                 }
             }
         }
@@ -281,9 +282,9 @@ async fn run_command(
     pool: &mut RelayPool,
     command: Command,
     stop: &mut watch::Receiver<bool>,
-    authentication: &mut AuthenticatedRelayState,
-    authentication_wait_timeout: Duration,
-    authentication_settle_timeout: Duration,
+    eligibility: &mut ProfileRelayEligibilityState,
+    relay_ready_wait_timeout: Duration,
+    relay_settle_timeout: Duration,
 ) -> bool {
     match command {
         Command::Publish {
@@ -295,9 +296,9 @@ async fn run_command(
                 pool,
                 &relay_indices,
                 stop,
-                authentication,
-                authentication_wait_timeout,
-                authentication_settle_timeout,
+                eligibility,
+                relay_ready_wait_timeout,
+                relay_settle_timeout,
             )
             .await;
             let result = match result {
@@ -322,39 +323,39 @@ async fn wait_for_target_authentication(
     pool: &mut RelayPool,
     relay_indices: &HashSet<usize>,
     stop: &mut watch::Receiver<bool>,
-    authentication: &mut AuthenticatedRelayState,
-    authentication_wait_timeout: Duration,
-    authentication_settle_timeout: Duration,
+    eligibility: &mut ProfileRelayEligibilityState,
+    relay_ready_wait_timeout: Duration,
+    relay_settle_timeout: Duration,
 ) -> Result<HashSet<usize>, ProfilePublicationServiceError> {
-    let deadline = Instant::now() + authentication_wait_timeout;
+    let deadline = Instant::now() + relay_ready_wait_timeout;
     let mut settle_deadline = None;
     loop {
-        let authenticated = authentication.eligible(relay_indices);
-        if authenticated.len() == relay_indices.len() {
-            return Ok(authenticated);
+        let eligible = eligibility.eligible(relay_indices);
+        if eligibility.all_authenticated(relay_indices) {
+            return Ok(eligible);
         }
-        if authenticated.is_empty() {
+        if eligible.is_empty() {
             settle_deadline = None;
         } else if settle_deadline.is_none() {
-            settle_deadline = Some((Instant::now() + authentication_settle_timeout).min(deadline));
+            settle_deadline = Some((Instant::now() + relay_settle_timeout).min(deadline));
         }
         let wake = settle_deadline.unwrap_or(deadline);
         tokio::select! {
             biased;
             _ = wait_for_stop(stop) => return Err(ProfilePublicationServiceError::Stopped),
             _ = sleep_until(wake) => {
-                let authenticated = authentication.eligible(relay_indices);
-                return if authenticated.is_empty() {
-                    Err(authentication.failure(relay_indices))
+                let eligible = eligibility.eligible(relay_indices);
+                return if eligible.is_empty() {
+                    Err(eligibility.failure(relay_indices))
                 } else {
-                    Ok(authenticated)
+                    Ok(eligible)
                 };
             }
             notification = pool.next_notification() => {
                 let Some(notification) = notification else {
                     return Err(ProfilePublicationServiceError::Stopped);
                 };
-                authentication.apply(notification.relay_index, &notification.notification);
+                eligibility.apply(notification.relay_index, &notification.notification);
             }
         }
     }
@@ -367,17 +368,19 @@ enum RelayAuthenticationFailure {
 }
 
 #[derive(Debug)]
-struct AuthenticatedRelayState {
+struct ProfileRelayEligibilityState {
     expected_public_key: String,
-    authenticated: HashSet<usize>,
+    eligible_relays: HashSet<usize>,
+    authenticated_relays: HashSet<usize>,
     failures: HashMap<usize, RelayAuthenticationFailure>,
 }
 
-impl AuthenticatedRelayState {
+impl ProfileRelayEligibilityState {
     fn new(expected_public_key: String) -> Self {
         Self {
             expected_public_key,
-            authenticated: HashSet::new(),
+            eligible_relays: HashSet::new(),
+            authenticated_relays: HashSet::new(),
             failures: HashMap::new(),
         }
     }
@@ -387,11 +390,13 @@ impl AuthenticatedRelayState {
             RelayNotification::Authenticated { public_key }
                 if public_key == &self.expected_public_key =>
             {
-                self.authenticated.insert(relay_index);
+                self.eligible_relays.insert(relay_index);
+                self.authenticated_relays.insert(relay_index);
                 self.failures.remove(&relay_index);
             }
             RelayNotification::Authenticated { .. } => {
-                self.authenticated.remove(&relay_index);
+                self.eligible_relays.remove(&relay_index);
+                self.authenticated_relays.remove(&relay_index);
                 self.failures
                     .insert(relay_index, RelayAuthenticationFailure::UnexpectedPrincipal);
             }
@@ -399,21 +404,27 @@ impl AuthenticatedRelayState {
                 public_key,
                 message,
             } if public_key == &self.expected_public_key => {
-                self.authenticated.remove(&relay_index);
+                self.eligible_relays.remove(&relay_index);
+                self.authenticated_relays.remove(&relay_index);
                 self.failures.insert(
                     relay_index,
                     RelayAuthenticationFailure::Rejected(message.clone()),
                 );
             }
             RelayNotification::AuthenticationRejected { .. } => {
-                self.authenticated.remove(&relay_index);
+                self.eligible_relays.remove(&relay_index);
+                self.authenticated_relays.remove(&relay_index);
                 self.failures
                     .insert(relay_index, RelayAuthenticationFailure::UnexpectedPrincipal);
             }
-            RelayNotification::Connected
-            | RelayNotification::Disconnected
-            | RelayNotification::AuthChallenge(_) => {
-                self.authenticated.remove(&relay_index);
+            RelayNotification::Connected => {
+                self.eligible_relays.insert(relay_index);
+                self.authenticated_relays.remove(&relay_index);
+                self.failures.remove(&relay_index);
+            }
+            RelayNotification::Disconnected | RelayNotification::AuthChallenge(_) => {
+                self.eligible_relays.remove(&relay_index);
+                self.authenticated_relays.remove(&relay_index);
                 self.failures.remove(&relay_index);
             }
             _ => {}
@@ -421,10 +432,14 @@ impl AuthenticatedRelayState {
     }
 
     fn eligible(&self, relay_indices: &HashSet<usize>) -> HashSet<usize> {
-        self.authenticated
+        self.eligible_relays
             .intersection(relay_indices)
             .copied()
             .collect()
+    }
+
+    fn all_authenticated(&self, relay_indices: &HashSet<usize>) -> bool {
+        relay_indices.is_subset(&self.authenticated_relays)
     }
 
     fn failure(&self, relay_indices: &HashSet<usize>) -> ProfilePublicationServiceError {
@@ -445,7 +460,7 @@ impl AuthenticatedRelayState {
                 return ProfilePublicationServiceError::AuthenticationRejected(message.clone());
             }
         }
-        ProfilePublicationServiceError::NoAuthenticatedRelay
+        ProfilePublicationServiceError::NoPublishEligibleRelay
     }
 }
 
@@ -465,7 +480,7 @@ pub enum ProfilePublicationServiceError {
     Pool(RelayPoolError),
     InvalidConfig,
     PolicyMismatch,
-    NoAuthenticatedRelay,
+    NoPublishEligibleRelay,
     AuthenticationRejected(String),
     UnexpectedAuthenticatedPrincipal,
     Stopped,
@@ -481,9 +496,8 @@ impl fmt::Display for ProfilePublicationServiceError {
             }
             Self::PolicyMismatch => formatter
                 .write_str("profile publisher relay policy does not match the pending intent"),
-            Self::NoAuthenticatedRelay => {
-                formatter.write_str("no pending profile relay authenticated before the deadline")
-            }
+            Self::NoPublishEligibleRelay => formatter
+                .write_str("no pending profile relay became publish-eligible before the deadline"),
             Self::AuthenticationRejected(message) => {
                 write!(
                     formatter,
