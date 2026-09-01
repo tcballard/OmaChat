@@ -46,6 +46,9 @@ pub enum Command {
     ResolveRegistryHandle {
         handle: String,
     },
+    ShowRegistryHandle {
+        handle: String,
+    },
     ClaimRegistryHandle {
         handle: String,
         confirmation: String,
@@ -143,6 +146,11 @@ enum StrictRequestWire {
         params: PublicKeyParams,
     },
     ResolveRegistryHandle {
+        version: u16,
+        id: String,
+        params: HandleParams,
+    },
+    ShowRegistryHandle {
         version: u16,
         id: String,
         params: HandleParams,
@@ -281,6 +289,11 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: HandleParams { handle },
             } => (version, id, Command::ResolveRegistryHandle { handle }),
+            StrictRequestWire::ShowRegistryHandle {
+                version,
+                id,
+                params: HandleParams { handle },
+            } => (version, id, Command::ShowRegistryHandle { handle }),
             StrictRequestWire::ClaimRegistryHandle {
                 version,
                 id,

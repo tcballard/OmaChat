@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -145,6 +145,18 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
         )),
         ["resolve-handle", handle, "--json"] => Ok((
             Command::ResolveRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Json,
+        )),
+        ["show-handle", handle] => Ok((
+            Command::ShowRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["show-handle", handle, "--json"] => Ok((
+            Command::ShowRegistryHandle {
                 handle: (*handle).into(),
             },
             OutputMode::Json,
@@ -301,5 +313,25 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn parses_cache_only_registry_lookup() {
+        let arguments = [
+            std::ffi::OsString::from("show-handle"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("cache-only lookup did not parse"),
+        };
+        assert_eq!(
+            command,
+            Command::ShowRegistryHandle {
+                handle: "alice".into(),
+            }
+        );
+        assert!(mode == OutputMode::Json);
     }
 }

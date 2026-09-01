@@ -127,6 +127,22 @@ async fn verified_handle_resolution_is_explicitly_online_then_offline() {
         assert_eq!(offline["evidence_status"], "fresh");
         assert_eq!(offline["receipt_verified"], true);
         assert_eq!(offline["usable_current_evidence"], true);
+        let cached = match core
+            .handle(Request {
+                version: VERSION,
+                id: "cached-registry-resolution".into(),
+                command: Command::ShowRegistryHandle {
+                    handle: "alice".into(),
+                },
+            })
+            .await
+        {
+            ResponseOutcome::Ok { result } => result,
+            ResponseOutcome::Error { error } => panic!("cached lookup failed: {error:?}"),
+        };
+        assert_eq!(cached["source"], "cache-only");
+        assert_eq!(cached["evidence_status"], "fresh");
+        assert_eq!(cached["receipt_verified"], true);
     };
     let (report, ()) = tokio::join!(host, client);
     let report = report.expect("host report");

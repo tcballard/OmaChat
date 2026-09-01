@@ -1068,6 +1068,19 @@ impl DaemonCore {
                 };
                 Ok(registry_lookup_value(&handle, source, resolution.lookup()))
             }
+            Command::ShowRegistryHandle { handle } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                let registry = self
+                    .inner
+                    .registry
+                    .as_ref()
+                    .ok_or(CoreError::RegistryUnconfigured)?;
+                let lookup = registry
+                    .cached_handle(&self.inner.store, &handle, unix_time()?)
+                    .await
+                    .map_err(CoreError::RegistryEvidence)?;
+                Ok(registry_lookup_value(&handle, "cache-only", &lookup))
+            }
             Command::ClaimRegistryHandle {
                 handle,
                 confirmation,
