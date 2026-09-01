@@ -8,6 +8,7 @@ mod identity;
 mod outbox;
 mod registry;
 mod registry_cache;
+mod registry_claim_intent;
 mod sealed;
 mod trust;
 
@@ -23,6 +24,9 @@ pub use outbox::{
 pub use registry::{RegistryVault, RegistryVaultError};
 pub use registry_cache::{
     CachedRegistryRecord, RegistryCacheError, RegistryCacheLookup, VerifiedRegistryCache,
+};
+pub use registry_claim_intent::{
+    REGISTRY_CLAIM_INTENT_RECORD_NAME, RegistryClaimIntentError, RegistryClaimIntentStore,
 };
 pub use sealed::{
     MasterKey, ProviderKind, RequestedProvider, SealedStore, StoreError, StoreStatus,
