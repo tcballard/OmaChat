@@ -45,6 +45,8 @@ pub use profile_cache_store::{
 };
 pub use profile_publication_coordinator::{
     ProfilePublicationCoordinator, ProfilePublicationCoordinatorError,
+    ProfilePublicationCoordinatorHandle, ProfilePublicationOutcome,
+    ProfilePublicationOutcomeStatus,
 };
 pub use profile_publication_service::{
     ProfilePublicationHandle, ProfilePublicationService, ProfilePublicationServiceConfig,
