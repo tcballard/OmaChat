@@ -1546,6 +1546,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "hex",
+ "k256",
  "omachat-crypto",
  "omachat-nostr",
  "omachat-proto",

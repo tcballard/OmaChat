@@ -9,6 +9,7 @@ mod dm_inbox_service;
 mod dm_relay_cache_store;
 mod ipc_server;
 mod nostr_service;
+mod principal_registry_evidence_service;
 mod profile_cache_store;
 mod registry_evidence_service;
 
@@ -29,6 +30,7 @@ pub use dm_relay_cache_store::{
 };
 pub use ipc_server::{EventHub, IpcServer, RequestHandler, ServerError};
 pub use nostr_service::{NostrHandle, NostrService};
+pub use principal_registry_evidence_service::PrincipalRegistryEvidenceService;
 pub use profile_cache_store::{
     PROFILE_CACHE_RECORD_NAME, SealedProfileCache, SealedProfileCacheError,
     SealedProfileCacheLookup, SealedProfileCacheState,

@@ -23,6 +23,7 @@ url = "=2.5.8"
 
 [dev-dependencies]
 futures-util = "=0.3.34"
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 omachat-registry-host = { path = "../omachat-registry-host", version = "=0.0.1" }
 tempfile = "=3.27.0"
 tokio-tungstenite = "=0.30.0"
