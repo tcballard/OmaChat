@@ -1,8 +1,9 @@
 use omachat_nostr::{
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
     nip29::{
-        GROUP_MESSAGE_KIND, GROUP_METADATA_KIND, GroupEventError, GroupMetadata, GroupUserAction,
-        GroupUserEvent, group_message, join_request, leave_request,
+        GROUP_MESSAGE_KIND, GROUP_METADATA_KIND, GroupEventError, GroupMetadata, GroupRoster,
+        GroupRosterKind, GroupUserAction, GroupUserEvent, group_message, join_request,
+        leave_request,
     },
 };
 
@@ -306,4 +307,116 @@ fn ambiguous_metadata_tags_fail_closed() {
                 .is_err()
         );
     }
+}
+
+#[test]
+fn relay_signed_admin_roles_preserve_principal_identity() {
+    let limits = EventLimits::default();
+    let relay_pubkey = pubkey(&OWNER_SECRET);
+    let agent_pubkey = pubkey(&AGENT_SECRET);
+    let event = UnsignedEvent::new(
+        relay_pubkey.clone(),
+        NOW,
+        39001,
+        vec![
+            vec!["d".to_owned(), "omarchy".to_owned()],
+            vec![
+                "p".to_owned(),
+                agent_pubkey.clone(),
+                "moderator".to_owned(),
+                "agent".to_owned(),
+            ],
+        ],
+        "published admins".to_owned(),
+        &limits,
+    )
+    .expect("admin snapshot");
+    let roster = GroupRoster::verify(sign(event, &OWNER_SECRET), &relay_pubkey, NOW, &limits)
+        .expect("relay-authenticated admins");
+
+    assert_eq!(roster.kind(), GroupRosterKind::Admins);
+    assert_eq!(roster.group_id(), "omarchy");
+    assert_eq!(roster.principals()[0].pubkey(), agent_pubkey);
+    assert_eq!(roster.principals()[0].roles(), ["moderator", "agent"]);
+}
+
+#[test]
+fn published_members_are_explicitly_a_distinct_snapshot_kind() {
+    let limits = EventLimits::default();
+    let relay_pubkey = pubkey(&OWNER_SECRET);
+    let event = UnsignedEvent::new(
+        relay_pubkey.clone(),
+        NOW,
+        39002,
+        vec![
+            vec!["d".to_owned(), "omarchy".to_owned()],
+            vec!["p".to_owned(), pubkey(&AGENT_SECRET)],
+        ],
+        "possibly partial members".to_owned(),
+        &limits,
+    )
+    .expect("member snapshot");
+    let roster = GroupRoster::verify(sign(event, &OWNER_SECRET), &relay_pubkey, NOW, &limits)
+        .expect("relay-authenticated members");
+
+    assert_eq!(roster.kind(), GroupRosterKind::PublishedMembers);
+    assert!(roster.principals()[0].roles().is_empty());
+}
+
+#[test]
+fn forged_ambiguous_and_malformed_rosters_fail_closed() {
+    let limits = EventLimits::default();
+    let relay_pubkey = pubkey(&OWNER_SECRET);
+    let agent_pubkey = pubkey(&AGENT_SECRET);
+    for (kind, tags) in [
+        (
+            39001,
+            vec![
+                vec!["d".to_owned(), "room".to_owned()],
+                vec!["p".to_owned(), agent_pubkey.clone()],
+            ],
+        ),
+        (
+            39002,
+            vec![
+                vec!["d".to_owned(), "room".to_owned()],
+                vec!["p".to_owned(), agent_pubkey.clone()],
+                vec!["p".to_owned(), agent_pubkey.clone()],
+            ],
+        ),
+        (
+            39002,
+            vec![
+                vec!["d".to_owned(), "room".to_owned()],
+                vec!["p".to_owned(), "not-a-pubkey".to_owned()],
+            ],
+        ),
+    ] {
+        let event = UnsignedEvent::new(
+            relay_pubkey.clone(),
+            NOW,
+            kind,
+            tags,
+            String::new(),
+            &limits,
+        )
+        .expect("bounded snapshot");
+        assert!(
+            GroupRoster::verify(sign(event, &OWNER_SECRET), &relay_pubkey, NOW, &limits,).is_err()
+        );
+    }
+
+    let forged = UnsignedEvent::new(
+        agent_pubkey,
+        NOW,
+        39002,
+        vec![vec!["d".to_owned(), "room".to_owned()]],
+        String::new(),
+        &limits,
+    )
+    .expect("forged snapshot");
+    assert!(matches!(
+        GroupRoster::verify(sign(forged, &AGENT_SECRET), &relay_pubkey, NOW, &limits,),
+        Err(GroupEventError::RelayAuthorMismatch)
+    ));
 }

@@ -7,6 +7,128 @@ pub const GROUP_MESSAGE_KIND: u32 = 9;
 pub const JOIN_REQUEST_KIND: u32 = 9021;
 pub const LEAVE_REQUEST_KIND: u32 = 9022;
 pub const GROUP_METADATA_KIND: u32 = 39000;
+pub const GROUP_ADMINS_KIND: u32 = 39001;
+pub const GROUP_MEMBERS_KIND: u32 = 39002;
+
+/// A principal listed in relay-authenticated NIP-29 group state.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupPrincipal {
+    pubkey: String,
+    roles: Vec<String>,
+}
+
+impl GroupPrincipal {
+    #[must_use]
+    pub fn pubkey(&self) -> &str {
+        &self.pubkey
+    }
+
+    #[must_use]
+    pub fn roles(&self) -> &[String] {
+        &self.roles
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GroupRosterKind {
+    Admins,
+    PublishedMembers,
+}
+
+/// A relay-authenticated NIP-29 admin or published-member snapshot.
+///
+/// NIP-29 permits member snapshots to be absent, restricted, or partial, so a
+/// `PublishedMembers` value must never be interpreted as a complete ACL.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupRoster {
+    event: SignedEvent,
+    group_id: String,
+    kind: GroupRosterKind,
+    principals: Vec<GroupPrincipal>,
+}
+
+impl GroupRoster {
+    pub fn verify(
+        event: SignedEvent,
+        expected_relay_pubkey: &str,
+        now: u64,
+        limits: &EventLimits,
+    ) -> Result<Self, GroupEventError> {
+        event.verify(now, limits).map_err(GroupEventError::Event)?;
+        if event.pubkey != expected_relay_pubkey {
+            return Err(GroupEventError::RelayAuthorMismatch);
+        }
+        let kind = match event.kind {
+            GROUP_ADMINS_KIND => GroupRosterKind::Admins,
+            GROUP_MEMBERS_KIND => GroupRosterKind::PublishedMembers,
+            kind => return Err(GroupEventError::UnsupportedKind(kind)),
+        };
+        let group_id = unique_pair_tag(&event.tags, "d", GroupEventError::MissingGroupId)?;
+        if group_id.is_empty() {
+            return Err(GroupEventError::EmptyGroupId);
+        }
+
+        let mut principals = Vec::new();
+        for tag in event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().is_some_and(|part| part == "p"))
+        {
+            let minimum_fields = if kind == GroupRosterKind::Admins {
+                3
+            } else {
+                2
+            };
+            if tag.len() < minimum_fields
+                || (kind == GroupRosterKind::PublishedMembers && tag.len() != 2)
+            {
+                return Err(GroupEventError::MalformedTag("p"));
+            }
+            validate_pubkey(&tag[1])?;
+            if principals
+                .iter()
+                .any(|principal: &GroupPrincipal| principal.pubkey == tag[1])
+            {
+                return Err(GroupEventError::DuplicatePrincipal);
+            }
+            let roles = tag.iter().skip(2).cloned().collect::<Vec<_>>();
+            if roles.iter().any(String::is_empty) {
+                return Err(GroupEventError::EmptyRole);
+            }
+            principals.push(GroupPrincipal {
+                pubkey: tag[1].clone(),
+                roles,
+            });
+        }
+
+        Ok(Self {
+            event,
+            group_id,
+            kind,
+            principals,
+        })
+    }
+
+    #[must_use]
+    pub fn event(&self) -> &SignedEvent {
+        &self.event
+    }
+
+    #[must_use]
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> GroupRosterKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn principals(&self) -> &[GroupPrincipal] {
+        &self.principals
+    }
+}
 
 /// Relay-authenticated NIP-29 room discovery metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -438,6 +560,17 @@ fn validate_timeline_reference(reference: &str) -> Result<(), GroupEventError> {
     Ok(())
 }
 
+fn validate_pubkey(pubkey: &str) -> Result<(), GroupEventError> {
+    if pubkey.len() != 64
+        || pubkey
+            .bytes()
+            .any(|byte| !byte.is_ascii_digit() && !(b'a'..=b'f').contains(&byte))
+    {
+        return Err(GroupEventError::InvalidPrincipalPublicKey);
+    }
+    Ok(())
+}
+
 fn validate_tag_field(value: &str, limits: &EventLimits) -> Result<(), GroupEventError> {
     if value.len() > limits.max_tag_field_bytes {
         return Err(GroupEventError::TagFieldTooLarge {
@@ -461,6 +594,9 @@ pub enum GroupEventError {
     InvalidTimelineReference,
     RelayAuthorMismatch,
     InvalidSupportedKind,
+    InvalidPrincipalPublicKey,
+    DuplicatePrincipal,
+    EmptyRole,
     TagFieldTooLarge { bytes: usize, maximum: usize },
 }
 
@@ -486,6 +622,11 @@ impl fmt::Display for GroupEventError {
             Self::InvalidSupportedKind => {
                 formatter.write_str("NIP-29 supported kind must be an unsigned decimal integer")
             }
+            Self::InvalidPrincipalPublicKey => {
+                formatter.write_str("NIP-29 group principal must be a lowercase 32-byte public key")
+            }
+            Self::DuplicatePrincipal => formatter.write_str("duplicate NIP-29 group principal"),
+            Self::EmptyRole => formatter.write_str("NIP-29 group role must not be empty"),
             Self::TagFieldTooLarge { bytes, maximum } => write!(
                 formatter,
                 "NIP-29 tag field is {bytes} bytes; maximum is {maximum}"
