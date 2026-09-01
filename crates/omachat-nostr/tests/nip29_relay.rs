@@ -76,7 +76,10 @@ fn nip11_documents_parse_strictly() {
     // An absent or empty `self` means the relay has no signing identity even
     // when it publishes an administrative contact key.
     assert_eq!(information(None).self_pubkey(), None);
-    assert_eq!(information(None).pubkey(), Some(pubkey(&AGENT_SECRET).as_str()));
+    assert_eq!(
+        information(None).pubkey(),
+        Some(pubkey(&AGENT_SECRET).as_str())
+    );
     let minimal = RelayInformation::from_json(b"{}", &limits()).expect("empty object");
     assert_eq!(minimal.self_pubkey(), None);
     assert_eq!(minimal.pubkey(), None);
@@ -182,11 +185,7 @@ async fn nip11_fetch_discovers_relay_identity_over_http() {
     let response = format!("HTTP/1.0 200 OK\r\n\r\n{body}");
     let server = tokio::spawn(serve_http_once(listener, response.into_bytes()));
     assert_eq!(
-        fetcher()
-            .fetch(&url)
-            .await
-            .expect("unframed")
-            .self_pubkey(),
+        fetcher().fetch(&url).await.expect("unframed").self_pubkey(),
         Some(relay.as_str())
     );
     server.await.expect("server");

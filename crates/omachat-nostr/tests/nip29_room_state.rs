@@ -198,8 +198,7 @@ fn snapshot_round_trips_and_matches_fresh_reduction() {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay)
-                .expect("accepted"),
+            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay).expect("accepted"),
         )
         .expect("created");
     let put = GroupMembershipAction::verify(
@@ -239,8 +238,7 @@ fn snapshot_round_trips_and_matches_fresh_reduction() {
     .expect("deletion");
     state
         .apply_deletion(
-            &AcceptedGroupDeletion::from_authoritative_relay(deletion, &relay)
-                .expect("accepted"),
+            &AcceptedGroupDeletion::from_authoritative_relay(deletion, &relay).expect("accepted"),
         )
         .expect("deleted");
 
@@ -298,8 +296,7 @@ fn tampered_or_foreign_snapshots_fail_closed() {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay)
-                .expect("accepted"),
+            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay).expect("accepted"),
         )
         .expect("created");
     let mut json = serde_json::to_value(state.snapshot()).expect("value");

@@ -181,7 +181,6 @@ impl AcceptedMetadataEdit {
     pub fn relay_pubkey(&self) -> &str {
         &self.relay_pubkey
     }
-
 }
 
 /// Metadata and hierarchy for every group known on one relay identity.

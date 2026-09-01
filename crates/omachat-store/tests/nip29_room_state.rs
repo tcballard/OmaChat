@@ -65,7 +65,10 @@ impl RoomStateGenerationAnchor for TestGenerationAnchor {
     ) -> Result<(), RoomStateAnchorError> {
         let mut generations = self.generations.lock().expect("anchor lock");
         let key = (store_context.to_owned(), relay_pubkey.to_owned());
-        if generations.get(&key).is_some_and(|current| *current > generation) {
+        if generations
+            .get(&key)
+            .is_some_and(|current| *current > generation)
+        {
             return Err(RoomStateAnchorError::new("generation cannot decrease"));
         }
         generations.insert(key, generation);
@@ -195,8 +198,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay)
-                .expect("accepted"),
+            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay).expect("accepted"),
         )
         .expect("created");
     let invite = GroupLifecycleRequest::verify(
@@ -212,8 +214,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::from_authoritative_relay(invite, &relay)
-                .expect("accepted"),
+            &AcceptedLifecycleAction::from_authoritative_relay(invite, &relay).expect("accepted"),
         )
         .expect("invited");
 
@@ -291,8 +292,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     .expect("deletion");
     state
         .apply_deletion(
-            &AcceptedGroupDeletion::from_authoritative_relay(deletion, &relay)
-            .expect("accepted"),
+            &AcceptedGroupDeletion::from_authoritative_relay(deletion, &relay).expect("accepted"),
         )
         .expect("deleted");
 

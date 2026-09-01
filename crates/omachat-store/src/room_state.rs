@@ -209,11 +209,7 @@ impl<'store> RoomStateVault<'store> {
             .map_err(RoomStateVaultError::Corrupt)?;
         if decoded.generation > anchor_generation {
             self.anchor
-                .store_generation(
-                    &self.store_context,
-                    &self.relay_pubkey,
-                    decoded.generation,
-                )
+                .store_generation(&self.store_context, &self.relay_pubkey, decoded.generation)
                 .map_err(RoomStateVaultError::Anchor)?;
         }
         self.generation = decoded.generation;
@@ -299,7 +295,9 @@ impl fmt::Display for RoomStateVaultError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Store(error) => write!(formatter, "room state storage failed: {error}"),
-            Self::Anchor(error) => write!(formatter, "room state generation anchor failed: {error}"),
+            Self::Anchor(error) => {
+                write!(formatter, "room state generation anchor failed: {error}")
+            }
             Self::Encoding => formatter.write_str("room state record encoding is invalid"),
             Self::InvalidContext => {
                 formatter.write_str("room state store context must be 1 to 128 bytes")
@@ -316,9 +314,8 @@ impl fmt::Display for RoomStateVaultError {
             Self::RelayMismatch => {
                 formatter.write_str("room state record belongs to another relay identity")
             }
-            Self::MissingAnchor => formatter.write_str(
-                "room state record exists without its external generation anchor",
-            ),
+            Self::MissingAnchor => formatter
+                .write_str("room state record exists without its external generation anchor"),
             Self::Rollback {
                 record_generation,
                 anchor_generation,
