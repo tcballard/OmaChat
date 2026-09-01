@@ -21,6 +21,7 @@ pub mod inbox;
 pub mod mailbox;
 pub mod nip29;
 pub mod nip29_delete;
+pub mod nip29_lifecycle;
 pub mod nip29_metadata;
 pub mod nip29_pins;
 pub mod nip29_roles;
