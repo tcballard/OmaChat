@@ -12,6 +12,7 @@ const RECEIPT_DOMAIN: &[u8] = b"omachat.registry.principal-proof-receipt.v1\0";
 const RECEIPT_HASH_DOMAIN: &[u8] = b"omachat.registry.principal-proof-receipt-hash.v1\0";
 const RECEIPT_VERSION: u16 = 1;
 const GENESIS_HASH: [u8; 32] = [0; 32];
+const MAX_ENCODED_RECEIPT_BYTES: usize = 1024;
 
 /// Registry-signed acceptance of one exact principal proof and v1 claim receipt.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -104,6 +105,79 @@ impl PrincipalProofReceipt {
         bytes.extend_from_slice(&self.previous_account_proof_receipt_hash);
         bytes.extend_from_slice(&self.accepted_at.to_be_bytes());
         bytes
+    }
+
+    /// Encodes the exact signed receipt for bounded storage or transport.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut encoded = self.signing_bytes();
+        encoded.extend_from_slice(&self.signature);
+        encoded
+    }
+
+    /// Decodes a receipt only in the context of its authoritative v1 receipt.
+    pub fn from_bytes_for_claim_receipt(
+        encoded: &[u8],
+        claim_receipt: &RegistryReceipt,
+        pinned_registry_key: &[u8; 32],
+    ) -> Result<Self, PrincipalProofReceiptError> {
+        if encoded.len() > MAX_ENCODED_RECEIPT_BYTES {
+            return Err(PrincipalProofReceiptError::InvalidEncoding);
+        }
+        claim_receipt
+            .verify(pinned_registry_key)
+            .map_err(|_| PrincipalProofReceiptError::ContextMismatch)?;
+        let mut cursor = ReceiptCursor::new(encoded);
+        if cursor.take_slice(RECEIPT_DOMAIN.len())? != RECEIPT_DOMAIN {
+            return Err(PrincipalProofReceiptError::InvalidEncoding);
+        }
+        let version = cursor.take_u16()?;
+        if version != RECEIPT_VERSION {
+            return Err(PrincipalProofReceiptError::UnsupportedVersion);
+        }
+        let sequence = cursor.take_u64()?;
+        let command_id = CommandId::from_bytes(cursor.take_array()?);
+        let account_id = cursor.take_string()?;
+        let handle = cursor.take_string()?;
+        let account_revision = cursor.take_u64()?;
+        let claim_receipt_hash = cursor.take_array()?;
+        let principal_proof_hash = cursor.take_array()?;
+        let nostr_public_key = cursor.take_array()?;
+        let previous_proof_receipt_hash = cursor.take_array()?;
+        let previous_account_proof_receipt_hash = cursor.take_array()?;
+        let accepted_at = cursor.take_u64()?;
+        let signature = cursor.take_array()?;
+        if !cursor.is_empty() {
+            return Err(PrincipalProofReceiptError::InvalidEncoding);
+        }
+        if sequence != claim_receipt.sequence
+            || command_id != claim_receipt.command_id
+            || account_id != claim_receipt.account_id.as_str()
+            || handle != claim_receipt.handle.as_str()
+            || account_revision != claim_receipt.account_revision
+            || claim_receipt_hash != claim_receipt.receipt_hash()
+            || accepted_at != claim_receipt.accepted_at
+        {
+            return Err(PrincipalProofReceiptError::ContextMismatch);
+        }
+
+        let receipt = Self {
+            version,
+            sequence,
+            command_id,
+            account_id: claim_receipt.account_id.clone(),
+            handle: claim_receipt.handle.clone(),
+            account_revision,
+            claim_receipt_hash,
+            principal_proof_hash,
+            nostr_public_key,
+            previous_proof_receipt_hash,
+            previous_account_proof_receipt_hash,
+            accepted_at,
+            signature,
+        };
+        receipt.verify(pinned_registry_key)?;
+        Ok(receipt)
     }
 
     /// Verifies this receipt against an independently pinned registry key.
@@ -210,6 +284,10 @@ pub enum PrincipalProofReceiptError {
     InvalidGlobalChain,
     /// The per-account proof-receipt chain is invalid.
     InvalidAccountChain,
+    /// The encoded receipt is oversized, truncated, malformed, or has trailing bytes.
+    InvalidEncoding,
+    /// The encoded fields do not match the authoritative v1 claim receipt.
+    ContextMismatch,
 }
 
 impl std::fmt::Display for PrincipalProofReceiptError {
@@ -221,6 +299,8 @@ impl std::fmt::Display for PrincipalProofReceiptError {
             Self::EvidenceMismatch => "principal proof receipt evidence does not match",
             Self::InvalidGlobalChain => "principal proof receipt global chain is invalid",
             Self::InvalidAccountChain => "principal proof receipt account chain is invalid",
+            Self::InvalidEncoding => "principal proof receipt encoding is invalid",
+            Self::ContextMismatch => "principal proof receipt context does not match",
         })
     }
 }
@@ -231,4 +311,52 @@ fn push_u32(destination: &mut Vec<u8>, value: &[u8]) {
     let length = u32::try_from(value.len()).expect("validated receipt field must fit in u32");
     destination.extend_from_slice(&length.to_be_bytes());
     destination.extend_from_slice(value);
+}
+
+struct ReceiptCursor<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> ReceiptCursor<'a> {
+    fn new(encoded: &'a [u8]) -> Self {
+        Self { remaining: encoded }
+    }
+
+    fn take_slice(&mut self, length: usize) -> Result<&'a [u8], PrincipalProofReceiptError> {
+        if self.remaining.len() < length {
+            return Err(PrincipalProofReceiptError::InvalidEncoding);
+        }
+        let (value, remaining) = self.remaining.split_at(length);
+        self.remaining = remaining;
+        Ok(value)
+    }
+
+    fn take_array<const N: usize>(&mut self) -> Result<[u8; N], PrincipalProofReceiptError> {
+        self.take_slice(N)?
+            .try_into()
+            .map_err(|_| PrincipalProofReceiptError::InvalidEncoding)
+    }
+
+    fn take_u16(&mut self) -> Result<u16, PrincipalProofReceiptError> {
+        Ok(u16::from_be_bytes(self.take_array()?))
+    }
+
+    fn take_u32(&mut self) -> Result<u32, PrincipalProofReceiptError> {
+        Ok(u32::from_be_bytes(self.take_array()?))
+    }
+
+    fn take_u64(&mut self) -> Result<u64, PrincipalProofReceiptError> {
+        Ok(u64::from_be_bytes(self.take_array()?))
+    }
+
+    fn take_string(&mut self) -> Result<String, PrincipalProofReceiptError> {
+        let length = self.take_u32()? as usize;
+        std::str::from_utf8(self.take_slice(length)?)
+            .map(str::to_owned)
+            .map_err(|_| PrincipalProofReceiptError::InvalidEncoding)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.remaining.is_empty()
+    }
 }

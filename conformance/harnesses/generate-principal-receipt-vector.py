@@ -138,17 +138,17 @@ def fixed_inputs():
     return {
         "schema_version": 1,
         "registry_signing_seed_hex": (b"\x77" * 32).hex(),
-        "sequence": 9,
+        "sequence": 1,
         "command_id_hex": (b"\xa1" * 32).hex(),
         "account_id": "oa1_a645d3afb4000fa6b55597b1290226fda6de04a2d2563259c5420931431ebc10",
         "handle": "alice",
-        "account_revision": 3,
-        "claim_receipt_hash_hex": (b"\x61" * 32).hex(),
+        "account_revision": 1,
+        "claim_receipt_hash_hex": "9656e2be45f7c1f225ca7dae6d0bd873cbb9a0e1e3f656a35ddd45723509523f",
         "principal_proof_hash_hex": (b"\x62" * 32).hex(),
         "nostr_public_key_hex": "d793631af7aa0e709439dd47fc001acd0b0727670b6670ea528ac83cb0127f4a",
-        "previous_proof_receipt_hash_hex": (b"\x63" * 32).hex(),
-        "previous_account_proof_receipt_hash_hex": (b"\x64" * 32).hex(),
-        "accepted_at": 1788000301,
+        "previous_proof_receipt_hash_hex": bytes(32).hex(),
+        "previous_account_proof_receipt_hash_hex": bytes(32).hex(),
+        "accepted_at": 1788000101,
     }
 
 
@@ -179,6 +179,7 @@ def generate():
         "receipt_hash_preimage_hex": (RECEIPT_HASH_DOMAIN + signing_bytes + signature).hex(),
     }
     outputs = {
+        "encoded_receipt_hex": (signing_bytes + signature).hex(),
         "schema_version": 1,
         "receipt_version": VERSION,
         "registry_public_key_hex": public_key(seed).hex(),

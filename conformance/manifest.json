@@ -160,14 +160,14 @@
     {
       "id": "omachat-principal-proof-receipt-v1",
       "protocol_area": "account-registry",
-      "description": "Independent synthetic principal proof-receipt transcript, registry Ed25519 signature, and chained receipt hash.",
+      "description": "Independent synthetic principal proof-receipt transcript, encoding, registry Ed25519 signature, and chained receipt hash bound to a real v1 claim receipt vector.",
       "producer": {
         "kind": "synthetic",
         "implementation": "independent pure-Python RFC 8032 principal-receipt reference generator",
         "repository": null,
         "release": null,
         "commit": null,
-        "captured_at_utc": "2026-09-01T00:58:43Z",
+        "captured_at_utc": "2026-09-01T01:03:40Z",
         "build": {
           "toolchain": "CPython 3.14.6 standard library",
           "host": "macOS 27.0 arm64",
@@ -189,7 +189,7 @@
           "encoding": "json",
           "path": "fixtures/omachat-principal-proof-receipt-v1/inputs.json",
           "bytes": 899,
-          "sha256": "c9c7d6a36252b4928c017bda13c8150ff6a7043344d282de5f122003d2937102"
+          "sha256": "564c490ced3401770811e3a09dad1aebd82471af85f0ccc2624931b119928b92"
         },
         {
           "id": "intermediates-json",
@@ -198,7 +198,7 @@
           "encoding": "json",
           "path": "fixtures/omachat-principal-proof-receipt-v1/intermediates.json",
           "bytes": 1694,
-          "sha256": "845e210b36ac40808de1e95adaf198f49c7d9152220a701161f39b92183ed3aa"
+          "sha256": "b3fc996950dde09a03dc18db63cb87514b042e7768b1226a8a6989271124d665"
         },
         {
           "id": "outputs-json",
@@ -206,8 +206,8 @@
           "disclosure": "public-committed",
           "encoding": "json",
           "path": "fixtures/omachat-principal-proof-receipt-v1/outputs.json",
-          "bytes": 388,
-          "sha256": "09c4a03d7f33171dee7a14ef1f688475f02f68aebf0c390942f61a3c4990b2d2"
+          "bytes": 1231,
+          "sha256": "ae35a9a59eed0be18d7c8c7e64332037717c16e77d1e379c836d0de53870e603"
         }
       ]
     },
