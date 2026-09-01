@@ -158,6 +158,60 @@
       ]
     },
     {
+      "id": "omachat-principal-proof-receipt-v1",
+      "protocol_area": "account-registry",
+      "description": "Independent synthetic principal proof-receipt transcript, registry Ed25519 signature, and chained receipt hash.",
+      "producer": {
+        "kind": "synthetic",
+        "implementation": "independent pure-Python RFC 8032 principal-receipt reference generator",
+        "repository": null,
+        "release": null,
+        "commit": null,
+        "captured_at_utc": "2026-09-01T00:58:43Z",
+        "build": {
+          "toolchain": "CPython 3.14.6 standard library",
+          "host": "macOS 27.0 arm64",
+          "target": "platform-independent deterministic Ed25519 and SHA-256 transcripts",
+          "configuration": "same-project standalone pure-Python RFC 8032 reference calculation using fixed synthetic test-only keys and time; does not import, call, or consume output from OmaChat Rust; includes independent Ed25519 verification",
+          "command": [
+            "python3",
+            "conformance/harnesses/generate-principal-receipt-vector.py",
+            "--output-dir",
+            "<output-directory>"
+          ]
+        }
+      },
+      "artifacts": [
+        {
+          "id": "inputs-json",
+          "role": "input",
+          "disclosure": "test-only-private",
+          "encoding": "json",
+          "path": "fixtures/omachat-principal-proof-receipt-v1/inputs.json",
+          "bytes": 899,
+          "sha256": "c9c7d6a36252b4928c017bda13c8150ff6a7043344d282de5f122003d2937102"
+        },
+        {
+          "id": "intermediates-json",
+          "role": "intermediate",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/omachat-principal-proof-receipt-v1/intermediates.json",
+          "bytes": 1694,
+          "sha256": "845e210b36ac40808de1e95adaf198f49c7d9152220a701161f39b92183ed3aa"
+        },
+        {
+          "id": "outputs-json",
+          "role": "output",
+          "disclosure": "public-committed",
+          "encoding": "json",
+          "path": "fixtures/omachat-principal-proof-receipt-v1/outputs.json",
+          "bytes": 388,
+          "sha256": "09c4a03d7f33171dee7a14ef1f688475f02f68aebf0c390942f61a3c4990b2d2"
+        }
+      ]
+    },
+    {
       "id": "android-nostr-supported-shapes-v1",
       "protocol_area": "nostr-private-envelope",
       "description": "Pinned Android production-path acceptance of the released Swift tagless rumor and current recipient-p rumor shapes, plus Android's current inner-event creation shape.",
