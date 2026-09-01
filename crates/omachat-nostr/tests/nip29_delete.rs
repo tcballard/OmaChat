@@ -230,8 +230,7 @@ fn request_validity_is_separate_from_relay_policy_acceptance() {
     assert!(!state.is_deleted(&human_message.event().id));
 
     assert_eq!(
-        AcceptedGroupDeletion::from_authoritative_relay(agent_request.clone(), "not-a-relay")
-            .err(),
+        AcceptedGroupDeletion::from_authoritative_relay(agent_request.clone(), "not-a-relay").err(),
         Some(DeletionAuthorizationError::InvalidRelayPublicKey)
     );
     assert!(state.is_empty());
@@ -261,7 +260,10 @@ fn authorized_deletions_mark_targets_and_preserve_provenance() {
         &relay,
     )
     .expect("relay accepted moderation");
-    assert_eq!(moderation.authority(), &DeletionAuthority::AuthoritativeRelay);
+    assert_eq!(
+        moderation.authority(),
+        &DeletionAuthority::AuthoritativeRelay
+    );
 
     let mut state = GroupDeletionState::new(relay.clone(), "omarchy".to_owned()).expect("state");
     assert_eq!(
@@ -307,12 +309,12 @@ fn replay_and_multi_relay_delivery_reduce_once() {
     let other_relay = pubkey(&[11; 32]);
     let request = request(&MODERATOR_SECRET, NOW - 1, &[TARGET_A, TARGET_B]);
 
-    let via_primary = AcceptedGroupDeletion::from_authoritative_relay(request.clone(), &relay)
-        .expect("accept");
+    let via_primary =
+        AcceptedGroupDeletion::from_authoritative_relay(request.clone(), &relay).expect("accept");
     // The same signed request seen again through another relay path carries the
     // same event ID and the same acceptance evidence.
-    let via_mirror = AcceptedGroupDeletion::from_authoritative_relay(request.clone(), &relay)
-        .expect("accept");
+    let via_mirror =
+        AcceptedGroupDeletion::from_authoritative_relay(request.clone(), &relay).expect("accept");
 
     let mut state = GroupDeletionState::new(relay.clone(), "omarchy".to_owned()).expect("state");
     assert_eq!(
