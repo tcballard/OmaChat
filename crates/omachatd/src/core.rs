@@ -208,7 +208,7 @@ struct CoreInner {
     nostr: Mutex<Option<NostrHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
     profile_publication: Mutex<Option<crate::ProfilePublicationCoordinator>>,
-    relay_list_publication: Mutex<Option<crate::RelayListPublicationRuntime>>,
+    relay_list_publication: tokio::sync::Mutex<Option<crate::RelayListPublicationRuntime>>,
     registry: Option<RegistryEvidenceBoundary>,
     registry_claim_transaction: tokio::sync::Mutex<()>,
     mailbox: Mutex<PrivateMailbox>,
@@ -352,7 +352,7 @@ impl DaemonCore {
                         publication_config,
                         Default::default(),
                     )
-                    .map_err(|_| CoreError::Nostr)?,
+                    .map_err(CoreError::RelayListPublication)?,
                 )
             } else {
                 None
@@ -370,7 +370,7 @@ impl DaemonCore {
                 nostr: Mutex::new(None),
                 dm_inbox: Mutex::new(None),
                 profile_publication: Mutex::new(profile_publication),
-                relay_list_publication: Mutex::new(relay_list_publication),
+                relay_list_publication: tokio::sync::Mutex::new(relay_list_publication),
                 registry,
                 registry_claim_transaction: tokio::sync::Mutex::new(()),
                 mailbox: Mutex::new(mailbox),
@@ -426,14 +426,12 @@ impl DaemonCore {
     }
 
     async fn shutdown_relay_list_publication(&self) -> Result<(), CoreError> {
-        let runtime = self
-            .inner
-            .relay_list_publication
-            .lock()
-            .expect("relay-list publication mutex poisoned")
-            .take();
+        let runtime = self.inner.relay_list_publication.lock().await.take();
         if let Some(runtime) = runtime {
-            runtime.shutdown().await.map_err(|_| CoreError::Nostr)?;
+            runtime
+                .shutdown()
+                .await
+                .map_err(CoreError::RelayListPublication)?;
         }
         Ok(())
     }
@@ -626,6 +624,56 @@ impl DaemonCore {
         .discover_and_save(relay_configs, auth_signer, participant_public_key, now)
         .await
         .map_err(CoreError::RelayListDiscovery)
+    }
+
+    async fn publish_nip65_relays(&self, now: u64) -> Result<serde_json::Value, CoreError> {
+        let runtime = self.inner.relay_list_publication.lock().await;
+        let runtime = runtime
+            .as_ref()
+            .ok_or(CoreError::RelayListPublicationUnconfigured)?;
+        let outcome = if let Some(outcome) = runtime
+            .resume(self.inner.store.as_ref(), now)
+            .await
+            .map_err(CoreError::RelayListPublication)?
+        {
+            outcome
+        } else {
+            let event = self.with_active_transition(|| {
+                let identity = self.identity()?;
+                let nostr = identity
+                    .as_ref()
+                    .expect("checked identity")
+                    .device_nostr_identity()
+                    .map_err(CoreError::Identity)?;
+                runtime
+                    .create_event(nostr.private_key(), now)
+                    .map_err(CoreError::RelayListPublication)
+            })?;
+            runtime
+                .publish(self.inner.store.as_ref(), &event, now)
+                .await
+                .map_err(CoreError::RelayListPublication)?
+        };
+        let publication_status = match outcome.status {
+            crate::RelayListPublicationOutcomeStatus::Pending => "pending",
+            crate::RelayListPublicationOutcomeStatus::Complete => "complete",
+        };
+        let publication_source = match outcome.source {
+            crate::RelayListPublicationSource::New => "new",
+            crate::RelayListPublicationSource::SealedReplay => "sealed-replay",
+        };
+        Ok(serde_json::json!({
+            "event_id": outcome.event_id,
+            "public_key": outcome.public_key,
+            "publication_status": publication_status,
+            "publication_source": publication_source,
+            "attempted_relays": outcome.attempted_relays,
+            "acknowledged_relays": outcome.acknowledged_relays,
+            "rejected_relays": outcome.rejected_relays,
+            "failed_relays": outcome.failed_relays,
+            "required_acknowledgements": outcome.required_acknowledgements,
+            "identity_verified_by_relay_list": false
+        }))
     }
 
     async fn publish_account_profile(&self, now: u64) -> Result<serde_json::Value, CoreError> {
@@ -1561,6 +1609,7 @@ impl DaemonCore {
                 })
             }
             Command::PublishProfile => self.publish_account_profile(unix_time()?).await,
+            Command::PublishNip65Relays => self.publish_nip65_relays(unix_time()?).await,
             Command::ResolveRegistryHandle { handle } => {
                 let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
                 let registry = self
@@ -2546,23 +2595,11 @@ mod relay_list_publication_lifecycle_tests {
         )
         .await
         .expect("open configured core");
-        assert!(
-            core.inner
-                .relay_list_publication
-                .lock()
-                .expect("relay-list publication mutex")
-                .is_some()
-        );
+        assert!(core.inner.relay_list_publication.lock().await.is_some());
 
         core.prepare_for_shutdown().await;
 
-        assert!(
-            core.inner
-                .relay_list_publication
-                .lock()
-                .expect("relay-list publication mutex")
-                .is_none()
-        );
+        assert!(core.inner.relay_list_publication.lock().await.is_none());
     }
 
     #[tokio::test]
@@ -2581,13 +2618,7 @@ mod relay_list_publication_lifecycle_tests {
             .await
             .expect("panic erasure completes");
 
-        assert!(
-            core.inner
-                .relay_list_publication
-                .lock()
-                .expect("relay-list publication mutex")
-                .is_none()
-        );
+        assert!(core.inner.relay_list_publication.lock().await.is_none());
         assert!(!state.exists(), "sealed state is erased after quiescence");
     }
 
@@ -2607,11 +2638,7 @@ mod relay_list_publication_lifecycle_tests {
             Err(CoreError::RestartRequired)
         ));
         assert!(
-            core.inner
-                .relay_list_publication
-                .lock()
-                .expect("relay-list publication mutex")
-                .is_some(),
+            core.inner.relay_list_publication.lock().await.is_some(),
             "rejected reload preserves the active runtime"
         );
         core.prepare_for_shutdown().await;

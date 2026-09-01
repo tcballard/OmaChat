@@ -17,6 +17,8 @@ pub enum CoreError {
     ProfileDiscovery(omachat_nostr::profile_discovery::ProfileDiscoveryError),
     ProfilePublication(crate::ProfilePublicationCoordinatorError),
     ProfilePublicationUnconfigured,
+    RelayListPublication(crate::RelayListPublicationRuntimeError),
+    RelayListPublicationUnconfigured,
     RelayListCache(crate::SealedRelayListCacheError),
     RelayListDiscovery(crate::SealedRelayListDiscoveryServiceError),
     RegistryEvidence(
@@ -84,6 +86,7 @@ impl CoreError {
             Self::RestartRequired => ErrorCode::Conflict,
             Self::Panicked
             | Self::ProfilePublicationUnconfigured
+            | Self::RelayListPublicationUnconfigured
             | Self::RegistryUnconfigured
             | Self::RegistryProtocolOperationUnavailable
             | Self::RegistryClaimPreflightOffline => ErrorCode::Unavailable,
@@ -101,6 +104,7 @@ impl CoreError {
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
             | Self::ProfilePublication(_)
+            | Self::RelayListPublication(_)
             | Self::RelayListCache(_)
             | Self::RelayListDiscovery(_)
             | Self::RegistryEvidence(_)
@@ -145,6 +149,12 @@ impl fmt::Display for CoreError {
             }
             Self::ProfilePublicationUnconfigured => {
                 formatter.write_str("profile publication is not configured")
+            }
+            Self::RelayListPublication(error) => {
+                write!(formatter, "NIP-65 relay-list publication failed: {error}")
+            }
+            Self::RelayListPublicationUnconfigured => {
+                formatter.write_str("NIP-65 relay-list publication is not configured")
             }
             Self::RelayListCache(error) => write!(formatter, "NIP-65 relay cache failed: {error}"),
             Self::RelayListDiscovery(error) => {
@@ -238,6 +248,7 @@ impl Error for CoreError {
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
             Self::ProfilePublication(error) => Some(error),
+            Self::RelayListPublication(error) => Some(error),
             Self::RelayListCache(error) => Some(error),
             Self::RelayListDiscovery(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
