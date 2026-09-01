@@ -27,10 +27,7 @@
 //! Host-qualified group IDs (`<host>'<id>`) are refused because room identity
 //! here is bound to the relay key, not to a hostname inside the ID.
 
-use crate::{
-    event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent},
-    nip29::{GroupMetadata, GroupRoster, GroupRosterKind},
-};
+use crate::event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, error::Error, fmt};
 
@@ -199,10 +196,8 @@ fn build(
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LifecycleAuthority {
-    /// The relay published kind `39000` metadata for the created group.
-    RelayMetadata,
-    /// The relay-published administrator snapshot lists the requester.
-    Administrator { roles: Vec<String> },
+    /// The verified authoritative relay path accepted and replayed the action.
+    AuthoritativeRelay,
 }
 
 /// A lifecycle request paired with explicit evidence that it is authorized.
@@ -214,73 +209,21 @@ pub struct AcceptedLifecycleAction {
 }
 
 impl AcceptedLifecycleAction {
-    /// Accept a creation because the relay published the group's metadata.
+    /// Record acceptance by the room's verified authoritative relay path.
     ///
-    /// Only creation can be accepted this way: the relay's kind `39000` for
-    /// the same group ID is the observable sign that it honoured the request.
-    pub fn by_relay_metadata(
+    /// This binds the exact signed lifecycle request to a relay policy verdict.
+    /// Broad roster roles and unrelated metadata snapshots are not permission
+    /// or claim-to-receipt evidence.
+    pub fn from_authoritative_relay(
         request: GroupLifecycleRequest,
-        metadata: &GroupMetadata,
-        relay_pubkey: &str,
+        source_relay_pubkey: &str,
     ) -> Result<Self, LifecycleAuthorizationError> {
-        validate_relay_pubkey(relay_pubkey)?;
-        if request.action() != &LifecycleAction::CreateGroup {
-            return Err(LifecycleAuthorizationError::MetadataOnlyProvesCreation);
-        }
-        if metadata.event().pubkey != relay_pubkey {
-            return Err(LifecycleAuthorizationError::MetadataRelayMismatch);
-        }
-        if metadata.group_id() != request.group_id() {
-            return Err(LifecycleAuthorizationError::MetadataGroupMismatch);
-        }
+        validate_relay_pubkey(source_relay_pubkey)?;
         Ok(Self {
             request,
-            relay_pubkey: relay_pubkey.to_owned(),
-            authority: LifecycleAuthority::RelayMetadata,
+            relay_pubkey: source_relay_pubkey.to_owned(),
+            authority: LifecycleAuthority::AuthoritativeRelay,
         })
-    }
-
-    /// Accept because the relay's administrator snapshot lists the requester.
-    pub fn by_administrator(
-        request: GroupLifecycleRequest,
-        admins: &GroupRoster,
-        relay_pubkey: &str,
-    ) -> Result<Self, LifecycleAuthorizationError> {
-        validate_relay_pubkey(relay_pubkey)?;
-        if admins.kind() != GroupRosterKind::Admins {
-            return Err(LifecycleAuthorizationError::NotAdministratorRoster);
-        }
-        if admins.event().pubkey != relay_pubkey {
-            return Err(LifecycleAuthorizationError::RosterRelayMismatch);
-        }
-        if admins.group_id() != request.group_id() {
-            return Err(LifecycleAuthorizationError::RosterGroupMismatch);
-        }
-        let roles = admins
-            .principals()
-            .iter()
-            .find(|principal| principal.pubkey() == request.author())
-            .map(|principal| principal.roles().to_vec())
-            .ok_or(LifecycleAuthorizationError::RequesterNotAdministrator)?;
-        Ok(Self {
-            request,
-            relay_pubkey: relay_pubkey.to_owned(),
-            authority: LifecycleAuthority::Administrator { roles },
-        })
-    }
-
-    /// Rebuild an accepted action from sealed evidence. Crate-private so that
-    /// only persistence restore, never a caller, can bypass the checks.
-    pub(crate) fn from_evidence(
-        request: GroupLifecycleRequest,
-        relay_pubkey: String,
-        authority: LifecycleAuthority,
-    ) -> Self {
-        Self {
-            request,
-            relay_pubkey,
-            authority,
-        }
     }
 
     #[must_use]
@@ -718,13 +661,6 @@ impl Error for LifecycleRequestError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LifecycleAuthorizationError {
     InvalidRelayPublicKey,
-    MetadataOnlyProvesCreation,
-    MetadataRelayMismatch,
-    MetadataGroupMismatch,
-    NotAdministratorRoster,
-    RosterRelayMismatch,
-    RosterGroupMismatch,
-    RequesterNotAdministrator,
 }
 
 impl fmt::Display for LifecycleAuthorizationError {
@@ -732,27 +668,6 @@ impl fmt::Display for LifecycleAuthorizationError {
         match self {
             Self::InvalidRelayPublicKey => {
                 formatter.write_str("NIP-29 relay identity must be a lowercase 32-byte public key")
-            }
-            Self::MetadataOnlyProvesCreation => {
-                formatter.write_str("NIP-29 relay metadata only evidences group creation")
-            }
-            Self::MetadataRelayMismatch => {
-                formatter.write_str("NIP-29 group metadata was signed by another relay")
-            }
-            Self::MetadataGroupMismatch => {
-                formatter.write_str("NIP-29 group metadata belongs to another group")
-            }
-            Self::NotAdministratorRoster => {
-                formatter.write_str("NIP-29 lifecycle authority requires the administrator roster")
-            }
-            Self::RosterRelayMismatch => {
-                formatter.write_str("NIP-29 administrator roster was signed by another relay")
-            }
-            Self::RosterGroupMismatch => {
-                formatter.write_str("NIP-29 administrator roster belongs to another group")
-            }
-            Self::RequesterNotAdministrator => {
-                formatter.write_str("NIP-29 lifecycle requester is not a listed administrator")
             }
         }
     }

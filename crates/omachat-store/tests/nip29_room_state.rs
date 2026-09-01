@@ -13,9 +13,10 @@ use omachat_nostr::{
     nip29_state::MembershipApplyResult,
 };
 use omachat_store::{
-    RequestedProvider, RoomStateLoad, RoomStateVault, RoomStateVaultError, SealedStore, StoreError,
+    RequestedProvider, RoomStateAnchorError, RoomStateGenerationAnchor, RoomStateLoad,
+    RoomStateVault, RoomStateVaultError, SealedStore, StoreError,
 };
-use std::fs;
+use std::{collections::BTreeMap, fs, sync::Mutex};
 use tempfile::TempDir;
 
 const NOW: u64 = 1_800_000_000;
@@ -24,6 +25,53 @@ const OTHER_RELAY_SECRET: [u8; 32] = [11; 32];
 const MODERATOR_SECRET: [u8; 32] = [7; 32];
 const AGENT_SECRET: [u8; 32] = [9; 32];
 const CONTEXT: &str = "device:0123456789abcdef";
+
+#[derive(Default)]
+struct TestGenerationAnchor {
+    generations: Mutex<BTreeMap<(String, String), u64>>,
+}
+
+impl TestGenerationAnchor {
+    fn generation(&self, context: &str, relay: &str) -> Option<u64> {
+        self.generations
+            .lock()
+            .expect("anchor lock")
+            .get(&(context.to_owned(), relay.to_owned()))
+            .copied()
+    }
+
+    fn set_unchecked(&self, context: &str, relay: &str, generation: u64) {
+        self.generations
+            .lock()
+            .expect("anchor lock")
+            .insert((context.to_owned(), relay.to_owned()), generation);
+    }
+}
+
+impl RoomStateGenerationAnchor for TestGenerationAnchor {
+    fn load_generation(
+        &self,
+        store_context: &str,
+        relay_pubkey: &str,
+    ) -> Result<Option<u64>, RoomStateAnchorError> {
+        Ok(self.generation(store_context, relay_pubkey))
+    }
+
+    fn store_generation(
+        &self,
+        store_context: &str,
+        relay_pubkey: &str,
+        generation: u64,
+    ) -> Result<(), RoomStateAnchorError> {
+        let mut generations = self.generations.lock().expect("anchor lock");
+        let key = (store_context.to_owned(), relay_pubkey.to_owned());
+        if generations.get(&key).is_some_and(|current| *current > generation) {
+            return Err(RoomStateAnchorError::new("generation cannot decrease"));
+        }
+        generations.insert(key, generation);
+        Ok(())
+    }
+}
 
 fn limits() -> EventLimits {
     EventLimits::default()
@@ -80,7 +128,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     let mut state = RelayRoomState::new(relay.clone()).expect("state");
 
     let information = RelayInformation::from_json(
-        format!(r#"{{"pubkey":"{relay}","supported_nips":[29],"software":"grain"}}"#).as_bytes(),
+        format!(r#"{{"self":"{relay}","supported_nips":[29],"software":"grain"}}"#).as_bytes(),
         &RelayInformationLimits::default(),
     )
     .expect("information");
@@ -130,7 +178,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     state
         .metadata_mut()
         .apply_accepted(
-            &AcceptedMetadataEdit::by_administrator(edit, &roster, &relay).expect("accepted"),
+            &AcceptedMetadataEdit::from_authoritative_relay(edit, &relay).expect("accepted"),
         )
         .expect("edit applied");
 
@@ -147,7 +195,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::by_relay_metadata(creation, &metadata, &relay)
+            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay)
                 .expect("accepted"),
         )
         .expect("created");
@@ -164,12 +212,12 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::by_administrator(invite, &roster, &relay).expect("accepted"),
+            &AcceptedLifecycleAction::from_authoritative_relay(invite, &relay)
+                .expect("accepted"),
         )
         .expect("invited");
 
     // A second group that gets created and then deleted.
-    let closed_roster = admins(relay_secret, "closed", &moderator);
     for request in [
         sign(
             create_group_request(moderator.clone(), NOW - 55, "closed", &limits()).expect("create"),
@@ -184,7 +232,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
         state
             .lifecycle_mut()
             .apply_accepted(
-                &AcceptedLifecycleAction::by_administrator(request, &closed_roster, &relay)
+                &AcceptedLifecycleAction::from_authoritative_relay(request, &relay)
                     .expect("accepted"),
             )
             .expect("applied");
@@ -243,11 +291,7 @@ fn build_state(relay_secret: &[u8; 32]) -> RelayRoomState {
     .expect("deletion");
     state
         .apply_deletion(
-            &AcceptedGroupDeletion::by_target_author(
-                deletion,
-                std::slice::from_ref(&message),
-                &relay,
-            )
+            &AcceptedGroupDeletion::from_authoritative_relay(deletion, &relay)
             .expect("accepted"),
         )
         .expect("deleted");
@@ -281,21 +325,15 @@ fn record_path(directory: &TempDir, relay: &str) -> std::path::PathBuf {
         .join(format!("nip29-rooms-v1-{relay}"))
 }
 
-fn marker_path(directory: &TempDir, relay: &str) -> std::path::PathBuf {
-    directory
-        .path()
-        .join("records")
-        .join(format!("nip29-rooms-v1-{relay}.generation"))
-}
-
 #[tokio::test]
 async fn restart_preserves_exact_room_state_and_replay_is_idempotent() {
     let directory = TempDir::new().expect("tempdir");
+    let anchor = TestGenerationAnchor::default();
     let relay = pubkey(&RELAY_SECRET);
     let state = build_state(&RELAY_SECRET);
     {
         let store = open_store(&directory).await;
-        let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+        let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
         let (fresh, load) = vault.load_or_create(NOW, &limits()).expect("fresh");
         assert_eq!(load, RoomStateLoad::Fresh);
         assert_eq!(fresh, RelayRoomState::new(relay.clone()).expect("empty"));
@@ -304,7 +342,7 @@ async fn restart_preserves_exact_room_state_and_replay_is_idempotent() {
     }
 
     let store = open_store(&directory).await;
-    let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+    let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     let (restored, load) = vault.load_or_create(NOW, &limits()).expect("restored");
     assert_eq!(load, RoomStateLoad::Restored { generation: 2 });
     assert_eq!(restored, state);
@@ -384,11 +422,12 @@ async fn restart_preserves_exact_room_state_and_replay_is_idempotent() {
 #[tokio::test]
 async fn interrupted_write_preserves_the_previous_valid_state() {
     let directory = TempDir::new().expect("tempdir");
+    let anchor = TestGenerationAnchor::default();
     let relay = pubkey(&RELAY_SECRET);
     let state = build_state(&RELAY_SECRET);
     {
         let store = open_store(&directory).await;
-        let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+        let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
         vault.persist(&state).expect("persist");
     }
     let orphan = directory
@@ -396,37 +435,37 @@ async fn interrupted_write_preserves_the_previous_valid_state() {
         .join("records")
         .join(format!(".nip29-rooms-v1-{relay}.tmp-999-1"));
     fs::write(&orphan, b"partial replacement").expect("orphan");
-    // Marker written but the record replacement never landed: still valid.
+    // An orphaned atomic-replacement temporary is discarded on open.
     let store = open_store(&directory).await;
     assert!(!orphan.exists(), "interrupted temporary must be discarded");
-    let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+    let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     let (restored, load) = vault.load_or_create(NOW, &limits()).expect("restored");
     assert_eq!(load, RoomStateLoad::Restored { generation: 1 });
     assert_eq!(restored, state);
 
-    // A crash after the record but before the marker leaves the record ahead
-    // of the marker; that is accepted and the next persist heals the marker.
-    let marker = marker_path(&directory, &relay);
-    let stale_marker = fs::read(&marker).expect("marker");
+    // A crash after the record but before the external anchor advances leaves
+    // the authenticated record ahead. Load accepts it and heals the anchor.
     vault.persist(&state).expect("second generation");
-    fs::write(&marker, stale_marker).expect("roll marker back");
+    anchor.set_unchecked(CONTEXT, &relay, 1);
     let store = open_store(&directory).await;
-    let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+    let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     let (_, load) = vault
         .load_or_create(NOW, &limits())
-        .expect("record ahead of marker");
+        .expect("record ahead of anchor");
     assert_eq!(load, RoomStateLoad::Restored { generation: 2 });
+    assert_eq!(anchor.generation(CONTEXT, &relay), Some(2));
     assert_eq!(vault.persist(&state).expect("heal"), 3);
 }
 
 #[tokio::test]
 async fn truncation_corruption_and_authentication_failures_are_rejected() {
     let directory = TempDir::new().expect("tempdir");
+    let anchor = TestGenerationAnchor::default();
     let relay = pubkey(&RELAY_SECRET);
     let state = build_state(&RELAY_SECRET);
     {
         let store = open_store(&directory).await;
-        let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+        let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
         vault.persist(&state).expect("persist");
     }
     let record = record_path(&directory, &relay);
@@ -438,7 +477,7 @@ async fn truncation_corruption_and_authentication_failures_are_rejected() {
     flipped[index] ^= 0x01;
     fs::write(&record, &flipped).expect("flip");
     let store = open_store(&directory).await;
-    let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+    let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     assert!(matches!(
         vault.load_or_create(NOW, &limits()),
         Err(RoomStateVaultError::Store(StoreError::Authentication))
@@ -465,34 +504,36 @@ async fn truncation_corruption_and_authentication_failures_are_rejected() {
 #[tokio::test]
 async fn rollback_is_detected() {
     let directory = TempDir::new().expect("tempdir");
+    let anchor = TestGenerationAnchor::default();
     let relay = pubkey(&RELAY_SECRET);
     let state = build_state(&RELAY_SECRET);
     let record = record_path(&directory, &relay);
     let store = open_store(&directory).await;
-    let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+    let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     vault.persist(&state).expect("generation 1");
     let generation_one = fs::read(&record).expect("record");
     vault.persist(&state).expect("generation 2");
 
-    // Restoring an older copy of the record behind the marker is refused.
+    // Restoring the complete sealed-store record behind the external anchor
+    // is refused. The anchor is deliberately outside the restored domain.
     fs::write(&record, generation_one).expect("roll back");
     let store = open_store(&directory).await;
-    let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+    let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     assert!(matches!(
         vault.load_or_create(NOW, &limits()),
         Err(RoomStateVaultError::Rollback {
             record_generation: 1,
-            marker_generation: 2
+            anchor_generation: 2
         })
     ));
 
-    // A vanished record with a surviving marker is not "legitimately empty".
+    // A vanished record with a surviving anchor is not "legitimately empty".
     fs::remove_file(&record).expect("remove record");
     assert!(matches!(
         vault.load_or_create(NOW, &limits()),
         Err(RoomStateVaultError::Rollback {
             record_generation: 0,
-            marker_generation: 2
+            anchor_generation: 2
         })
     ));
 }
@@ -500,11 +541,12 @@ async fn rollback_is_detected() {
 #[tokio::test]
 async fn wrong_relay_context_and_schema_versions_are_rejected() {
     let directory = TempDir::new().expect("tempdir");
+    let anchor = TestGenerationAnchor::default();
     let relay = pubkey(&RELAY_SECRET);
     let other_relay = pubkey(&OTHER_RELAY_SECRET);
     let state = build_state(&RELAY_SECRET);
     let store = open_store(&directory).await;
-    let mut vault = RoomStateVault::open(&store, CONTEXT, &relay).expect("vault");
+    let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     vault.persist(&state).expect("persist");
 
     // Persisting a state for another relay through this vault writes nothing.
@@ -516,7 +558,9 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
     assert!(!record_path(&directory, &other_relay).exists());
 
     // Wrong store context.
-    let mut other_context = RoomStateVault::open(&store, "device:other", &relay).expect("vault");
+    anchor.set_unchecked("device:other", &relay, 1);
+    let mut other_context =
+        RoomStateVault::open(&store, &anchor, "device:other", &relay).expect("vault");
     assert!(matches!(
         other_context.load_or_create(NOW, &limits()),
         Err(RoomStateVaultError::ContextMismatch)
@@ -526,12 +570,9 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
     // fails authentication because the record name is associated data.
     let sealed = fs::read(record_path(&directory, &relay)).expect("record");
     fs::write(record_path(&directory, &other_relay), &sealed).expect("copy");
-    fs::write(
-        marker_path(&directory, &other_relay),
-        fs::read(marker_path(&directory, &relay)).expect("marker"),
-    )
-    .expect("copy marker");
-    let mut other_vault = RoomStateVault::open(&store, CONTEXT, &other_relay).expect("vault");
+    anchor.set_unchecked(CONTEXT, &other_relay, 1);
+    let mut other_vault =
+        RoomStateVault::open(&store, &anchor, CONTEXT, &other_relay).expect("vault");
     assert!(matches!(
         other_vault.load_or_create(NOW, &limits()),
         Err(RoomStateVaultError::Store(StoreError::Authentication))
@@ -545,15 +586,7 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
     store
         .write(&format!("nip29-rooms-v1-{other_relay}"), inner.as_bytes())
         .expect("seal");
-    store
-        .write(
-            &format!("nip29-rooms-v1-{other_relay}.generation"),
-            format!(
-                r#"{{"record_version":1,"store_context":"{CONTEXT}","relay_pubkey":"{other_relay}","generation":9}}"#
-            )
-            .as_bytes(),
-        )
-        .expect("seal marker");
+    anchor.set_unchecked(CONTEXT, &other_relay, 9);
     assert!(matches!(
         other_vault.load_or_create(NOW, &limits()),
         Err(RoomStateVaultError::RelayMismatch)
@@ -586,11 +619,11 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
     ));
 
     assert!(matches!(
-        RoomStateVault::open(&store, "", &relay),
+        RoomStateVault::open(&store, &anchor, "", &relay),
         Err(RoomStateVaultError::InvalidContext)
     ));
     assert!(matches!(
-        RoomStateVault::open(&store, CONTEXT, "relay"),
+        RoomStateVault::open(&store, &anchor, CONTEXT, "relay"),
         Err(RoomStateVaultError::InvalidRelayPublicKey)
     ));
 }
@@ -598,27 +631,28 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
 #[tokio::test]
 async fn multiple_relays_stay_isolated_in_one_store() {
     let directory = TempDir::new().expect("tempdir");
+    let anchor = TestGenerationAnchor::default();
     let relay = pubkey(&RELAY_SECRET);
     let other_relay = pubkey(&OTHER_RELAY_SECRET);
     let first = build_state(&RELAY_SECRET);
     let second = build_state(&OTHER_RELAY_SECRET);
     {
         let store = open_store(&directory).await;
-        RoomStateVault::open(&store, CONTEXT, &relay)
+        RoomStateVault::open(&store, &anchor, CONTEXT, &relay)
             .expect("vault")
             .persist(&first)
             .expect("persist");
-        RoomStateVault::open(&store, CONTEXT, &other_relay)
+        RoomStateVault::open(&store, &anchor, CONTEXT, &other_relay)
             .expect("vault")
             .persist(&second)
             .expect("persist");
     }
     let store = open_store(&directory).await;
-    let (restored_first, _) = RoomStateVault::open(&store, CONTEXT, &relay)
+    let (restored_first, _) = RoomStateVault::open(&store, &anchor, CONTEXT, &relay)
         .expect("vault")
         .load_or_create(NOW, &limits())
         .expect("first");
-    let (restored_second, _) = RoomStateVault::open(&store, CONTEXT, &other_relay)
+    let (restored_second, _) = RoomStateVault::open(&store, &anchor, CONTEXT, &other_relay)
         .expect("vault")
         .load_or_create(NOW, &limits())
         .expect("second");

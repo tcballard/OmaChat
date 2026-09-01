@@ -137,7 +137,6 @@ fn relay_snapshots_keep_the_newest_and_reject_other_relays() {
     ] {
         assert_eq!(error, Err(RoomStateError::RelayMismatch));
     }
-    let foreign_roster = admins(&OTHER_RELAY_SECRET, "omarchy", &moderator, NOW);
     let foreign_request = GroupLifecycleRequest::verify(
         signed(
             &MODERATOR_SECRET,
@@ -160,9 +159,8 @@ fn relay_snapshots_keep_the_newest_and_reject_other_relays() {
         &limits(),
     )
     .expect("deletion");
-    let accepted = AcceptedGroupDeletion::by_administrator(
+    let accepted = AcceptedGroupDeletion::from_authoritative_relay(
         foreign_deletion,
-        &foreign_roster,
         &pubkey(&OTHER_RELAY_SECRET),
     )
     .expect("accepted elsewhere");
@@ -200,7 +198,7 @@ fn snapshot_round_trips_and_matches_fresh_reduction() {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::by_administrator(creation, &roster, &relay)
+            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay)
                 .expect("accepted"),
         )
         .expect("created");
@@ -241,7 +239,8 @@ fn snapshot_round_trips_and_matches_fresh_reduction() {
     .expect("deletion");
     state
         .apply_deletion(
-            &AcceptedGroupDeletion::by_administrator(deletion, &roster, &relay).expect("accepted"),
+            &AcceptedGroupDeletion::from_authoritative_relay(deletion, &relay)
+                .expect("accepted"),
         )
         .expect("deleted");
 
@@ -299,7 +298,7 @@ fn tampered_or_foreign_snapshots_fail_closed() {
     state
         .lifecycle_mut()
         .apply_accepted(
-            &AcceptedLifecycleAction::by_administrator(creation, &roster, &relay)
+            &AcceptedLifecycleAction::from_authoritative_relay(creation, &relay)
                 .expect("accepted"),
         )
         .expect("created");

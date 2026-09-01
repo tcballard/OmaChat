@@ -42,7 +42,8 @@ pub use registry_claim_intent::{
     REGISTRY_CLAIM_INTENT_RECORD_NAME, RegistryClaimIntentError, RegistryClaimIntentStore,
 };
 pub use room_state::{
-    ROOM_STATE_RECORD_VERSION, RoomStateLoad, RoomStateVault, RoomStateVaultError,
+    ROOM_STATE_RECORD_VERSION, RoomStateAnchorError, RoomStateGenerationAnchor, RoomStateLoad,
+    RoomStateVault, RoomStateVaultError,
 };
 pub use sealed::{
     MasterKey, ProviderKind, RequestedProvider, SealedStore, StoreError, StoreStatus,

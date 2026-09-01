@@ -1,9 +1,9 @@
 //! Strict NIP-29 kind `9002` metadata edits and cycle-safe room hierarchy.
 //!
 //! A [`GroupMetadataEdit`] proves only that its signer asked for listed
-//! fields of one room to change. An [`AcceptedMetadataEdit`] pairs it with
-//! evidence that the relay's published administrator roster for that relay
-//! and group lists the signer. [`RelayMetadataState`] then reduces relay
+//! fields of one room to change. An [`AcceptedMetadataEdit`] records that the
+//! verified authoritative relay path accepted the action under relay-specific
+//! policy. [`RelayMetadataState`] then reduces relay
 //! snapshots (kind `39000`) and accepted edits for every group on one relay.
 //!
 //! The reducer keeps every accepted input and re-folds them in canonical
@@ -21,7 +21,7 @@
 
 use crate::{
     event::{EventError, EventLimits, SignedEvent, Tag},
-    nip29::{GroupMetadata, GroupRoster, GroupRosterKind},
+    nip29::GroupMetadata,
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -152,53 +152,24 @@ impl MetadataChanges {
 pub struct AcceptedMetadataEdit {
     edit: GroupMetadataEdit,
     relay_pubkey: String,
-    roles: Vec<String>,
 }
 
 impl AcceptedMetadataEdit {
-    /// Accept because the relay's administrator snapshot lists the editor.
-    pub fn by_administrator(
+    /// Record acceptance by the room's verified authoritative relay path.
+    ///
+    /// NIP-29 role labels do not have universal capabilities, so a `39001`
+    /// entry alone is deliberately insufficient evidence.
+    pub fn from_authoritative_relay(
         edit: GroupMetadataEdit,
-        admins: &GroupRoster,
-        relay_pubkey: &str,
+        source_relay_pubkey: &str,
     ) -> Result<Self, MetadataAuthorizationError> {
-        if !is_lowercase_hex(relay_pubkey, 64) {
+        if !is_lowercase_hex(source_relay_pubkey, 64) {
             return Err(MetadataAuthorizationError::InvalidRelayPublicKey);
         }
-        if admins.kind() != GroupRosterKind::Admins {
-            return Err(MetadataAuthorizationError::NotAdministratorRoster);
-        }
-        if admins.event().pubkey != relay_pubkey {
-            return Err(MetadataAuthorizationError::RosterRelayMismatch);
-        }
-        if admins.group_id() != edit.group_id() {
-            return Err(MetadataAuthorizationError::RosterGroupMismatch);
-        }
-        let roles = admins
-            .principals()
-            .iter()
-            .find(|principal| principal.pubkey() == edit.author())
-            .map(|principal| principal.roles().to_vec())
-            .ok_or(MetadataAuthorizationError::EditorNotAdministrator)?;
         Ok(Self {
             edit,
-            relay_pubkey: relay_pubkey.to_owned(),
-            roles,
+            relay_pubkey: source_relay_pubkey.to_owned(),
         })
-    }
-
-    /// Rebuild an accepted edit from sealed evidence. Crate-private so that
-    /// only persistence restore, never a caller, can bypass roster checks.
-    pub(crate) fn from_evidence(
-        edit: GroupMetadataEdit,
-        relay_pubkey: String,
-        roles: Vec<String>,
-    ) -> Self {
-        Self {
-            edit,
-            relay_pubkey,
-            roles,
-        }
     }
 
     #[must_use]
@@ -211,10 +182,6 @@ impl AcceptedMetadataEdit {
         &self.relay_pubkey
     }
 
-    #[must_use]
-    pub fn roles(&self) -> &[String] {
-        &self.roles
-    }
 }
 
 /// Metadata and hierarchy for every group known on one relay identity.
@@ -343,9 +310,7 @@ impl RelayMetadataState {
                         source_event_id: key.event_id.clone(),
                         created_at: key.created_at,
                         author: edit.author().to_owned(),
-                        authority: RevisionAuthority::Administrator {
-                            roles: accepted.roles().to_vec(),
-                        },
+                        authority: RevisionAuthority::AuthoritativeRelay,
                     };
                     if let Err(reason) =
                         Self::fold_changes(&mut groups, edit.group_id(), edit.changes(), provenance)
@@ -630,7 +595,7 @@ impl Provenance {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RevisionAuthority {
     RelaySnapshot,
-    Administrator { roles: Vec<String> },
+    AuthoritativeRelay,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -901,10 +866,6 @@ impl Error for MetadataEditError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MetadataAuthorizationError {
     InvalidRelayPublicKey,
-    NotAdministratorRoster,
-    RosterRelayMismatch,
-    RosterGroupMismatch,
-    EditorNotAdministrator,
 }
 
 impl fmt::Display for MetadataAuthorizationError {
@@ -912,18 +873,6 @@ impl fmt::Display for MetadataAuthorizationError {
         match self {
             Self::InvalidRelayPublicKey => {
                 formatter.write_str("NIP-29 relay identity must be a lowercase 32-byte public key")
-            }
-            Self::NotAdministratorRoster => {
-                formatter.write_str("NIP-29 edit authority requires the administrator roster")
-            }
-            Self::RosterRelayMismatch => {
-                formatter.write_str("NIP-29 administrator roster was signed by another relay")
-            }
-            Self::RosterGroupMismatch => {
-                formatter.write_str("NIP-29 administrator roster belongs to another group")
-            }
-            Self::EditorNotAdministrator => {
-                formatter.write_str("NIP-29 metadata editor is not a listed administrator")
             }
         }
     }

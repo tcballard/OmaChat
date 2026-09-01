@@ -46,10 +46,11 @@ fn limits() -> RelayInformationLimits {
     RelayInformationLimits::default()
 }
 
-fn information(pubkey: Option<&str>) -> RelayInformation {
+fn information(self_pubkey: Option<&str>) -> RelayInformation {
     let document = json!({
         "name": "OmaChat bootstrap relay",
-        "pubkey": pubkey.unwrap_or(""),
+        "pubkey": pubkey(&AGENT_SECRET),
+        "self": self_pubkey.unwrap_or(""),
         "supported_nips": [1, 11, 29, 42],
         "software": "https://github.com/0ceanslim/grain",
         "version": "v0.7.1",
@@ -62,7 +63,8 @@ fn information(pubkey: Option<&str>) -> RelayInformation {
 fn nip11_documents_parse_strictly() {
     let relay = pubkey(&RELAY_SECRET);
     let parsed = information(Some(&relay));
-    assert_eq!(parsed.pubkey(), Some(relay.as_str()));
+    assert_eq!(parsed.self_pubkey(), Some(relay.as_str()));
+    assert_eq!(parsed.pubkey(), Some(pubkey(&AGENT_SECRET).as_str()));
     assert_eq!(parsed.name(), Some("OmaChat bootstrap relay"));
     assert_eq!(parsed.supported_nips(), [1, 11, 29, 42]);
     assert!(parsed.supports_nip(29));
@@ -71,25 +73,28 @@ fn nip11_documents_parse_strictly() {
     assert_eq!(parsed.max_subscriptions(), Some(10));
     assert_eq!(parsed.version(), Some("v0.7.1"));
 
-    // A fresh Grain deployment ships an empty pubkey: that is "no identity".
-    assert_eq!(information(None).pubkey(), None);
+    // An absent or empty `self` means the relay has no signing identity even
+    // when it publishes an administrative contact key.
+    assert_eq!(information(None).self_pubkey(), None);
+    assert_eq!(information(None).pubkey(), Some(pubkey(&AGENT_SECRET).as_str()));
     let minimal = RelayInformation::from_json(b"{}", &limits()).expect("empty object");
+    assert_eq!(minimal.self_pubkey(), None);
     assert_eq!(minimal.pubkey(), None);
     assert!(minimal.supported_nips().is_empty());
 
     let parse =
         |document: Value| RelayInformation::from_json(document.to_string().as_bytes(), &limits());
     assert_eq!(
-        parse(json!({"pubkey": relay.to_uppercase()})).err(),
+        parse(json!({"self": relay.to_uppercase()})).err(),
         Some(RelayInformationError::InvalidPublicKey)
     );
     assert_eq!(
-        parse(json!({"pubkey": "npub1notthis"})).err(),
+        parse(json!({"self": "npub1notthis"})).err(),
         Some(RelayInformationError::InvalidPublicKey)
     );
     assert_eq!(
-        parse(json!({"pubkey": 42})).err(),
-        Some(RelayInformationError::InvalidField("pubkey"))
+        parse(json!({"self": 42})).err(),
+        Some(RelayInformationError::InvalidField("self"))
     );
     assert_eq!(
         parse(json!({"supported_nips": ["29"]})).err(),
@@ -140,7 +145,7 @@ fn fetcher() -> HttpRelayInformationFetcher {
 #[tokio::test]
 async fn nip11_fetch_discovers_relay_identity_over_http() {
     let relay = pubkey(&RELAY_SECRET);
-    let body = json!({"pubkey": relay, "supported_nips": [29]}).to_string();
+    let body = json!({"self": relay, "supported_nips": [29]}).to_string();
 
     // Content-Length framing.
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -151,7 +156,7 @@ async fn nip11_fetch_discovers_relay_identity_over_http() {
     );
     let server = tokio::spawn(serve_http_once(listener, response.into_bytes()));
     let fetched = fetcher().fetch(&url).await.expect("fetched");
-    assert_eq!(fetched.pubkey(), Some(relay.as_str()));
+    assert_eq!(fetched.self_pubkey(), Some(relay.as_str()));
     let request = server.await.expect("server");
     assert!(request.starts_with("GET / HTTP/1.1\r\n"));
     assert!(request.contains("Accept: application/nostr+json\r\n"));
@@ -168,7 +173,7 @@ async fn nip11_fetch_discovers_relay_identity_over_http() {
     );
     let server = tokio::spawn(serve_http_once(listener, response.into_bytes()));
     let fetched = fetcher().fetch(&url).await.expect("fetched chunked");
-    assert_eq!(fetched.pubkey(), Some(relay.as_str()));
+    assert_eq!(fetched.self_pubkey(), Some(relay.as_str()));
     server.await.expect("server");
 
     // Unframed body terminated by close.
@@ -177,7 +182,11 @@ async fn nip11_fetch_discovers_relay_identity_over_http() {
     let response = format!("HTTP/1.0 200 OK\r\n\r\n{body}");
     let server = tokio::spawn(serve_http_once(listener, response.into_bytes()));
     assert_eq!(
-        fetcher().fetch(&url).await.expect("unframed").pubkey(),
+        fetcher()
+            .fetch(&url)
+            .await
+            .expect("unframed")
+            .self_pubkey(),
         Some(relay.as_str())
     );
     server.await.expect("server");

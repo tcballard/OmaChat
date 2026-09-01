@@ -16,8 +16,7 @@ use crate::{
         GroupDeletionState,
     },
     nip29_lifecycle::{
-        AcceptedLifecycleAction, GroupLifecycleRequest, LifecycleAuthority, LifecycleStateError,
-        RelayLifecycleState,
+        AcceptedLifecycleAction, GroupLifecycleRequest, LifecycleStateError, RelayLifecycleState,
     },
     nip29_metadata::{
         AcceptedMetadataEdit, GroupMetadataEdit, MetadataInput, MetadataStateError,
@@ -181,13 +180,12 @@ impl RelayRoomState {
                 .metadata
                 .inputs()
                 .map(|input| match input {
-                    MetadataInput::Snapshot(snapshot) => MetadataInputSnapshot {
+                    MetadataInput::Snapshot(snapshot) => MetadataInputSnapshot::RelaySnapshot {
                         event: snapshot.event().clone(),
-                        roles: None,
                     },
-                    MetadataInput::Edit(edit) => MetadataInputSnapshot {
+                    MetadataInput::Edit(edit) => MetadataInputSnapshot::AcceptedEdit {
                         event: edit.edit().event().clone(),
-                        roles: Some(edit.roles().to_vec()),
+                        authoritative_relay_pubkey: edit.relay_pubkey().to_owned(),
                     },
                 })
                 .collect(),
@@ -196,7 +194,7 @@ impl RelayRoomState {
                 .inputs()
                 .map(|action| LifecycleInputSnapshot {
                     event: action.request().event().clone(),
-                    authority: action.authority().clone(),
+                    authoritative_relay_pubkey: action.relay_pubkey().to_owned(),
                 })
                 .collect(),
             groups: self
@@ -235,25 +233,41 @@ impl RelayRoomState {
         state.identities = TrustedRelayIdentities::restore(snapshot.identities)?;
 
         for input in snapshot.metadata_inputs {
-            match input.roles {
-                None => {
-                    let metadata = GroupMetadata::verify(input.event, &relay, now, limits)
+            match input {
+                MetadataInputSnapshot::RelaySnapshot { event } => {
+                    let metadata = GroupMetadata::verify(event, &relay, now, limits)
                         .map_err(|error| RoomStateError::Event(error.to_string()))?;
                     state.metadata.observe_snapshot(&metadata)?;
                 }
-                Some(roles) => {
-                    let edit = GroupMetadataEdit::verify(input.event, now, limits)
+                MetadataInputSnapshot::AcceptedEdit {
+                    event,
+                    authoritative_relay_pubkey,
+                } => {
+                    if authoritative_relay_pubkey != relay {
+                        return Err(RoomStateError::RelayMismatch);
+                    }
+                    let edit = GroupMetadataEdit::verify(event, now, limits)
                         .map_err(|error| RoomStateError::Event(error.to_string()))?;
-                    let accepted = AcceptedMetadataEdit::from_evidence(edit, relay.clone(), roles);
+                    let accepted = AcceptedMetadataEdit::from_authoritative_relay(
+                        edit,
+                        &authoritative_relay_pubkey,
+                    )
+                    .map_err(|error| RoomStateError::Event(error.to_string()))?;
                     state.metadata.apply_accepted(&accepted)?;
                 }
             }
         }
         for input in snapshot.lifecycle_inputs {
+            if input.authoritative_relay_pubkey != relay {
+                return Err(RoomStateError::RelayMismatch);
+            }
             let request = GroupLifecycleRequest::verify(input.event, now, limits)
                 .map_err(|error| RoomStateError::Event(error.to_string()))?;
-            let accepted =
-                AcceptedLifecycleAction::from_evidence(request, relay.clone(), input.authority);
+            let accepted = AcceptedLifecycleAction::from_authoritative_relay(
+                request,
+                &input.authoritative_relay_pubkey,
+            )
+            .map_err(|error| RoomStateError::Event(error.to_string()))?;
             state.lifecycle.apply_accepted(&accepted)?;
         }
         for group in snapshot.groups {
@@ -273,7 +287,7 @@ impl RelayRoomState {
             let mut restored = GroupRoomState {
                 group_id: group.group_id.clone(),
                 membership: GroupMembershipState::restore(group.membership)?,
-                deletions: GroupDeletionState::restore(group.deletions)?,
+                deletions: GroupDeletionState::restore(group.deletions, now, limits)?,
                 admins: None,
                 members: None,
                 roles: None,
@@ -432,16 +446,21 @@ impl RelayRoomStateSnapshot {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-struct MetadataInputSnapshot {
-    event: SignedEvent,
-    /// `None` for a relay snapshot; the accepting roster's roles for an edit.
-    roles: Option<Vec<String>>,
+#[serde(tag = "input_type", rename_all = "kebab-case")]
+enum MetadataInputSnapshot {
+    RelaySnapshot {
+        event: SignedEvent,
+    },
+    AcceptedEdit {
+        event: SignedEvent,
+        authoritative_relay_pubkey: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct LifecycleInputSnapshot {
     event: SignedEvent,
-    authority: LifecycleAuthority,
+    authoritative_relay_pubkey: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
