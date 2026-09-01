@@ -20,6 +20,7 @@ pub enum CoreError {
             omachat_registry_transport::RegistryWebSocketError,
         >,
     ),
+    RegistryCache(omachat_store::RegistryCacheError),
     RegistryClaim(omachat_registry::RegistryError),
     RegistryClaimIntent(omachat_store::RegistryClaimIntentError),
     RegistryClaimPreflightOffline,
@@ -80,6 +81,7 @@ impl CoreError {
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
             | Self::RegistryEvidence(_)
+            | Self::RegistryCache(_)
             | Self::RegistryClaim(_)
             | Self::RegistryClaimIntent(_)
             | Self::RegistryClaimPreflightUnusable
@@ -113,6 +115,7 @@ impl fmt::Display for CoreError {
             Self::RegistryEvidence(error) => {
                 write!(formatter, "registry evidence resolution failed: {error}")
             }
+            Self::RegistryCache(error) => write!(formatter, "registry cache failed: {error}"),
             Self::RegistryClaim(error) => write!(formatter, "registry claim failed: {error}"),
             Self::RegistryClaimIntent(error) => {
                 write!(formatter, "pending registry claim failed: {error}")
@@ -173,6 +176,7 @@ impl Error for CoreError {
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
+            Self::RegistryCache(error) => Some(error),
             Self::RegistryClaim(error) => Some(error),
             Self::RegistryClaimIntent(error) => Some(error),
             _ => None,

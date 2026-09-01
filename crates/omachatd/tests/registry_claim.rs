@@ -109,6 +109,17 @@ async fn pending_claim_replays_after_restart_and_clears_after_durable_receipt() 
         assert_eq!(result["claim_status"], "accepted");
         assert_eq!(result["receipt_verified"], true);
         assert_eq!(result["usable_current_evidence"], true);
+        let status = core
+            .handle(Request {
+                version: VERSION,
+                id: "verified-status".into(),
+                command: Command::Status,
+            })
+            .await;
+        let ResponseOutcome::Ok { result: status } = status else {
+            panic!("status command failed: {status:?}");
+        };
+        assert_eq!(status["account"]["registry_state"], "verified-fresh");
         drop(core);
         shutdown_tx.send(()).expect("stop registry");
     };

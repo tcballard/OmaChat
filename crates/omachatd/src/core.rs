@@ -25,7 +25,7 @@ use omachat_registry::CommandId;
 use omachat_store::{
     AccountVault, BlockList, IdentityVault, LocalAccount, NostrDeliveryProfile, NostrOutbox,
     ProviderKind, PublicArchive, PublicArchiveEntry, RegistryCacheLookup, RegistryClaimIntentStore,
-    SealedStore,
+    SealedStore, VerifiedRegistryCache,
 };
 use serde::Serialize;
 use serde_json::to_value;
@@ -214,8 +214,8 @@ struct AccountStatus {
     display_name: Option<String>,
     binding_revision: u64,
     binding_issued_at: u64,
-    /// `local-only` is an explicit non-claim: no central registry receipt has
-    /// established global uniqueness yet.
+    /// Registry evidence state is derived from the independently pinned,
+    /// sealed cache. `local-only` remains an explicit non-claim.
     registry_state: &'static str,
 }
 
@@ -1095,14 +1095,14 @@ impl DaemonCore {
         let nostr = identity
             .device_nostr_identity()
             .map_err(CoreError::Identity)?;
-        let account = self.account_status()?;
+        let now = unix_time()?;
+        let account = self.account_status(now)?;
         let state = self
             .inner
             .state
             .lock()
             .expect("runtime state mutex poisoned");
         let config = self.inner.config.lock().expect("config mutex poisoned");
-        let now = unix_time()?;
         let _storage = self
             .inner
             .storage_transaction
@@ -1697,11 +1697,40 @@ impl DaemonCore {
         self.panic_state() == PanicState::Active
     }
 
-    fn account_status(&self) -> Result<AccountStatus, CoreError> {
-        let account = self.inner.account.lock().expect("account mutex poisoned");
-        let account = account.as_ref().ok_or(CoreError::Panicked)?;
-        let public = account.public_identity();
-        let binding = account.binding();
+    fn account_status(&self, now: u64) -> Result<AccountStatus, CoreError> {
+        let (public, binding) = {
+            let account = self.inner.account.lock().expect("account mutex poisoned");
+            let account = account.as_ref().ok_or(CoreError::Panicked)?;
+            (account.public_identity(), account.binding().clone())
+        };
+        let registry_state = match (&binding.handle, &self.inner.registry) {
+            (None, _) => "unconfigured",
+            (Some(_), None) => "local-only",
+            (Some(handle), Some(registry)) => {
+                let cache = VerifiedRegistryCache::load_or_create(
+                    &self.inner.store,
+                    *registry.pinned_public_key(),
+                )
+                .map_err(CoreError::RegistryCache)?;
+                let classify = |state, cached: &omachat_store::CachedRegistryRecord| {
+                    if cached.record.receipt.handle.as_global_handle() == handle {
+                        state
+                    } else {
+                        "registry-conflict"
+                    }
+                };
+                match cache.lookup_account(&binding.account_id, now, registry.max_age_seconds()) {
+                    RegistryCacheLookup::Missing => "local-only",
+                    RegistryCacheLookup::Fresh(cached) => classify("verified-fresh", &cached),
+                    RegistryCacheLookup::OfflineStale(cached) => {
+                        classify("verified-offline-stale", &cached)
+                    }
+                    RegistryCacheLookup::UnusableClockRollback(cached) => {
+                        classify("unusable-clock-rollback", &cached)
+                    }
+                }
+            }
+        };
         Ok(AccountStatus {
             account_id: public.account_id.to_string(),
             device_id: binding.device_id.to_string(),
@@ -1715,11 +1744,7 @@ impl DaemonCore {
                 .map(|name| name.as_str().to_owned()),
             binding_revision: binding.revision,
             binding_issued_at: binding.issued_at,
-            registry_state: if binding.handle.is_some() {
-                "local-only"
-            } else {
-                "unconfigured"
-            },
+            registry_state,
         })
     }
 
