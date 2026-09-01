@@ -15,6 +15,8 @@ pub enum CoreError {
     DmRelayDiscovery(omachat_nostr::dm_relay_discovery::DmRelayDiscoveryError),
     ProfileCache(crate::profile_cache_store::SealedProfileCacheError),
     ProfileDiscovery(omachat_nostr::profile_discovery::ProfileDiscoveryError),
+    ProfilePublication(crate::ProfilePublicationCoordinatorError),
+    ProfilePublicationUnconfigured,
     RegistryEvidence(
         omachat_registry_transport::RegistryEvidenceError<
             omachat_registry_transport::RegistryWebSocketError,
@@ -79,6 +81,7 @@ impl CoreError {
             ) => ErrorCode::Conflict,
             Self::RestartRequired => ErrorCode::Conflict,
             Self::Panicked
+            | Self::ProfilePublicationUnconfigured
             | Self::RegistryUnconfigured
             | Self::RegistryProtocolOperationUnavailable
             | Self::RegistryClaimPreflightOffline => ErrorCode::Unavailable,
@@ -95,6 +98,7 @@ impl CoreError {
             | Self::DmRelayDiscovery(_)
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
+            | Self::ProfilePublication(_)
             | Self::RegistryEvidence(_)
             | Self::PrincipalRegistryEvidence(_)
             | Self::RegistryCache(_)
@@ -132,6 +136,12 @@ impl fmt::Display for CoreError {
             }
             Self::ProfileCache(error) => write!(formatter, "profile cache failed: {error}"),
             Self::ProfileDiscovery(error) => write!(formatter, "profile discovery failed: {error}"),
+            Self::ProfilePublication(error) => {
+                write!(formatter, "profile publication failed: {error}")
+            }
+            Self::ProfilePublicationUnconfigured => {
+                formatter.write_str("profile publication is not configured")
+            }
             Self::RegistryEvidence(error) => {
                 write!(formatter, "registry evidence resolution failed: {error}")
             }
@@ -219,6 +229,7 @@ impl Error for CoreError {
             Self::DmRelayDiscovery(error) => Some(error),
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
+            Self::ProfilePublication(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
             Self::PrincipalRegistryEvidence(error) => Some(error),
             Self::RegistryCache(error) => Some(error),

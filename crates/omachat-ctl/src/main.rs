@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-profile [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -137,6 +137,8 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["publish-profile"] => Ok((Command::PublishProfile, OutputMode::Human)),
+        ["publish-profile", "--json"] => Ok((Command::PublishProfile, OutputMode::Json)),
         ["resolve-handle", handle] => Ok((
             Command::ResolveRegistryHandle {
                 handle: (*handle).into(),
@@ -255,6 +257,27 @@ mod tests {
                 public_key: "33".repeat(32),
             }
         );
+    }
+
+    #[test]
+    fn parses_profile_publication_with_explicit_output_modes() {
+        let human = [std::ffi::OsString::from("publish-profile")];
+        let json = [
+            std::ffi::OsString::from("publish-profile"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (human_command, human_mode) = match parse_command(&human) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("human publication did not parse"),
+        };
+        let (json_command, json_mode) = match parse_command(&json) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("JSON publication did not parse"),
+        };
+        assert_eq!(human_command, Command::PublishProfile);
+        assert_eq!(json_command, Command::PublishProfile);
+        assert!(human_mode == OutputMode::Human);
+        assert!(json_mode == OutputMode::Json);
     }
 
     #[test]

@@ -43,6 +43,7 @@ pub enum Command {
     ShowProfile {
         public_key: String,
     },
+    PublishProfile,
     ResolveRegistryHandle {
         handle: String,
     },
@@ -144,6 +145,10 @@ enum StrictRequestWire {
         version: u16,
         id: String,
         params: PublicKeyParams,
+    },
+    PublishProfile {
+        version: u16,
+        id: String,
     },
     ResolveRegistryHandle {
         version: u16,
@@ -284,6 +289,9 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: PublicKeyParams { public_key },
             } => (version, id, Command::ShowProfile { public_key }),
+            StrictRequestWire::PublishProfile { version, id } => {
+                (version, id, Command::PublishProfile)
+            }
             StrictRequestWire::ResolveRegistryHandle {
                 version,
                 id,

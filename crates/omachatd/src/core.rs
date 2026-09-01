@@ -197,7 +197,7 @@ impl RegistryEvidenceBoundary {
 }
 
 struct CoreInner {
-    store: SealedStore,
+    store: Arc<SealedStore>,
     identity: Mutex<Option<IdentitySecrets>>,
     account: Mutex<Option<LocalAccount>>,
     storage_transaction: Mutex<()>,
@@ -207,6 +207,7 @@ struct CoreInner {
     panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
+    profile_publication: Mutex<Option<crate::ProfilePublicationCoordinator>>,
     registry: Option<RegistryEvidenceBoundary>,
     registry_claim_transaction: tokio::sync::Mutex<()>,
     mailbox: Mutex<PrivateMailbox>,
@@ -249,6 +250,9 @@ struct DaemonStatus<'a> {
     joined_geohashes: Vec<String>,
     relay_count: usize,
     dm_relay_count: usize,
+    profile_publication_state: &'static str,
+    profile_publication_acknowledged_relays: usize,
+    profile_publication_required_acknowledgements: usize,
     registry_protocol: Option<&'static str>,
     outbox_pending: usize,
     outbox_failed: usize,
@@ -275,9 +279,11 @@ impl DaemonCore {
         events: EventHub,
     ) -> Result<Self, CoreError> {
         config.validate()?;
-        let store = SealedStore::open(&state_directory, config.storage_provider.into())
-            .await
-            .map_err(CoreError::Store)?;
+        let store = Arc::new(
+            SealedStore::open(&state_directory, config.storage_provider.into())
+                .await
+                .map_err(CoreError::Store)?,
+        );
         let registry = config
             .registry
             .as_ref()
@@ -314,6 +320,24 @@ impl DaemonCore {
                     .map_err(|_| CoreError::InvalidConfig)
             })
             .collect::<Result<_, _>>()?;
+        let profile_publication = if let Some(publication_config) = &config.profile_publication {
+            let nostr = identity
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let auth_signer = RelayAuthSigner::from_secret_key(*nostr.private_key())
+                .map_err(|_| CoreError::Nostr)?;
+            Some(
+                crate::ProfilePublicationCoordinator::spawn(
+                    Arc::clone(&store),
+                    publication_config,
+                    auth_signer,
+                    crate::ProfilePublicationServiceConfig::default(),
+                )
+                .map_err(CoreError::ProfilePublication)?,
+            )
+        } else {
+            None
+        };
         Ok(Self {
             inner: Arc::new(CoreInner {
                 store,
@@ -326,6 +350,7 @@ impl DaemonCore {
                 panic: PanicLifecycle::default(),
                 nostr: Mutex::new(None),
                 dm_inbox: Mutex::new(None),
+                profile_publication: Mutex::new(profile_publication),
                 registry,
                 registry_claim_transaction: tokio::sync::Mutex::new(()),
                 mailbox: Mutex::new(mailbox),
@@ -367,6 +392,15 @@ impl DaemonCore {
     pub async fn prepare_for_shutdown(&self) {
         if self.inner.panic.begin_process_shutdown() {
             self.inner.panic.wait_for_terminal().await;
+        }
+        let profile_publication = self
+            .inner
+            .profile_publication
+            .lock()
+            .expect("profile publication mutex poisoned")
+            .take();
+        if let Some(coordinator) = profile_publication {
+            let _ = coordinator.shutdown().await;
         }
     }
 
@@ -515,6 +549,75 @@ impl DaemonCore {
                 .map_err(CoreError::ProfileCache)
         })?;
         Ok((mutation, discovered.profile))
+    }
+
+    async fn publish_account_profile(&self, now: u64) -> Result<serde_json::Value, CoreError> {
+        let handle = self
+            .inner
+            .profile_publication
+            .lock()
+            .expect("profile publication mutex poisoned")
+            .as_ref()
+            .map(crate::ProfilePublicationCoordinator::handle)
+            .ok_or(CoreError::ProfilePublicationUnconfigured)?;
+        let nostr_public_key = self.with_active_transition(|| {
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            Ok(nostr.public_key_hex())
+        })?;
+        let (source, outcome) = if let Some(outcome) = handle
+            .resume(now)
+            .await
+            .map_err(CoreError::ProfilePublication)?
+        {
+            ("sealed-replay", outcome)
+        } else {
+            let account = self.account_status(now)?;
+            let event = self.with_active_transition(|| {
+                let identity = self.identity()?;
+                let nostr = identity
+                    .as_ref()
+                    .expect("checked identity")
+                    .device_nostr_identity()
+                    .map_err(CoreError::Identity)?;
+                omachat_nostr::profile_metadata::create_profile_metadata(
+                    nostr.private_key(),
+                    now,
+                    &omachat_nostr::profile_metadata::NostrProfileDraft {
+                        nostr_name: account.handle,
+                        display_name: account.display_name,
+                        about: None,
+                        picture: None,
+                    },
+                    &EventLimits::default(),
+                )
+                .map_err(|_| CoreError::Nostr)
+            })?;
+            (
+                "new",
+                handle
+                    .publish(&event, now)
+                    .await
+                    .map_err(CoreError::ProfilePublication)?,
+            )
+        };
+        let publication_status = match outcome.status {
+            crate::ProfilePublicationOutcomeStatus::Pending => "pending",
+            crate::ProfilePublicationOutcomeStatus::Complete => "complete",
+        };
+        Ok(serde_json::json!({
+            "event_id": outcome.event_id,
+            "public_key": nostr_public_key,
+            "publication_status": publication_status,
+            "publication_source": source,
+            "acknowledged_relays": outcome.acknowledged_relays,
+            "required_acknowledgements": outcome.required_acknowledgements,
+            "global_handle_verified_by_profile": false,
+        }))
     }
 
     pub fn cached_profile(
@@ -1095,6 +1198,7 @@ impl DaemonCore {
             let current = self.inner.config.lock().expect("config mutex poisoned");
             current.relays != replacement.relays
                 || current.dm_relays != replacement.dm_relays
+                || current.profile_publication != replacement.profile_publication
                 || current.registry != replacement.registry
         };
         if relay_change_requires_restart {
@@ -1279,6 +1383,7 @@ impl DaemonCore {
                     ) => value(&profile, "unusable-clock-rollback"),
                 })
             }
+            Command::PublishProfile => self.publish_account_profile(unix_time()?).await,
             Command::ResolveRegistryHandle { handle } => {
                 let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
                 let registry = self
@@ -1393,6 +1498,45 @@ impl DaemonCore {
             .filter(|message| message.state == omachat_store::OutboxState::Pending)
             .count();
         let failed = outbox.messages().len().saturating_sub(pending);
+        let profile_pending = crate::ProfilePublicationIntentStore::new(self.inner.store.as_ref())
+            .load(
+                &decode_xonly(&nostr.public_key_hex())?,
+                now,
+                &EventLimits::default(),
+            )
+            .map_err(|error| {
+                CoreError::ProfilePublication(crate::ProfilePublicationCoordinatorError::Intent(
+                    error,
+                ))
+            })?;
+        let (
+            profile_publication_state,
+            profile_publication_acknowledged_relays,
+            profile_publication_required_acknowledgements,
+        ) = match (&config.profile_publication, profile_pending) {
+            (None, None) => ("disabled", 0, 0),
+            (None, Some(pending)) => (
+                "blocked-config-missing",
+                pending.acknowledged_relay_indices().len(),
+                pending.required_acknowledgements(),
+            ),
+            (Some(config), None) => ("ready", 0, config.required_acknowledgements),
+            (Some(config), Some(pending)) => {
+                let policy_matches = config
+                    .canonical_relays()
+                    .is_ok_and(|relays| relays == pending.relay_urls())
+                    && config.required_acknowledgements == pending.required_acknowledgements();
+                (
+                    if policy_matches {
+                        "pending"
+                    } else {
+                        "blocked-policy-mismatch"
+                    },
+                    pending.acknowledged_relay_indices().len(),
+                    pending.required_acknowledgements(),
+                )
+            }
+        };
         to_value(DaemonStatus {
             compatibility_profile: COMPATIBILITY_PROFILE,
             storage_provider: self.inner.store.status().provider,
@@ -1402,6 +1546,9 @@ impl DaemonCore {
             joined_geohashes: state.joined.iter().cloned().collect(),
             relay_count: config.relays.len(),
             dm_relay_count: config.dm_relays.len(),
+            profile_publication_state,
+            profile_publication_acknowledged_relays,
+            profile_publication_required_acknowledgements,
             registry_protocol: self
                 .inner
                 .registry
@@ -2087,6 +2234,19 @@ impl DaemonCore {
     }
 
     async fn perform_panic_cleanup(&self) -> Result<serde_json::Value, CoreError> {
+        let profile_publication = self
+            .inner
+            .profile_publication
+            .lock()
+            .expect("profile publication mutex poisoned")
+            .take();
+        if let Some(coordinator) = profile_publication {
+            coordinator
+                .shutdown()
+                .await
+                .map_err(CoreError::ProfilePublication)?;
+        }
+
         let dm_inbox = self
             .inner
             .dm_inbox
