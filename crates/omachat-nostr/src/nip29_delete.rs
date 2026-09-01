@@ -4,19 +4,15 @@
 //!
 //! 1. A [`GroupDeleteRequest`] proves only that its signer asked for the
 //!    listed events to be removed from one room.
-//! 2. An [`AcceptedGroupDeletion`] is a request plus explicit evidence of why
-//!    it is authorized under that room's policy: the signer authored every
-//!    target, or the relay's published administrator snapshot lists the
-//!    signer. Relay receipt is never that evidence.
+//! 2. An [`AcceptedGroupDeletion`] records that the verified authoritative
+//!    relay path accepted the action under its room policy. Target authorship
+//!    and broad administrator labels are not capability evidence.
 //! 3. [`GroupDeletionState`] reduces accepted deletions into deterministic,
 //!    order-independent state. Deleted events are marked, not erased; the
 //!    request, its author, targets, timestamp, relay identity, and group stay
 //!    on record as provenance.
 
-use crate::{
-    event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent},
-    nip29::{GroupRoster, GroupRosterKind, GroupUserEvent},
-};
+use crate::event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent};
 use std::{collections::BTreeMap, error::Error, fmt};
 
 pub const DELETE_EVENT_KIND: u32 = 9005;
@@ -146,10 +142,8 @@ pub fn delete_event_request(
 /// Why an accepted deletion was authorized under the room's policy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DeletionAuthority {
-    /// Every target is a verified room event signed by the requester.
-    TargetAuthor,
-    /// The relay-published administrator snapshot lists the requester.
-    Administrator { roles: Vec<String> },
+    /// The verified authoritative relay path accepted and replayed the action.
+    AuthoritativeRelay,
 }
 
 /// A delete request paired with explicit evidence that it is authorized.
@@ -165,65 +159,19 @@ pub struct AcceptedGroupDeletion {
 }
 
 impl AcceptedGroupDeletion {
-    /// Accept because the requester authored every target in the same room.
+    /// Record acceptance by the room's verified authoritative relay path.
     ///
-    /// `targets` must contain a verified room event for every ID named by the
-    /// request. Extra events are ignored; a missing one fails closed.
-    pub fn by_target_author(
+    /// Callers must use the relay identity bound to the transport that replayed
+    /// this request. The request signature remains the only author identity.
+    pub fn from_authoritative_relay(
         request: GroupDeleteRequest,
-        targets: &[GroupUserEvent],
-        relay_pubkey: &str,
+        source_relay_pubkey: &str,
     ) -> Result<Self, DeletionAuthorizationError> {
-        validate_relay_pubkey(relay_pubkey)?;
-        for target_id in request.targets() {
-            let target = targets
-                .iter()
-                .find(|target| target.event().id == *target_id)
-                .ok_or(DeletionAuthorizationError::MissingTargetEvidence)?;
-            if target.group_id() != request.group_id() {
-                return Err(DeletionAuthorizationError::CrossGroupTarget);
-            }
-            if target.author() != request.author() {
-                return Err(DeletionAuthorizationError::TargetNotAuthoredByRequester);
-            }
-        }
+        validate_relay_pubkey(source_relay_pubkey)?;
         Ok(Self {
             request,
-            relay_pubkey: relay_pubkey.to_owned(),
-            authority: DeletionAuthority::TargetAuthor,
-        })
-    }
-
-    /// Accept because the relay's administrator snapshot lists the requester.
-    ///
-    /// The snapshot must be the kind `39001` roster signed by `relay_pubkey`
-    /// for the request's group. Published member lists are not accepted:
-    /// membership is not moderation authority.
-    pub fn by_administrator(
-        request: GroupDeleteRequest,
-        admins: &GroupRoster,
-        relay_pubkey: &str,
-    ) -> Result<Self, DeletionAuthorizationError> {
-        validate_relay_pubkey(relay_pubkey)?;
-        if admins.kind() != GroupRosterKind::Admins {
-            return Err(DeletionAuthorizationError::NotAdministratorRoster);
-        }
-        if admins.event().pubkey != relay_pubkey {
-            return Err(DeletionAuthorizationError::RosterRelayMismatch);
-        }
-        if admins.group_id() != request.group_id() {
-            return Err(DeletionAuthorizationError::RosterGroupMismatch);
-        }
-        let roles = admins
-            .principals()
-            .iter()
-            .find(|principal| principal.pubkey() == request.author())
-            .map(|principal| principal.roles().to_vec())
-            .ok_or(DeletionAuthorizationError::RequesterNotAdministrator)?;
-        Ok(Self {
-            request,
-            relay_pubkey: relay_pubkey.to_owned(),
-            authority: DeletionAuthority::Administrator { roles },
+            relay_pubkey: source_relay_pubkey.to_owned(),
+            authority: DeletionAuthority::AuthoritativeRelay,
         })
     }
 
@@ -566,13 +514,6 @@ impl Error for GroupDeleteError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeletionAuthorizationError {
     InvalidRelayPublicKey,
-    NotAdministratorRoster,
-    RosterRelayMismatch,
-    RosterGroupMismatch,
-    RequesterNotAdministrator,
-    MissingTargetEvidence,
-    CrossGroupTarget,
-    TargetNotAuthoredByRequester,
 }
 
 impl fmt::Display for DeletionAuthorizationError {
@@ -580,27 +521,6 @@ impl fmt::Display for DeletionAuthorizationError {
         match self {
             Self::InvalidRelayPublicKey => {
                 formatter.write_str("NIP-29 relay identity must be a lowercase 32-byte public key")
-            }
-            Self::NotAdministratorRoster => {
-                formatter.write_str("NIP-29 deletion authority requires the administrator roster")
-            }
-            Self::RosterRelayMismatch => {
-                formatter.write_str("NIP-29 administrator roster was signed by another relay")
-            }
-            Self::RosterGroupMismatch => {
-                formatter.write_str("NIP-29 administrator roster belongs to another group")
-            }
-            Self::RequesterNotAdministrator => {
-                formatter.write_str("NIP-29 delete requester is not a listed administrator")
-            }
-            Self::MissingTargetEvidence => {
-                formatter.write_str("NIP-29 delete target was not supplied as a verified event")
-            }
-            Self::CrossGroupTarget => {
-                formatter.write_str("NIP-29 delete target belongs to another group")
-            }
-            Self::TargetNotAuthoredByRequester => {
-                formatter.write_str("NIP-29 delete target was not authored by the requester")
             }
         }
     }

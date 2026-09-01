@@ -1,6 +1,6 @@
 use omachat_nostr::{
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
-    nip29::{GroupRoster, GroupUserEvent, group_message},
+    nip29::{GroupUserEvent, group_message},
     nip29_delete::{
         AcceptedGroupDeletion, DELETE_EVENT_KIND, DeletionApplyResult, DeletionAuthority,
         DeletionAuthorizationError, DeletionStateError, GroupDeleteError, GroupDeleteRequest,
@@ -12,7 +12,6 @@ const NOW: u64 = 1_800_000_000;
 const RELAY_SECRET: [u8; 32] = [5; 32];
 const MODERATOR_SECRET: [u8; 32] = [7; 32];
 const AGENT_SECRET: [u8; 32] = [9; 32];
-const OTHER_RELAY_SECRET: [u8; 32] = [11; 32];
 const HUMAN_SECRET: [u8; 32] = [13; 32];
 const TARGET_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TARGET_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -80,19 +79,6 @@ fn request_in(
 
 fn request(secret: &[u8; 32], created_at: u64, targets: &[&str]) -> GroupDeleteRequest {
     request_in(secret, "omarchy", created_at, targets)
-}
-
-fn admins(relay_secret: &[u8; 32], group_id: &str, admin: &str) -> GroupRoster {
-    let event = signed(
-        relay_secret,
-        NOW - 10,
-        39001,
-        vec![
-            vec!["d".to_owned(), group_id.to_owned()],
-            vec!["p".to_owned(), admin.to_owned(), "moderator".to_owned()],
-        ],
-    );
-    GroupRoster::verify(event, &pubkey(relay_secret), NOW, &limits()).expect("admin roster")
 }
 
 #[test]
@@ -234,82 +220,26 @@ fn malformed_requests_fail_closed() {
 }
 
 #[test]
-fn unauthorized_requests_never_become_accepted_state() {
+fn request_validity_is_separate_from_relay_policy_acceptance() {
     let relay = pubkey(&RELAY_SECRET);
     let human_message = message(&HUMAN_SECRET, "omarchy", NOW - 5);
     let agent_request = request(&AGENT_SECRET, NOW - 1, &[&human_message.event().id]);
-    let roster = admins(&RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET));
 
-    // The agent is neither the author of the target nor a listed admin.
-    assert_eq!(
-        AcceptedGroupDeletion::by_target_author(
-            agent_request.clone(),
-            std::slice::from_ref(&human_message),
-            &relay
-        )
-        .err(),
-        Some(DeletionAuthorizationError::TargetNotAuthoredByRequester)
-    );
-    assert_eq!(
-        AcceptedGroupDeletion::by_administrator(agent_request.clone(), &roster, &relay).err(),
-        Some(DeletionAuthorizationError::RequesterNotAdministrator)
-    );
-
-    // Missing target evidence fails closed rather than trusting the ID.
-    assert_eq!(
-        AcceptedGroupDeletion::by_target_author(agent_request.clone(), &[], &relay).err(),
-        Some(DeletionAuthorizationError::MissingTargetEvidence)
-    );
-
-    // A published member list is not moderation authority.
-    let members = GroupRoster::verify(
-        signed(
-            &RELAY_SECRET,
-            NOW - 10,
-            39002,
-            vec![
-                vec!["d".to_owned(), "omarchy".to_owned()],
-                vec!["p".to_owned(), pubkey(&AGENT_SECRET)],
-            ],
-        ),
-        &relay,
-        NOW,
-        &limits(),
-    )
-    .expect("member roster");
-    assert_eq!(
-        AcceptedGroupDeletion::by_administrator(agent_request.clone(), &members, &relay).err(),
-        Some(DeletionAuthorizationError::NotAdministratorRoster)
-    );
-
-    // An admin roster from another relay, or for another group, proves nothing here.
-    let foreign = admins(&OTHER_RELAY_SECRET, "omarchy", &pubkey(&AGENT_SECRET));
-    assert_eq!(
-        AcceptedGroupDeletion::by_administrator(agent_request.clone(), &foreign, &relay).err(),
-        Some(DeletionAuthorizationError::RosterRelayMismatch)
-    );
-    let other_group = admins(&RELAY_SECRET, "other", &pubkey(&AGENT_SECRET));
-    assert_eq!(
-        AcceptedGroupDeletion::by_administrator(agent_request, &other_group, &relay).err(),
-        Some(DeletionAuthorizationError::RosterGroupMismatch)
-    );
-
-    let state = GroupDeletionState::new(relay, "omarchy".to_owned()).expect("state");
+    let mut state = GroupDeletionState::new(relay.clone(), "omarchy".to_owned()).expect("state");
     assert!(state.is_empty());
     assert!(!state.is_deleted(&human_message.event().id));
-}
-
-#[test]
-fn cross_group_targets_are_rejected() {
-    let relay = pubkey(&RELAY_SECRET);
-    let elsewhere = message(&AGENT_SECRET, "other-room", NOW - 5);
-    let request = request(&AGENT_SECRET, NOW - 1, &[&elsewhere.event().id]);
 
     assert_eq!(
-        AcceptedGroupDeletion::by_target_author(request, std::slice::from_ref(&elsewhere), &relay)
+        AcceptedGroupDeletion::from_authoritative_relay(agent_request.clone(), "not-a-relay")
             .err(),
-        Some(DeletionAuthorizationError::CrossGroupTarget)
+        Some(DeletionAuthorizationError::InvalidRelayPublicKey)
     );
+    assert!(state.is_empty());
+
+    let accepted = AcceptedGroupDeletion::from_authoritative_relay(agent_request, &relay)
+        .expect("authoritative relay accepted request");
+    state.apply_accepted(&accepted).expect("apply");
+    assert!(state.is_deleted(&human_message.event().id));
 }
 
 #[test]
@@ -321,25 +251,17 @@ fn authorized_deletions_mark_targets_and_preserve_provenance() {
     let human_id = human.event().id.clone();
     let original_human = human.event().clone();
 
-    let self_delete = AcceptedGroupDeletion::by_target_author(
+    let self_delete = AcceptedGroupDeletion::from_authoritative_relay(
         request(&AGENT_SECRET, NOW - 2, &[&own_id]),
-        std::slice::from_ref(&own),
         &relay,
     )
-    .expect("author may delete own message");
-    let roster = admins(&RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET));
-    let moderation = AcceptedGroupDeletion::by_administrator(
+    .expect("relay accepted self deletion");
+    let moderation = AcceptedGroupDeletion::from_authoritative_relay(
         request(&MODERATOR_SECRET, NOW - 1, &[&human_id, &own_id]),
-        &roster,
         &relay,
     )
-    .expect("listed admin may delete");
-    assert_eq!(
-        moderation.authority(),
-        &DeletionAuthority::Administrator {
-            roles: vec!["moderator".to_owned()]
-        }
-    );
+    .expect("relay accepted moderation");
+    assert_eq!(moderation.authority(), &DeletionAuthority::AuthoritativeRelay);
 
     let mut state = GroupDeletionState::new(relay.clone(), "omarchy".to_owned()).expect("state");
     assert_eq!(
@@ -366,7 +288,7 @@ fn authorized_deletions_mark_targets_and_preserve_provenance() {
     assert_eq!(record.requester_pubkey(), pubkey(&AGENT_SECRET));
     assert_eq!(record.source_event_id(), self_delete.request().event().id);
     assert_eq!(record.created_at(), NOW - 2);
-    assert_eq!(record.authority(), &DeletionAuthority::TargetAuthor);
+    assert_eq!(record.authority(), &DeletionAuthority::AuthoritativeRelay);
     assert_eq!(state.relay_pubkey(), relay);
     assert_eq!(state.group_id(), "omarchy");
     let record = state.record(&human_id).expect("record");
@@ -382,16 +304,15 @@ fn authorized_deletions_mark_targets_and_preserve_provenance() {
 #[test]
 fn replay_and_multi_relay_delivery_reduce_once() {
     let relay = pubkey(&RELAY_SECRET);
-    let other_relay = pubkey(&OTHER_RELAY_SECRET);
-    let roster = admins(&RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET));
+    let other_relay = pubkey(&[11; 32]);
     let request = request(&MODERATOR_SECRET, NOW - 1, &[TARGET_A, TARGET_B]);
 
-    let via_primary =
-        AcceptedGroupDeletion::by_administrator(request.clone(), &roster, &relay).expect("accept");
+    let via_primary = AcceptedGroupDeletion::from_authoritative_relay(request.clone(), &relay)
+        .expect("accept");
     // The same signed request seen again through another relay path carries the
     // same event ID and the same acceptance evidence.
-    let via_mirror =
-        AcceptedGroupDeletion::by_administrator(request.clone(), &roster, &relay).expect("accept");
+    let via_mirror = AcceptedGroupDeletion::from_authoritative_relay(request.clone(), &relay)
+        .expect("accept");
 
     let mut state = GroupDeletionState::new(relay.clone(), "omarchy".to_owned()).expect("state");
     assert_eq!(
@@ -412,8 +333,7 @@ fn replay_and_multi_relay_delivery_reduce_once() {
     assert_eq!(state, before);
 
     // Acceptance under another relay's policy is not this room's policy.
-    let foreign_roster = admins(&OTHER_RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET));
-    let foreign = AcceptedGroupDeletion::by_administrator(request, &foreign_roster, &other_relay)
+    let foreign = AcceptedGroupDeletion::from_authoritative_relay(request, &other_relay)
         .expect("accepted elsewhere");
     assert_eq!(
         state.apply_accepted(&foreign).err(),
@@ -425,34 +345,29 @@ fn replay_and_multi_relay_delivery_reduce_once() {
 #[test]
 fn reduction_is_independent_of_ingestion_order() {
     let relay = pubkey(&RELAY_SECRET);
-    let roster = admins(&RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET));
     let own = message(&AGENT_SECRET, "omarchy", NOW - 6);
     let own_id = own.event().id.clone();
 
-    let earlier = AcceptedGroupDeletion::by_target_author(
+    let earlier = AcceptedGroupDeletion::from_authoritative_relay(
         request(&AGENT_SECRET, NOW - 2, &[&own_id]),
-        std::slice::from_ref(&own),
         &relay,
     )
-    .expect("author");
-    let later = AcceptedGroupDeletion::by_administrator(
+    .expect("accepted");
+    let later = AcceptedGroupDeletion::from_authoritative_relay(
         request(&MODERATOR_SECRET, NOW - 1, &[&own_id, TARGET_B]),
-        &roster,
         &relay,
     )
-    .expect("admin");
-    let same_second_a = AcceptedGroupDeletion::by_administrator(
+    .expect("accepted");
+    let same_second_a = AcceptedGroupDeletion::from_authoritative_relay(
         request(&MODERATOR_SECRET, NOW - 1, &[TARGET_A]),
-        &roster,
         &relay,
     )
-    .expect("admin");
-    let same_second_b = AcceptedGroupDeletion::by_administrator(
+    .expect("accepted");
+    let same_second_b = AcceptedGroupDeletion::from_authoritative_relay(
         request_in(&MODERATOR_SECRET, "omarchy", NOW - 1, &[TARGET_A, TARGET_B]),
-        &roster,
         &relay,
     )
-    .expect("admin");
+    .expect("accepted");
 
     let orders: [[&AcceptedGroupDeletion; 4]; 3] = [
         [&earlier, &later, &same_second_a, &same_second_b],
@@ -479,7 +394,7 @@ fn reduction_is_independent_of_ingestion_order() {
     assert_eq!(state.deleted_event_ids().collect::<Vec<_>>(), expected_ids);
     assert_eq!(
         state.record(&own_id).expect("own").authority(),
-        &DeletionAuthority::TargetAuthor
+        &DeletionAuthority::AuthoritativeRelay
     );
     // Equal timestamps resolve to the lowest request event ID.
     let expected = if same_second_a.request().event().id < same_second_b.request().event().id {
@@ -505,19 +420,16 @@ fn state_construction_and_scope_fail_closed() {
         Some(DeletionStateError::EmptyGroupId)
     );
     assert_eq!(
-        AcceptedGroupDeletion::by_target_author(
+        AcceptedGroupDeletion::from_authoritative_relay(
             request(&AGENT_SECRET, NOW - 1, &[TARGET_A]),
-            &[],
-            "not-a-relay"
+            "not-a-relay",
         )
         .err(),
         Some(DeletionAuthorizationError::InvalidRelayPublicKey)
     );
 
-    let roster = admins(&RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET));
-    let accepted = AcceptedGroupDeletion::by_administrator(
+    let accepted = AcceptedGroupDeletion::from_authoritative_relay(
         request(&MODERATOR_SECRET, NOW - 1, &[TARGET_A]),
-        &roster,
         &relay,
     )
     .expect("accepted");
