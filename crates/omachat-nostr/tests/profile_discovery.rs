@@ -7,7 +7,7 @@ use omachat_nostr::{
     profile_discovery::{ProfileDiscoveryConfig, discover_profile_metadata},
     profile_metadata::PROFILE_METADATA_KIND,
     profile_verification::ProfileNameClassification,
-    relay::{RelayConfig, RelayRoute},
+    relay::{RelayAuthenticationPolicy, RelayConfig, RelayRoute},
 };
 use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
@@ -41,8 +41,10 @@ async fn chooses_the_newest_valid_external_profile_after_every_eose() {
         &EventLimits::default(),
         &ProfileDiscoveryConfig {
             authentication_timeout: Duration::from_secs(2),
+            authentication_policy: RelayAuthenticationPolicy::AuthenticateWhenChallenged,
+            challenge_settle_timeout: Duration::from_millis(25),
             query_timeout: Duration::from_secs(2),
-            minimum_authenticated_relays: 2,
+            minimum_ready_relays: 2,
             subscription_id: "external-profile-query".into(),
         },
     )
@@ -60,6 +62,46 @@ async fn chooses_the_newest_valid_external_profile_after_every_eose() {
     assert_eq!(result.completed_relays, 2);
     first.await.unwrap();
     second.await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_relay_without_an_auth_challenge_remains_discoverable() {
+    let participant_secret = [107; 32];
+    let participant = xonly_public_key(&participant_secret).unwrap();
+    let now = unix_now();
+    let expected = profile(
+        participant_secret,
+        now - 1,
+        "public-agent",
+        "Public Agent",
+        108,
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(serve_public_query(listener, expected.clone()));
+
+    let result = discover_profile_metadata(
+        vec![relay(&url)],
+        RelayAuthSigner::from_secret_key([109; 32]).unwrap(),
+        &participant,
+        now,
+        &EventLimits::default(),
+        &ProfileDiscoveryConfig {
+            authentication_timeout: Duration::from_secs(2),
+            authentication_policy: RelayAuthenticationPolicy::AuthenticateWhenChallenged,
+            challenge_settle_timeout: Duration::from_millis(25),
+            query_timeout: Duration::from_secs(2),
+            minimum_ready_relays: 1,
+            subscription_id: "public-profile-query".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.event, expected);
+    assert_eq!(result.queried_relays, 1);
+    assert_eq!(result.completed_relays, 1);
+    server.await.unwrap();
 }
 
 fn relay(url: &str) -> RelayConfig {
@@ -126,6 +168,34 @@ async fn serve_query(listener: TcpListener, events: Vec<SignedEvent>) {
             .await
             .unwrap();
     }
+    socket
+        .send(Message::Text(
+            json!(["EOSE", subscription_id]).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    while let Some(message) = socket.next().await {
+        match message {
+            Ok(Message::Ping(payload)) => socket.send(Message::Pong(payload)).await.unwrap(),
+            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
+}
+
+async fn serve_public_query(listener: TcpListener, event: SignedEvent) {
+    let (stream, _) = listener.accept().await.unwrap();
+    let mut socket = accept_async(stream).await.unwrap();
+    let request = next_json(&mut socket).await;
+    assert_eq!(request[0], "REQ");
+    assert_eq!(request[2]["kinds"], json!([PROFILE_METADATA_KIND]));
+    let subscription_id = request[1].as_str().unwrap();
+    socket
+        .send(Message::Text(
+            json!(["EVENT", subscription_id, event]).to_string().into(),
+        ))
+        .await
+        .unwrap();
     socket
         .send(Message::Text(
             json!(["EOSE", subscription_id]).to_string().into(),

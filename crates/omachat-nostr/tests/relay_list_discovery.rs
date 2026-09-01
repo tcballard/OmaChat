@@ -5,7 +5,7 @@ use omachat_nostr::{
     auth::RelayAuthSigner,
     discovery::{NIP65_RELAY_LIST_KIND, RelayDiscoveryLimits, RelayPreference},
     event::{EventLimits, SignedEvent, xonly_public_key},
-    relay::{RelayConfig, RelayRoute},
+    relay::{RelayAuthenticationPolicy, RelayConfig, RelayRoute},
     relay_list::create_nip65_relay_list_with_aux,
     relay_list_discovery::{RelayListDiscoveryConfig, discover_nip65_relay_list},
 };
@@ -60,8 +60,10 @@ async fn chooses_the_newest_valid_external_list_after_every_relay_completes() {
         &RelayDiscoveryLimits::default(),
         &RelayListDiscoveryConfig {
             authentication_timeout: Duration::from_secs(2),
+            authentication_policy: RelayAuthenticationPolicy::RequireWhenConfigured,
+            challenge_settle_timeout: Duration::from_millis(25),
             query_timeout: Duration::from_secs(2),
-            minimum_authenticated_relays: 2,
+            minimum_ready_relays: 2,
             subscription_id: "external-nip65-query".into(),
         },
     )
