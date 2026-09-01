@@ -1,6 +1,6 @@
 use omachat_nostr::{
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
-    nip29::{GroupMetadata, GroupRoster},
+    nip29::GroupMetadata,
     nip29_metadata::{
         AcceptedMetadataEdit, EDIT_METADATA_KIND, GroupMetadataEdit, HierarchyRejection,
         MetadataApplyResult, MetadataAuthorizationError, MetadataEditError, MetadataStateError,
@@ -51,21 +51,10 @@ fn edit(secret: &[u8; 32], group: &str, created_at: u64, tags: &[&[&str]]) -> Gr
         .expect("verified edit")
 }
 
-fn admins(relay_secret: &[u8; 32], group: &str, admin: &str) -> GroupRoster {
-    let event = signed(
-        relay_secret,
-        NOW - 100,
-        39001,
-        vec![tag(&["d", group]), tag(&["p", admin, "moderator"])],
-    );
-    GroupRoster::verify(event, &pubkey(relay_secret), NOW, &limits()).expect("admin roster")
-}
-
 fn accepted(group: &str, created_at: u64, tags: &[&[&str]]) -> AcceptedMetadataEdit {
     let relay = pubkey(&RELAY_SECRET);
-    AcceptedMetadataEdit::by_administrator(
+    AcceptedMetadataEdit::from_authoritative_relay(
         edit(&MODERATOR_SECRET, group, created_at, tags),
-        &admins(&RELAY_SECRET, group, &pubkey(&MODERATOR_SECRET)),
         &relay,
     )
     .expect("accepted edit")
@@ -249,61 +238,23 @@ fn invalid_signature_and_malformed_edits_fail_closed() {
 }
 
 #[test]
-fn unauthorized_edits_have_no_effect_and_relay_origin_is_not_authority() {
+fn signed_edits_remain_inert_without_explicit_relay_policy_acceptance() {
     let relay = pubkey(&RELAY_SECRET);
     let agent_edit = edit(&AGENT_SECRET, "omarchy", NOW - 1, &[&["name", "Pwned"]]);
-    let roster = admins(&RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET));
 
     assert_eq!(
-        AcceptedMetadataEdit::by_administrator(agent_edit.clone(), &roster, &relay).err(),
-        Some(MetadataAuthorizationError::EditorNotAdministrator)
-    );
-    // The same relay listing the agent as admin of another group proves nothing here.
-    let other_group = admins(&RELAY_SECRET, "other", &pubkey(&AGENT_SECRET));
-    assert_eq!(
-        AcceptedMetadataEdit::by_administrator(agent_edit.clone(), &other_group, &relay).err(),
-        Some(MetadataAuthorizationError::RosterGroupMismatch)
-    );
-    // Another relay vouching for the agent is not this relay's policy.
-    let foreign = admins(&OTHER_RELAY_SECRET, "omarchy", &pubkey(&AGENT_SECRET));
-    assert_eq!(
-        AcceptedMetadataEdit::by_administrator(agent_edit.clone(), &foreign, &relay).err(),
-        Some(MetadataAuthorizationError::RosterRelayMismatch)
-    );
-    // A member list is not moderation authority.
-    let members = GroupRoster::verify(
-        signed(
-            &RELAY_SECRET,
-            NOW - 100,
-            39002,
-            vec![tag(&["d", "omarchy"]), tag(&["p", &pubkey(&AGENT_SECRET)])],
-        ),
-        &relay,
-        NOW,
-        &limits(),
-    )
-    .expect("members");
-    assert_eq!(
-        AcceptedMetadataEdit::by_administrator(agent_edit, &members, &relay).err(),
-        Some(MetadataAuthorizationError::NotAdministratorRoster)
+        AcceptedMetadataEdit::from_authoritative_relay(agent_edit.clone(), "not-a-relay").err(),
+        Some(MetadataAuthorizationError::InvalidRelayPublicKey)
     );
 
-    // An edit signed by the relay key itself is judged as the relay's own
-    // request: it still needs the roster to list that key.
-    let relay_signed = edit(
-        &RELAY_SECRET,
-        "omarchy",
-        NOW - 1,
-        &[&["name", "Relay says"]],
-    );
-    assert_eq!(
-        AcceptedMetadataEdit::by_administrator(relay_signed, &roster, &relay).err(),
-        Some(MetadataAuthorizationError::EditorNotAdministrator)
-    );
-
-    let state = state();
+    let mut state = state();
     assert!(state.group("omarchy").is_none());
     assert_eq!(state.input_count(), 0);
+
+    let accepted = AcceptedMetadataEdit::from_authoritative_relay(agent_edit, &relay)
+        .expect("relay accepted edit");
+    state.apply_accepted(&accepted).expect("apply");
+    assert_eq!(state.group("omarchy").expect("group").name(), "Pwned");
 }
 
 #[test]
@@ -347,9 +298,7 @@ fn partial_edit_preserves_unrelated_fields_with_provenance() {
     assert_eq!(name_source.author(), pubkey(&MODERATOR_SECRET));
     assert_eq!(
         name_source.authority(),
-        &RevisionAuthority::Administrator {
-            roles: vec!["moderator".to_owned()]
-        }
+        &RevisionAuthority::AuthoritativeRelay
     );
     let about_source = group.provenance("about").expect("about provenance");
     assert_eq!(about_source.source_event_id(), base.event().id);
@@ -495,14 +444,13 @@ fn cross_relay_inputs_are_rejected() {
     );
 
     let mut state = state();
-    let foreign_edit = AcceptedMetadataEdit::by_administrator(
+    let foreign_edit = AcceptedMetadataEdit::from_authoritative_relay(
         edit(
             &MODERATOR_SECRET,
             "omarchy",
             NOW - 1,
             &[&["parent", "linux"]],
         ),
-        &admins(&OTHER_RELAY_SECRET, "omarchy", &pubkey(&MODERATOR_SECRET)),
         &other_relay,
     )
     .expect("accepted under the other relay");
