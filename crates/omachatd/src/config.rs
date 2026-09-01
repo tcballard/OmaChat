@@ -84,7 +84,7 @@ pub struct ProfilePublicationConfig {
 }
 
 impl ProfilePublicationConfig {
-    fn validate(&self) -> Result<(), CoreError> {
+    pub(crate) fn validate(&self) -> Result<(), CoreError> {
         if self.relays.is_empty()
             || self.relays.len() > 16
             || self.required_acknowledgements == 0
@@ -115,6 +115,21 @@ impl ProfilePublicationConfig {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn canonical_relays(&self) -> Result<Vec<String>, CoreError> {
+        self.validate()?;
+        let mut relays = self
+            .relays
+            .iter()
+            .map(|relay| {
+                url::Url::parse(relay)
+                    .map(|url| url.to_string())
+                    .map_err(|_| CoreError::InvalidConfig)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        relays.sort_unstable();
+        Ok(relays)
     }
 }
 

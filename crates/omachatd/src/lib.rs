@@ -11,6 +11,7 @@ mod ipc_server;
 mod nostr_service;
 mod principal_registry_evidence_service;
 mod profile_cache_store;
+mod profile_publication_coordinator;
 mod profile_publication_service;
 mod profile_publication_store;
 mod registry_evidence_service;
@@ -19,7 +20,10 @@ pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
     SealedAgentLifecycleState,
 };
-pub use config::{DaemonConfig, RegistryClientConfig, RegistryProtocol, StorageProviderConfig};
+pub use config::{
+    DaemonConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
+    StorageProviderConfig,
+};
 pub use core::{
     DaemonCore, PanicState, RegistryClaimEvidence, RegistryClaimResult, RegistryClaimStatus,
 };
@@ -38,6 +42,9 @@ pub use principal_registry_evidence_service::PrincipalRegistryEvidenceService;
 pub use profile_cache_store::{
     PROFILE_CACHE_RECORD_NAME, SealedProfileCache, SealedProfileCacheError,
     SealedProfileCacheLookup, SealedProfileCacheState,
+};
+pub use profile_publication_coordinator::{
+    ProfilePublicationCoordinator, ProfilePublicationCoordinatorError,
 };
 pub use profile_publication_service::{
     ProfilePublicationHandle, ProfilePublicationService, ProfilePublicationServiceConfig,
