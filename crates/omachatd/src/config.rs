@@ -7,6 +7,17 @@ use omachat_store::RequestedProvider;
 use serde::Deserialize;
 use std::{collections::HashSet, fs, path::Path};
 
+/// Wire and evidence contract expected from the configured registry endpoint.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegistryProtocol {
+    /// Existing account-root-only claim and receipt protocol.
+    #[default]
+    RootClaimV2,
+    /// Root claim plus independently signed Nostr-principal proof protocol.
+    PrincipalProofV1,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StorageProviderConfig {
@@ -35,6 +46,9 @@ pub struct RegistryClientConfig {
     pub endpoint: String,
     pub pinned_public_key: String,
     pub max_age_seconds: u64,
+    /// Omission preserves the existing root-claim-v2 behavior.
+    #[serde(default)]
+    pub protocol: RegistryProtocol,
 }
 
 impl RegistryClientConfig {

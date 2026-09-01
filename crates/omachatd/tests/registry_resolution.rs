@@ -9,7 +9,8 @@ use omachat_registry_host::{RegistryHostLimits, run_registry_host};
 use omachat_registry_transport::{RegistryClient, RegistryService, RegistryWebSocketTransport};
 use omachat_store::{RequestedProvider, SealedStore};
 use omachatd::{
-    DaemonConfig, DaemonCore, EventHub, RegistryClientConfig, RequestHandler, StorageProviderConfig,
+    DaemonConfig, DaemonCore, EventHub, RegistryClientConfig, RegistryProtocol, RequestHandler,
+    StorageProviderConfig,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -105,6 +106,7 @@ async fn verified_handle_resolution_is_explicitly_online_then_offline() {
                     endpoint,
                     pinned_public_key: hex::encode(pinned_key),
                     max_age_seconds: 300,
+                    protocol: RegistryProtocol::RootClaimV2,
                 }),
                 ..DaemonConfig::default()
             },

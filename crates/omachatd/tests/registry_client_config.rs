@@ -1,7 +1,10 @@
 use std::fs;
 
 use ed25519_dalek::SigningKey;
-use omachatd::DaemonConfig;
+use omachatd::{
+    DaemonConfig, PrincipalRegistryEvidenceService, RegistryClientConfig, RegistryEvidenceService,
+    RegistryProtocol,
+};
 use tempfile::tempdir;
 
 fn registry_key_hex(seed: u8) -> String {
@@ -33,6 +36,7 @@ fn registry_configuration_is_optional_and_explicit() {
     }))
     .expect("configured daemon");
     let registry = configured.registry.expect("registry block");
+    assert_eq!(registry.protocol, RegistryProtocol::RootClaimV2);
     assert_eq!(
         registry.endpoint,
         "wss://registry.omachat.example/registry-v1"
@@ -41,6 +45,44 @@ fn registry_configuration_is_optional_and_explicit() {
     assert_eq!(
         registry.pinned_public_key_bytes().expect("pinned key"),
         SigningKey::from_bytes(&[7; 32]).verifying_key().to_bytes()
+    );
+}
+
+#[test]
+fn principal_protocol_is_explicit_and_wrong_service_constructors_fail_closed() {
+    let configured = load_json(serde_json::json!({
+        "registry": {
+            "endpoint": "wss://registry.omachat.example/principal-v1",
+            "pinned_public_key": registry_key_hex(12),
+            "max_age_seconds": 86_400,
+            "protocol": "principal-proof-v1"
+        }
+    }))
+    .expect("principal registry config");
+    let principal = configured.registry.expect("registry block");
+    assert_eq!(principal.protocol, RegistryProtocol::PrincipalProofV1);
+    assert!(RegistryEvidenceService::from_config(&principal).is_err());
+    assert!(PrincipalRegistryEvidenceService::from_config(&principal).is_ok());
+
+    let root = RegistryClientConfig {
+        endpoint: "wss://registry.omachat.example/registry-v1".into(),
+        pinned_public_key: registry_key_hex(13),
+        max_age_seconds: 86_400,
+        protocol: RegistryProtocol::RootClaimV2,
+    };
+    assert!(RegistryEvidenceService::from_config(&root).is_ok());
+    assert!(PrincipalRegistryEvidenceService::from_config(&root).is_err());
+
+    assert!(
+        load_json(serde_json::json!({
+            "registry": {
+                "endpoint": "wss://registry.omachat.example/registry-v1",
+                "pinned_public_key": registry_key_hex(14),
+                "max_age_seconds": 86_400,
+                "protocol": "future-v9"
+            }
+        }))
+        .is_err()
     );
 }
 

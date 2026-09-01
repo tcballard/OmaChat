@@ -10,7 +10,7 @@ use omachat_registry_transport::{
 use omachat_store::{PrincipalRegistryCacheLookup, SealedStore};
 use tokio::sync::Mutex;
 
-use crate::{CoreError, RegistryClientConfig};
+use crate::{CoreError, RegistryClientConfig, RegistryProtocol};
 
 /// Daemon-owned serialized transport and sealed cache for proven principals.
 #[derive(Clone)]
@@ -23,6 +23,9 @@ pub struct PrincipalRegistryEvidenceService<T = RegistryWebSocketTransport> {
 
 impl PrincipalRegistryEvidenceService<RegistryWebSocketTransport> {
     pub fn from_config(config: &RegistryClientConfig) -> Result<Self, CoreError> {
+        if config.protocol != RegistryProtocol::PrincipalProofV1 {
+            return Err(CoreError::InvalidConfig);
+        }
         let transport = RegistryWebSocketTransport::new(&config.endpoint)
             .map_err(|_| CoreError::InvalidConfig)?;
         Self::with_transport(

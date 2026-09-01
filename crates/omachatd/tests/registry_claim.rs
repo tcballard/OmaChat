@@ -10,8 +10,8 @@ use omachat_store::{
     SealedStore, VerifiedRegistryCache,
 };
 use omachatd::{
-    CoreError, DaemonConfig, DaemonCore, EventHub, RegistryClientConfig, RequestHandler,
-    StorageProviderConfig,
+    CoreError, DaemonConfig, DaemonCore, EventHub, RegistryClientConfig, RegistryProtocol,
+    RequestHandler, StorageProviderConfig,
 };
 use tempfile::tempdir;
 use tokio::{net::TcpListener, sync::oneshot};
@@ -31,6 +31,7 @@ fn config(endpoint: String, pinned_key: [u8; 32]) -> DaemonConfig {
             endpoint,
             pinned_public_key: hex::encode(pinned_key),
             max_age_seconds: 300,
+            protocol: RegistryProtocol::RootClaimV2,
         }),
         ..DaemonConfig::default()
     }

@@ -17,7 +17,7 @@ pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
     SealedAgentLifecycleState,
 };
-pub use config::{DaemonConfig, RegistryClientConfig, StorageProviderConfig};
+pub use config::{DaemonConfig, RegistryClientConfig, RegistryProtocol, StorageProviderConfig};
 pub use core::{DaemonCore, PanicState, RegistryClaimResult, RegistryClaimStatus};
 pub use core_error::CoreError;
 pub use dm_delivery_service::{

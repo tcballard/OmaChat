@@ -10,7 +10,7 @@ use omachat_registry_transport::{
 use omachat_store::{RegistryCacheLookup, SealedStore};
 use tokio::sync::Mutex;
 
-use crate::{CoreError, RegistryClientConfig};
+use crate::{CoreError, RegistryClientConfig, RegistryProtocol};
 
 /// Daemon-owned registry transport and sealed evidence boundary.
 ///
@@ -27,6 +27,9 @@ pub struct RegistryEvidenceService<T = RegistryWebSocketTransport> {
 
 impl RegistryEvidenceService<RegistryWebSocketTransport> {
     pub fn from_config(config: &RegistryClientConfig) -> Result<Self, CoreError> {
+        if config.protocol != RegistryProtocol::RootClaimV2 {
+            return Err(CoreError::InvalidConfig);
+        }
         let transport = RegistryWebSocketTransport::new(&config.endpoint)
             .map_err(|_| CoreError::InvalidConfig)?;
         Self::with_transport(
