@@ -1547,6 +1547,7 @@ dependencies = [
  "omachat-nostr",
  "omachat-proto",
  "omachat-registry",
+ "omachat-registry-host",
  "omachat-registry-transport",
  "omachat-store",
  "serde",

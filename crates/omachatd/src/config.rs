@@ -29,7 +29,7 @@ impl From<StorageProviderConfig> for RequestedProvider {
 ///
 /// The public key is pinned independently from the endpoint so DNS or TLS
 /// compromise cannot replace signed registry evidence.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RegistryClientConfig {
     pub endpoint: String,

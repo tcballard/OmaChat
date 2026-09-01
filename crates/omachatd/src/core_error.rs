@@ -15,9 +15,16 @@ pub enum CoreError {
     DmRelayDiscovery(omachat_nostr::dm_relay_discovery::DmRelayDiscoveryError),
     ProfileCache(crate::profile_cache_store::SealedProfileCacheError),
     ProfileDiscovery(omachat_nostr::profile_discovery::ProfileDiscoveryError),
+    RegistryEvidence(
+        omachat_registry_transport::RegistryEvidenceError<
+            omachat_registry_transport::RegistryWebSocketError,
+        >,
+    ),
+    RegistryUnconfigured,
     InvalidConfig,
     InvalidCommand,
     InvalidGeohash,
+    InvalidHandle,
     InvalidPublicKey,
     InvalidMessage,
     NotJoined,
@@ -37,11 +44,12 @@ impl CoreError {
             Self::InvalidConfig
             | Self::InvalidCommand
             | Self::InvalidGeohash
+            | Self::InvalidHandle
             | Self::InvalidPublicKey
             | Self::InvalidMessage => ErrorCode::InvalidRequest,
             Self::ConfirmationRequired => ErrorCode::Conflict,
             Self::RestartRequired => ErrorCode::Conflict,
-            Self::Panicked => ErrorCode::Unavailable,
+            Self::Panicked | Self::RegistryUnconfigured => ErrorCode::Unavailable,
             Self::NotJoined => ErrorCode::NotFound,
             Self::Io(_)
             | Self::Store(_)
@@ -55,6 +63,7 @@ impl CoreError {
             | Self::DmRelayDiscovery(_)
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
+            | Self::RegistryEvidence(_)
             | Self::Nostr
             | Self::Encoding
             | Self::Clock
@@ -82,9 +91,16 @@ impl fmt::Display for CoreError {
             }
             Self::ProfileCache(error) => write!(formatter, "profile cache failed: {error}"),
             Self::ProfileDiscovery(error) => write!(formatter, "profile discovery failed: {error}"),
+            Self::RegistryEvidence(error) => {
+                write!(formatter, "registry evidence resolution failed: {error}")
+            }
+            Self::RegistryUnconfigured => {
+                formatter.write_str("authoritative registry client is not configured")
+            }
             Self::InvalidConfig => formatter.write_str("daemon configuration is invalid"),
             Self::InvalidCommand => formatter.write_str("command is invalid in this context"),
             Self::InvalidGeohash => formatter.write_str("geohash is invalid"),
+            Self::InvalidHandle => formatter.write_str("global handle is invalid"),
             Self::InvalidPublicKey => formatter.write_str("Nostr public key is invalid"),
             Self::InvalidMessage => formatter.write_str("message is empty or too large"),
             Self::NotJoined => formatter.write_str("geohash is not joined"),
@@ -120,6 +136,7 @@ impl Error for CoreError {
             Self::DmRelayDiscovery(error) => Some(error),
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
+            Self::RegistryEvidence(error) => Some(error),
             _ => None,
         }
     }

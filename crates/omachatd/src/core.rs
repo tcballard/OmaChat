@@ -4,6 +4,7 @@ use crate::{
     dm_inbox_service::{DmInboxHandle, DmInboxService},
     ipc_server::{EventHub, RequestHandler},
     nostr_service::NostrHandle,
+    registry_evidence_service::RegistryEvidenceService,
 };
 use omachat_crypto::{DisplayName, GlobalHandle, IdentitySecrets};
 use omachat_nostr::{
@@ -22,7 +23,7 @@ use omachat_proto::ipc::{Command, ErrorBody, ErrorCode, Event, Request, Response
 use omachat_proto::{COMPATIBILITY_PROFILE, geohash::Geohash};
 use omachat_store::{
     AccountVault, BlockList, IdentityVault, LocalAccount, NostrDeliveryProfile, NostrOutbox,
-    ProviderKind, PublicArchive, PublicArchiveEntry, SealedStore,
+    ProviderKind, PublicArchive, PublicArchiveEntry, RegistryCacheLookup, SealedStore,
 };
 use serde::Serialize;
 use serde_json::to_value;
@@ -162,6 +163,7 @@ struct CoreInner {
     panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
+    registry: Option<RegistryEvidenceService>,
     mailbox: Mutex<PrivateMailbox>,
     state: Mutex<RuntimeState>,
     config: Mutex<DaemonConfig>,
@@ -212,6 +214,11 @@ impl DaemonCore {
         let store = SealedStore::open(&state_directory, config.storage_provider.into())
             .await
             .map_err(CoreError::Store)?;
+        let registry = config
+            .registry
+            .as_ref()
+            .map(RegistryEvidenceService::from_config)
+            .transpose()?;
         let identity = IdentityVault::load_or_create(&store).map_err(CoreError::IdentityStore)?;
         let (configured_handle, configured_display_name) = configured_account_profile(&config)?;
         let account = AccountVault::load_or_create(
@@ -255,6 +262,7 @@ impl DaemonCore {
                 panic: PanicLifecycle::default(),
                 nostr: Mutex::new(None),
                 dm_inbox: Mutex::new(None),
+                registry,
                 mailbox: Mutex::new(mailbox),
                 state: Mutex::new(RuntimeState { joined, blocked }),
                 config: Mutex::new(config),
@@ -714,7 +722,9 @@ impl DaemonCore {
     fn apply_reload(&self, replacement: DaemonConfig) -> Result<(), CoreError> {
         let relay_change_requires_restart = {
             let current = self.inner.config.lock().expect("config mutex poisoned");
-            current.relays != replacement.relays || current.dm_relays != replacement.dm_relays
+            current.relays != replacement.relays
+                || current.dm_relays != replacement.dm_relays
+                || current.registry != replacement.registry
         };
         if relay_change_requires_restart {
             return Err(CoreError::RestartRequired);
@@ -897,6 +907,24 @@ impl DaemonCore {
                         profile,
                     ) => value(&profile, "unusable-clock-rollback"),
                 })
+            }
+            Command::ResolveRegistryHandle { handle } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                let registry = self
+                    .inner
+                    .registry
+                    .as_ref()
+                    .ok_or(CoreError::RegistryUnconfigured)?;
+                let resolution = registry
+                    .resolve_handle(&self.inner.store, &handle, unix_time()?)
+                    .await
+                    .map_err(CoreError::RegistryEvidence)?;
+                let source = if resolution.is_online() {
+                    "online"
+                } else {
+                    "offline"
+                };
+                Ok(registry_lookup_value(&handle, source, resolution.lookup()))
             }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
@@ -1698,6 +1726,48 @@ fn configured_account_profile(
         .transpose()
         .map_err(|_| CoreError::InvalidConfig)?;
     Ok((handle, display_name))
+}
+
+fn registry_lookup_value(
+    handle: &GlobalHandle,
+    source: &str,
+    lookup: &RegistryCacheLookup,
+) -> serde_json::Value {
+    let (evidence_status, cached) = match lookup {
+        RegistryCacheLookup::Missing => ("missing", None),
+        RegistryCacheLookup::Fresh(cached) => ("fresh", Some(cached)),
+        RegistryCacheLookup::OfflineStale(cached) => ("offline-stale", Some(cached)),
+        RegistryCacheLookup::UnusableClockRollback(cached) => {
+            ("unusable-clock-rollback", Some(cached))
+        }
+    };
+    let Some(cached) = cached else {
+        return serde_json::json!({
+            "handle": handle.as_str(),
+            "source": source,
+            "evidence_status": evidence_status,
+            "receipt_verified": false,
+            "usable_current_evidence": false,
+        });
+    };
+    let receipt = &cached.record.receipt;
+    serde_json::json!({
+        "handle": handle.as_str(),
+        "source": source,
+        "evidence_status": evidence_status,
+        "receipt_verified": true,
+        "usable_current_evidence": matches!(lookup, RegistryCacheLookup::Fresh(_)),
+        "verified_at": cached.verified_at,
+        "account_id": receipt.account_id.as_str(),
+        "account_revision": receipt.account_revision,
+        "registry_sequence": receipt.sequence,
+        "accepted_at": receipt.accepted_at,
+        "nostr_public_key": hex::encode(
+            cached.record.claim.binding().device_keys.nostr_public_key,
+        ),
+        "claim_hash": hex::encode(receipt.claim_hash),
+        "receipt_hash": hex::encode(receipt.receipt_hash()),
+    })
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], CoreError> {
