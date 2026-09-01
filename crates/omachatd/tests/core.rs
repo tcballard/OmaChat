@@ -116,6 +116,7 @@ async fn invalid_reload_keeps_the_prior_configuration_active() {
             relays: vec!["wss://relay.example".into()],
             dm_relays: Vec::new(),
             profile_publication: None,
+            relay_list_publication: None,
             joined_geohashes: vec!["gcpvj".into()],
             account_handle: None,
             account_display_name: None,

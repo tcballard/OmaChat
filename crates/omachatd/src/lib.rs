@@ -27,7 +27,7 @@ pub use agent_lifecycle_store::{
 };
 pub use config::{
     DaemonConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
-    StorageProviderConfig,
+    RelayListPublicationConfig, RelayListPublicationRelayConfig, StorageProviderConfig,
 };
 pub use core::{
     DaemonCore, PanicState, RegistryClaimEvidence, RegistryClaimResult, RegistryClaimStatus,
