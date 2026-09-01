@@ -22,12 +22,18 @@ use omachat_nostr::{
 };
 use omachat_proto::ipc::{Command, ErrorBody, ErrorCode, Event, Request, ResponseOutcome, VERSION};
 use omachat_proto::{COMPATIBILITY_PROFILE, geohash::Geohash};
-use omachat_registry::CommandId;
+use omachat_registry::{
+    CommandId,
+    principal_proof::{
+        NostrPrincipalControlPayload, NostrPrincipalControlProof, NostrPrincipalType,
+    },
+    proof_bearing_claim::{ProofBearingDeviceHandleClaim, device_authorisation_hash},
+};
 use omachat_store::{
     AccountVault, BlockList, IdentityVault, LocalAccount, NostrDeliveryProfile, NostrOutbox,
-    PrincipalRegistryCacheLookup, ProviderKind, PublicArchive, PublicArchiveEntry,
-    RegistryCacheLookup, RegistryClaimIntentStore, SealedStore, VerifiedPrincipalRegistryCache,
-    VerifiedRegistryCache,
+    PrincipalRegistryCacheLookup, PrincipalRegistryClaimIntentStore, ProviderKind, PublicArchive,
+    PublicArchiveEntry, RegistryCacheLookup, RegistryClaimIntentStore, SealedStore,
+    VerifiedPrincipalRegistryCache, VerifiedRegistryCache,
 };
 use serde::Serialize;
 use serde_json::to_value;
@@ -224,7 +230,13 @@ pub enum RegistryClaimStatus {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegistryClaimResult {
     pub status: RegistryClaimStatus,
-    pub evidence: RegistryCacheLookup,
+    pub evidence: RegistryClaimEvidence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RegistryClaimEvidence {
+    RootClaimV2(Box<RegistryCacheLookup>),
+    PrincipalProofV1(Box<PrincipalRegistryCacheLookup>),
 }
 
 #[derive(Serialize)]
@@ -546,6 +558,28 @@ impl DaemonCore {
         requested_handle: &GlobalHandle,
         now: u64,
     ) -> Result<RegistryClaimResult, CoreError> {
+        let registry = self
+            .inner
+            .registry
+            .as_ref()
+            .ok_or(CoreError::RegistryUnconfigured)?;
+        match registry {
+            RegistryEvidenceBoundary::RootClaimV2(_) => {
+                self.claim_root_registry_handle_active(requested_handle, now)
+                    .await
+            }
+            RegistryEvidenceBoundary::PrincipalProofV1(_) => {
+                self.claim_principal_registry_handle_active(requested_handle, now)
+                    .await
+            }
+        }
+    }
+
+    async fn claim_root_registry_handle_active(
+        &self,
+        requested_handle: &GlobalHandle,
+        now: u64,
+    ) -> Result<RegistryClaimResult, CoreError> {
         let _claim = self.inner.registry_claim_transaction.lock().await;
         self.ensure_active()?;
         let registry = self
@@ -601,7 +635,9 @@ impl DaemonCore {
                     if cached.record.claim.binding() == &current_binding {
                         return Ok(RegistryClaimResult {
                             status: RegistryClaimStatus::AlreadyCurrent,
-                            evidence: preflight.lookup().clone(),
+                            evidence: RegistryClaimEvidence::RootClaimV2(Box::new(
+                                preflight.lookup().clone(),
+                            )),
                         });
                     }
                     cached.record.receipt.account_revision
@@ -650,7 +686,162 @@ impl DaemonCore {
         }
         Ok(RegistryClaimResult {
             status: RegistryClaimStatus::Accepted,
-            evidence,
+            evidence: RegistryClaimEvidence::RootClaimV2(Box::new(evidence)),
+        })
+    }
+
+    async fn claim_principal_registry_handle_active(
+        &self,
+        requested_handle: &GlobalHandle,
+        now: u64,
+    ) -> Result<RegistryClaimResult, CoreError> {
+        let _claim = self.inner.registry_claim_transaction.lock().await;
+        self.ensure_active()?;
+        let registry = match self
+            .inner
+            .registry
+            .as_ref()
+            .ok_or(CoreError::RegistryUnconfigured)?
+        {
+            RegistryEvidenceBoundary::PrincipalProofV1(registry) => registry,
+            RegistryEvidenceBoundary::RootClaimV2(_) => {
+                return Err(CoreError::RegistryProtocolOperationUnavailable);
+            }
+        };
+        let (account_id, current_binding) = {
+            let account = self.inner.account.lock().expect("account mutex poisoned");
+            let account = account.as_ref().ok_or(CoreError::Panicked)?;
+            (
+                account.public_identity().account_id,
+                account.binding().clone(),
+            )
+        };
+        if current_binding.handle.as_ref() != Some(requested_handle) {
+            return Err(CoreError::RegistryHandleConflict);
+        }
+        let (nostr_public_key, nostr_private_key) = {
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            (*nostr.public_key(), *nostr.private_key())
+        };
+
+        let pending = {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            PrincipalRegistryClaimIntentStore::new(&self.inner.store)
+                .load()
+                .map_err(CoreError::PrincipalRegistryClaimIntent)?
+        };
+        let claim = if let Some(pending) = pending {
+            if pending.claim().binding().account_id != account_id
+                || pending.claim().binding().handle.as_ref() != Some(requested_handle)
+                || pending.principal_proof().payload().nostr_public_key() != nostr_public_key
+            {
+                return Err(CoreError::RegistryHandleConflict);
+            }
+            pending
+        } else {
+            let preflight = registry
+                .resolve_account(&self.inner.store, &account_id, now)
+                .await
+                .map_err(CoreError::PrincipalRegistryEvidence)?;
+            if !preflight.is_online() {
+                return Err(CoreError::RegistryClaimPreflightOffline);
+            }
+            let expected_revision = match preflight.lookup() {
+                PrincipalRegistryCacheLookup::Missing => 0,
+                PrincipalRegistryCacheLookup::Fresh(cached) => {
+                    if cached.evidence.claim_receipt.handle.as_global_handle() != requested_handle {
+                        return Err(CoreError::RegistryHandleConflict);
+                    }
+                    if cached.evidence.claim.claim().binding() == &current_binding
+                        && cached
+                            .evidence
+                            .claim
+                            .principal_proof()
+                            .payload()
+                            .nostr_public_key()
+                            == nostr_public_key
+                    {
+                        return Ok(RegistryClaimResult {
+                            status: RegistryClaimStatus::AlreadyCurrent,
+                            evidence: RegistryClaimEvidence::PrincipalProofV1(Box::new(
+                                preflight.lookup().clone(),
+                            )),
+                        });
+                    }
+                    cached.evidence.claim_receipt.account_revision
+                }
+                PrincipalRegistryCacheLookup::OfflineStale(_)
+                | PrincipalRegistryCacheLookup::UnusableClockRollback(_) => {
+                    return Err(CoreError::RegistryClaimPreflightUnusable);
+                }
+            };
+            let command_id_bytes = random_bytes()?;
+            let command_id = CommandId::from_bytes(command_id_bytes);
+            let root_claim = {
+                let account = self.inner.account.lock().expect("account mutex poisoned");
+                let account = account.as_ref().ok_or(CoreError::Panicked)?;
+                if account.binding() != &current_binding {
+                    return Err(CoreError::RegistryBindingChanged);
+                }
+                account
+                    .sign_registry_handle_claim(command_id, expected_revision)
+                    .map_err(CoreError::RegistryClaim)?
+            };
+            let payload = NostrPrincipalControlPayload::new(
+                root_claim.claim_hash(),
+                command_id_bytes,
+                expected_revision,
+                root_claim.binding().account_id.as_str(),
+                requested_handle.as_str(),
+                NostrPrincipalType::Device,
+                nostr_public_key,
+                device_authorisation_hash(root_claim.binding()),
+                now,
+            )
+            .map_err(CoreError::PrincipalRegistryProof)?;
+            let principal_proof = NostrPrincipalControlProof::sign(payload, nostr_private_key)
+                .map_err(CoreError::PrincipalRegistryProof)?;
+            let claim = ProofBearingDeviceHandleClaim::new(root_claim, principal_proof)
+                .map_err(CoreError::ProofBearingRegistryClaim)?;
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            PrincipalRegistryClaimIntentStore::new(&self.inner.store)
+                .prepare(&claim)
+                .map_err(CoreError::PrincipalRegistryClaimIntent)?
+        };
+
+        let evidence = registry
+            .claim_device(&self.inner.store, &claim, now)
+            .await
+            .map_err(CoreError::PrincipalRegistryEvidence)?;
+        {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            PrincipalRegistryClaimIntentStore::new(&self.inner.store)
+                .clear(&claim)
+                .map_err(CoreError::PrincipalRegistryClaimIntent)?;
+        }
+        Ok(RegistryClaimResult {
+            status: RegistryClaimStatus::Accepted,
+            evidence: RegistryClaimEvidence::PrincipalProofV1(Box::new(evidence)),
         })
     }
 
@@ -2070,7 +2261,14 @@ fn registry_lookup_value(
 }
 
 fn registry_claim_value(handle: &GlobalHandle, result: &RegistryClaimResult) -> serde_json::Value {
-    let mut value = registry_lookup_value(handle, "online", &result.evidence);
+    let mut value = match &result.evidence {
+        RegistryClaimEvidence::RootClaimV2(evidence) => {
+            registry_lookup_value(handle, "online", evidence)
+        }
+        RegistryClaimEvidence::PrincipalProofV1(evidence) => {
+            principal_registry_lookup_value(handle, "online", evidence)
+        }
+    };
     let claim_status = match result.status {
         RegistryClaimStatus::AlreadyCurrent => "already-current",
         RegistryClaimStatus::Accepted => "accepted",

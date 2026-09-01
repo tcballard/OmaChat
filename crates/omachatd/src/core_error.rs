@@ -29,6 +29,9 @@ pub enum CoreError {
     PrincipalRegistryCache(omachat_store::PrincipalRegistryCacheError),
     RegistryClaim(omachat_registry::RegistryError),
     RegistryClaimIntent(omachat_store::RegistryClaimIntentError),
+    PrincipalRegistryClaimIntent(omachat_store::PrincipalRegistryClaimIntentError),
+    PrincipalRegistryProof(omachat_registry::principal_proof::NostrPrincipalProofError),
+    ProofBearingRegistryClaim(omachat_registry::proof_bearing_claim::ProofBearingClaimError),
     RegistryClaimPreflightOffline,
     RegistryClaimPreflightUnusable,
     RegistryClaimConfirmationRequired,
@@ -70,6 +73,10 @@ impl CoreError {
                 omachat_store::RegistryClaimIntentError::PendingConflict
                 | omachat_store::RegistryClaimIntentError::PendingMissing,
             ) => ErrorCode::Conflict,
+            Self::PrincipalRegistryClaimIntent(
+                omachat_store::PrincipalRegistryClaimIntentError::PendingConflict
+                | omachat_store::PrincipalRegistryClaimIntentError::PendingMissing,
+            ) => ErrorCode::Conflict,
             Self::RestartRequired => ErrorCode::Conflict,
             Self::Panicked
             | Self::RegistryUnconfigured
@@ -94,6 +101,9 @@ impl CoreError {
             | Self::PrincipalRegistryCache(_)
             | Self::RegistryClaim(_)
             | Self::RegistryClaimIntent(_)
+            | Self::PrincipalRegistryClaimIntent(_)
+            | Self::PrincipalRegistryProof(_)
+            | Self::ProofBearingRegistryClaim(_)
             | Self::RegistryClaimPreflightUnusable
             | Self::Nostr
             | Self::Encoding
@@ -138,6 +148,18 @@ impl fmt::Display for CoreError {
             Self::RegistryClaim(error) => write!(formatter, "registry claim failed: {error}"),
             Self::RegistryClaimIntent(error) => {
                 write!(formatter, "pending registry claim failed: {error}")
+            }
+            Self::PrincipalRegistryClaimIntent(error) => {
+                write!(
+                    formatter,
+                    "pending principal registry claim failed: {error}"
+                )
+            }
+            Self::PrincipalRegistryProof(error) => {
+                write!(formatter, "principal registry proof failed: {error}")
+            }
+            Self::ProofBearingRegistryClaim(error) => {
+                write!(formatter, "proof-bearing registry claim failed: {error}")
             }
             Self::RegistryClaimPreflightOffline => {
                 formatter.write_str("registry must be online before preparing a new handle claim")
@@ -203,6 +225,9 @@ impl Error for CoreError {
             Self::PrincipalRegistryCache(error) => Some(error),
             Self::RegistryClaim(error) => Some(error),
             Self::RegistryClaimIntent(error) => Some(error),
+            Self::PrincipalRegistryClaimIntent(error) => Some(error),
+            Self::PrincipalRegistryProof(error) => Some(error),
+            Self::ProofBearingRegistryClaim(error) => Some(error),
             _ => None,
         }
     }
