@@ -74,12 +74,59 @@ impl RegistryClientConfig {
     }
 }
 
+/// Explicit relay and quorum policy for publishing this principal's kind-0
+/// profile metadata. Absence keeps profile publication disabled.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfilePublicationConfig {
+    pub relays: Vec<String>,
+    pub required_acknowledgements: usize,
+}
+
+impl ProfilePublicationConfig {
+    fn validate(&self) -> Result<(), CoreError> {
+        if self.relays.is_empty()
+            || self.relays.len() > 16
+            || self.required_acknowledgements == 0
+            || self.required_acknowledgements > self.relays.len()
+        {
+            return Err(CoreError::InvalidConfig);
+        }
+        let mut canonical_relays = HashSet::with_capacity(self.relays.len());
+        for relay in &self.relays {
+            let url = url::Url::parse(relay).map_err(|_| CoreError::InvalidConfig)?;
+            let secure = url.scheme() == "wss";
+            let numeric_loopback = url.scheme() == "ws"
+                && match url.host() {
+                    Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                    Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                    _ => false,
+                };
+            if (!secure && !numeric_loopback)
+                || url.host_str().is_none()
+                || url.port_or_known_default().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || !canonical_relays.insert(url.to_string())
+            {
+                return Err(CoreError::InvalidConfig);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DaemonConfig {
     pub storage_provider: StorageProviderConfig,
     pub relays: Vec<String>,
     pub dm_relays: Vec<String>,
+    /// Explicit profile publication policy. Omission is a truthful disabled
+    /// state and never inherits geochat or private-message relays.
+    pub profile_publication: Option<ProfilePublicationConfig>,
     pub joined_geohashes: Vec<String>,
     /// Candidate global account handle. This remains local-only until a
     /// verified central-registry receipt is stored.
@@ -123,6 +170,9 @@ impl DaemonConfig {
             {
                 return Err(CoreError::InvalidConfig);
             }
+        }
+        if let Some(profile_publication) = &self.profile_publication {
+            profile_publication.validate()?;
         }
         for geohash in &self.joined_geohashes {
             Geohash::parse(geohash).map_err(|_| CoreError::InvalidConfig)?;
