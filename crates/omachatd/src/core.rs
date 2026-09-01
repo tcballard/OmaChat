@@ -1,9 +1,10 @@
 use crate::{
-    config::DaemonConfig,
+    config::{DaemonConfig, RegistryClientConfig, RegistryProtocol},
     core_error::CoreError,
     dm_inbox_service::{DmInboxHandle, DmInboxService},
     ipc_server::{EventHub, RequestHandler},
     nostr_service::NostrHandle,
+    principal_registry_evidence_service::PrincipalRegistryEvidenceService,
     registry_evidence_service::RegistryEvidenceService,
 };
 use omachat_crypto::{DisplayName, GlobalHandle, IdentitySecrets};
@@ -24,8 +25,9 @@ use omachat_proto::{COMPATIBILITY_PROFILE, geohash::Geohash};
 use omachat_registry::CommandId;
 use omachat_store::{
     AccountVault, BlockList, IdentityVault, LocalAccount, NostrDeliveryProfile, NostrOutbox,
-    ProviderKind, PublicArchive, PublicArchiveEntry, RegistryCacheLookup, RegistryClaimIntentStore,
-    SealedStore, VerifiedRegistryCache,
+    PrincipalRegistryCacheLookup, ProviderKind, PublicArchive, PublicArchiveEntry,
+    RegistryCacheLookup, RegistryClaimIntentStore, SealedStore, VerifiedPrincipalRegistryCache,
+    VerifiedRegistryCache,
 };
 use serde::Serialize;
 use serde_json::to_value;
@@ -154,6 +156,40 @@ struct RuntimeState {
     joined: BTreeSet<String>,
     blocked: BTreeSet<String>,
 }
+
+#[derive(Clone)]
+enum RegistryEvidenceBoundary {
+    RootClaimV2(RegistryEvidenceService),
+    PrincipalProofV1(PrincipalRegistryEvidenceService),
+}
+
+impl RegistryEvidenceBoundary {
+    fn from_config(config: &RegistryClientConfig) -> Result<Self, CoreError> {
+        match config.protocol {
+            RegistryProtocol::RootClaimV2 => {
+                RegistryEvidenceService::from_config(config).map(Self::RootClaimV2)
+            }
+            RegistryProtocol::PrincipalProofV1 => {
+                PrincipalRegistryEvidenceService::from_config(config).map(Self::PrincipalProofV1)
+            }
+        }
+    }
+
+    const fn protocol_name(&self) -> &'static str {
+        match self {
+            Self::RootClaimV2(_) => "root-claim-v2",
+            Self::PrincipalProofV1(_) => "principal-proof-v1",
+        }
+    }
+
+    fn root_claim_v2(&self) -> Result<&RegistryEvidenceService, CoreError> {
+        match self {
+            Self::RootClaimV2(service) => Ok(service),
+            Self::PrincipalProofV1(_) => Err(CoreError::RegistryProtocolOperationUnavailable),
+        }
+    }
+}
+
 struct CoreInner {
     store: SealedStore,
     identity: Mutex<Option<IdentitySecrets>>,
@@ -165,7 +201,7 @@ struct CoreInner {
     panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
-    registry: Option<RegistryEvidenceService>,
+    registry: Option<RegistryEvidenceBoundary>,
     registry_claim_transaction: tokio::sync::Mutex<()>,
     mailbox: Mutex<PrivateMailbox>,
     state: Mutex<RuntimeState>,
@@ -201,6 +237,7 @@ struct DaemonStatus<'a> {
     joined_geohashes: Vec<String>,
     relay_count: usize,
     dm_relay_count: usize,
+    registry_protocol: Option<&'static str>,
     outbox_pending: usize,
     outbox_failed: usize,
     account: AccountStatus,
@@ -232,7 +269,7 @@ impl DaemonCore {
         let registry = config
             .registry
             .as_ref()
-            .map(RegistryEvidenceService::from_config)
+            .map(RegistryEvidenceBoundary::from_config)
             .transpose()?;
         let identity = IdentityVault::load_or_create(&store).map_err(CoreError::IdentityStore)?;
         let (configured_handle, configured_display_name) = configured_account_profile(&config)?;
@@ -515,7 +552,8 @@ impl DaemonCore {
             .inner
             .registry
             .as_ref()
-            .ok_or(CoreError::RegistryUnconfigured)?;
+            .ok_or(CoreError::RegistryUnconfigured)?
+            .root_claim_v2()?;
         let (account_id, current_binding) = {
             let account = self.inner.account.lock().expect("account mutex poisoned");
             let account = account.as_ref().ok_or(CoreError::Panicked)?;
@@ -1056,7 +1094,8 @@ impl DaemonCore {
                     .inner
                     .registry
                     .as_ref()
-                    .ok_or(CoreError::RegistryUnconfigured)?;
+                    .ok_or(CoreError::RegistryUnconfigured)?
+                    .root_claim_v2()?;
                 let resolution = registry
                     .resolve_handle(&self.inner.store, &handle, unix_time()?)
                     .await
@@ -1074,7 +1113,8 @@ impl DaemonCore {
                     .inner
                     .registry
                     .as_ref()
-                    .ok_or(CoreError::RegistryUnconfigured)?;
+                    .ok_or(CoreError::RegistryUnconfigured)?
+                    .root_claim_v2()?;
                 let lookup = registry
                     .cached_handle(&self.inner.store, &handle, unix_time()?)
                     .await
@@ -1138,6 +1178,11 @@ impl DaemonCore {
             joined_geohashes: state.joined.iter().cloned().collect(),
             relay_count: config.relays.len(),
             dm_relay_count: config.dm_relays.len(),
+            registry_protocol: self
+                .inner
+                .registry
+                .as_ref()
+                .map(RegistryEvidenceBoundary::protocol_name),
             outbox_pending: pending,
             outbox_failed: failed,
             account,
@@ -1719,7 +1764,7 @@ impl DaemonCore {
         let registry_state = match (&binding.handle, &self.inner.registry) {
             (None, _) => "unconfigured",
             (Some(_), None) => "local-only",
-            (Some(handle), Some(registry)) => {
+            (Some(handle), Some(RegistryEvidenceBoundary::RootClaimV2(registry))) => {
                 let cache = VerifiedRegistryCache::load_or_create(
                     &self.inner.store,
                     *registry.pinned_public_key(),
@@ -1740,6 +1785,32 @@ impl DaemonCore {
                     }
                     RegistryCacheLookup::UnusableClockRollback(cached) => {
                         classify("unusable-clock-rollback", &cached)
+                    }
+                }
+            }
+            (Some(handle), Some(RegistryEvidenceBoundary::PrincipalProofV1(registry))) => {
+                let cache = VerifiedPrincipalRegistryCache::load_or_create(
+                    &self.inner.store,
+                    *registry.pinned_public_key(),
+                )
+                .map_err(CoreError::PrincipalRegistryCache)?;
+                let classify = |state, cached: &omachat_store::CachedPrincipalRegistryRecord| {
+                    if cached.evidence.claim_receipt.handle.as_global_handle() == handle {
+                        state
+                    } else {
+                        "registry-conflict"
+                    }
+                };
+                match cache.lookup_account(&binding.account_id, now, registry.max_age_seconds()) {
+                    PrincipalRegistryCacheLookup::Missing => "local-only",
+                    PrincipalRegistryCacheLookup::Fresh(cached) => {
+                        classify("verified-principal-fresh", &cached)
+                    }
+                    PrincipalRegistryCacheLookup::OfflineStale(cached) => {
+                        classify("verified-principal-offline-stale", &cached)
+                    }
+                    PrincipalRegistryCacheLookup::UnusableClockRollback(cached) => {
+                        classify("unusable-principal-clock-rollback", &cached)
                     }
                 }
             }

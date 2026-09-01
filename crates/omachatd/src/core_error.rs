@@ -21,6 +21,7 @@ pub enum CoreError {
         >,
     ),
     RegistryCache(omachat_store::RegistryCacheError),
+    PrincipalRegistryCache(omachat_store::PrincipalRegistryCacheError),
     RegistryClaim(omachat_registry::RegistryError),
     RegistryClaimIntent(omachat_store::RegistryClaimIntentError),
     RegistryClaimPreflightOffline,
@@ -29,6 +30,7 @@ pub enum CoreError {
     RegistryHandleConflict,
     RegistryBindingChanged,
     RegistryUnconfigured,
+    RegistryProtocolOperationUnavailable,
     InvalidConfig,
     InvalidCommand,
     InvalidGeohash,
@@ -64,9 +66,10 @@ impl CoreError {
                 | omachat_store::RegistryClaimIntentError::PendingMissing,
             ) => ErrorCode::Conflict,
             Self::RestartRequired => ErrorCode::Conflict,
-            Self::Panicked | Self::RegistryUnconfigured | Self::RegistryClaimPreflightOffline => {
-                ErrorCode::Unavailable
-            }
+            Self::Panicked
+            | Self::RegistryUnconfigured
+            | Self::RegistryProtocolOperationUnavailable
+            | Self::RegistryClaimPreflightOffline => ErrorCode::Unavailable,
             Self::NotJoined => ErrorCode::NotFound,
             Self::Io(_)
             | Self::Store(_)
@@ -82,6 +85,7 @@ impl CoreError {
             | Self::ProfileDiscovery(_)
             | Self::RegistryEvidence(_)
             | Self::RegistryCache(_)
+            | Self::PrincipalRegistryCache(_)
             | Self::RegistryClaim(_)
             | Self::RegistryClaimIntent(_)
             | Self::RegistryClaimPreflightUnusable
@@ -116,6 +120,9 @@ impl fmt::Display for CoreError {
                 write!(formatter, "registry evidence resolution failed: {error}")
             }
             Self::RegistryCache(error) => write!(formatter, "registry cache failed: {error}"),
+            Self::PrincipalRegistryCache(error) => {
+                write!(formatter, "principal registry cache failed: {error}")
+            }
             Self::RegistryClaim(error) => write!(formatter, "registry claim failed: {error}"),
             Self::RegistryClaimIntent(error) => {
                 write!(formatter, "pending registry claim failed: {error}")
@@ -135,6 +142,9 @@ impl fmt::Display for CoreError {
             }
             Self::RegistryUnconfigured => {
                 formatter.write_str("authoritative registry client is not configured")
+            }
+            Self::RegistryProtocolOperationUnavailable => {
+                formatter.write_str("command is unavailable for the configured registry protocol")
             }
             Self::InvalidConfig => formatter.write_str("daemon configuration is invalid"),
             Self::InvalidCommand => formatter.write_str("command is invalid in this context"),
@@ -177,6 +187,7 @@ impl Error for CoreError {
             Self::ProfileDiscovery(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
             Self::RegistryCache(error) => Some(error),
+            Self::PrincipalRegistryCache(error) => Some(error),
             Self::RegistryClaim(error) => Some(error),
             Self::RegistryClaimIntent(error) => Some(error),
             _ => None,
