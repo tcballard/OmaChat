@@ -45,7 +45,10 @@ impl Default for RelayInformationLimits {
 pub struct RelayInformation {
     name: Option<String>,
     description: Option<String>,
+    /// Administrative contact key from NIP-11 `pubkey`.
     pubkey: Option<String>,
+    /// Relay signing identity from NIP-11 `self`.
+    self_pubkey: Option<String>,
     contact: Option<String>,
     supported_nips: Vec<u32>,
     software: Option<String>,
@@ -84,16 +87,20 @@ impl RelayInformation {
             }
         };
 
-        let pubkey = match text("pubkey")? {
-            None => None,
-            Some(value) if value.is_empty() => None,
-            Some(value) => {
-                if !is_lowercase_hex(&value, 64) {
-                    return Err(RelayInformationError::InvalidPublicKey);
+        let public_key = |name: &'static str| -> Result<Option<String>, RelayInformationError> {
+            match text(name)? {
+                None => Ok(None),
+                Some(value) if value.is_empty() => Ok(None),
+                Some(value) => {
+                    if !is_lowercase_hex(&value, 64) {
+                        return Err(RelayInformationError::InvalidPublicKey);
+                    }
+                    Ok(Some(value))
                 }
-                Some(value)
             }
         };
+        let pubkey = public_key("pubkey")?;
+        let self_pubkey = public_key("self")?;
 
         let mut supported_nips = Vec::new();
         match fields.get("supported_nips") {
@@ -140,6 +147,7 @@ impl RelayInformation {
             name: text("name")?,
             description: text("description")?,
             pubkey,
+            self_pubkey,
             contact: text("contact")?,
             supported_nips,
             software: text("software")?,
@@ -159,10 +167,16 @@ impl RelayInformation {
         self.description.as_deref()
     }
 
-    /// The relay's self-declared public key, if it declared one.
+    /// Administrative contact key from NIP-11 `pubkey`.
     #[must_use]
     pub fn pubkey(&self) -> Option<&str> {
         self.pubkey.as_deref()
+    }
+
+    /// Relay signing identity from NIP-11 `self`.
+    #[must_use]
+    pub fn self_pubkey(&self) -> Option<&str> {
+        self.self_pubkey.as_deref()
     }
 
     #[must_use]

@@ -140,7 +140,7 @@ impl TrustedRelayIdentities {
     ) -> Result<RelayIdentityObservation, RoomIdentityError> {
         let url = normalize_relay_url(relay_url)?;
         let presented = information
-            .pubkey()
+            .self_pubkey()
             .ok_or_else(|| RoomIdentityError::MissingRelayIdentity { url: url.clone() })?;
         if !is_lowercase_hex(presented, 64) {
             return Err(RoomIdentityError::InvalidRelayIdentity);
