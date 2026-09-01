@@ -17,6 +17,7 @@ mod profile_publication_store;
 mod registry_evidence_service;
 mod relay_list_cache_store;
 mod relay_list_discovery_service;
+mod relay_list_publication_store;
 
 pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
@@ -67,4 +68,9 @@ pub use relay_list_cache_store::{
 pub use relay_list_discovery_service::{
     SealedRelayListDiscoveryResult, SealedRelayListDiscoveryService,
     SealedRelayListDiscoveryServiceError,
+};
+pub use relay_list_publication_store::{
+    PendingRelayListPublication, RELAY_LIST_PUBLICATION_INTENT_RECORD_NAME,
+    RelayListPublicationIntentError, RelayListPublicationIntentState,
+    RelayListPublicationIntentStore, RelayListPublicationMutation, RelayListPublicationProgress,
 };
