@@ -5,6 +5,36 @@
 //! bytes, while clients accept a receipt only after verifying a separately
 //! pinned registry key and the exact signed claim.
 
+mod evidence;
+mod principal_client;
+mod principal_evidence;
+mod principal_protocol;
+mod principal_service;
+mod websocket;
+mod websocket_server;
+
+pub use evidence::{RegistryEvidenceClient, RegistryEvidenceError, RegistryEvidenceResolution};
+pub use principal_client::{PrincipalRegistryClient, PrincipalRegistryClientError};
+pub use principal_evidence::{
+    PrincipalRegistryEvidenceClient, PrincipalRegistryEvidenceError,
+    PrincipalRegistryEvidenceResolution,
+};
+pub use principal_protocol::{
+    MAX_PRINCIPAL_REGISTRY_MESSAGE_BYTES, PRINCIPAL_REGISTRY_TRANSPORT_VERSION,
+    PrincipalRegistryClaim, PrincipalRegistryOperation, PrincipalRegistryProtocolError,
+    PrincipalRegistryRecordWire, PrincipalRegistryRemoteCode, PrincipalRegistryRemoteError,
+    PrincipalRegistryRequest, PrincipalRegistryResponse, PrincipalRegistryResponseOutcome,
+    VerifiedPrincipalRegistryRecord, decode_principal_request, decode_principal_response,
+    encode_principal_request, encode_principal_response,
+};
+pub use principal_service::{PrincipalRegistryService, PrincipalRegistryServiceError};
+pub use websocket::{RegistryWebSocketError, RegistryWebSocketTransport};
+pub use websocket_server::{
+    MAX_REGISTRY_REQUESTS_PER_CONNECTION, PendingRegistryWebSocketRequest,
+    RegistryWebSocketServerError, accept_registry_websocket_request,
+    serve_registry_websocket_connection,
+};
+
 use omachat_crypto::{AccountId, GlobalHandle, SignedLocalAccountBinding};
 use omachat_registry::{
     AcceptedRegistryRecord, CommandId, HandleClaim, RegistryError, RegistryReceipt, RegistryState,

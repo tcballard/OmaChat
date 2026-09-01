@@ -1,9 +1,22 @@
 use crate::core_error::CoreError;
+use ed25519_dalek::VerifyingKey;
 use omachat_crypto::{DisplayName, GlobalHandle};
 use omachat_proto::geohash::Geohash;
+use omachat_registry_transport::RegistryWebSocketTransport;
 use omachat_store::RequestedProvider;
 use serde::Deserialize;
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
+
+/// Wire and evidence contract expected from the configured registry endpoint.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegistryProtocol {
+    /// Existing account-root-only claim and receipt protocol.
+    #[default]
+    RootClaimV2,
+    /// Root claim plus independently signed Nostr-principal proof protocol.
+    PrincipalProofV1,
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -23,16 +36,58 @@ impl From<StorageProviderConfig> for RequestedProvider {
     }
 }
 
+/// Client-side trust and freshness policy for the authoritative handle registry.
+///
+/// The public key is pinned independently from the endpoint so DNS or TLS
+/// compromise cannot replace signed registry evidence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryClientConfig {
+    pub endpoint: String,
+    pub pinned_public_key: String,
+    pub max_age_seconds: u64,
+    /// Omission preserves the existing root-claim-v2 behavior.
+    #[serde(default)]
+    pub protocol: RegistryProtocol,
+}
+
+impl RegistryClientConfig {
+    pub fn pinned_public_key_bytes(&self) -> Result<[u8; 32], CoreError> {
+        let mut public_key = [0_u8; 32];
+        hex::decode_to_slice(&self.pinned_public_key, &mut public_key)
+            .map_err(|_| CoreError::InvalidConfig)?;
+        let verifying_key =
+            VerifyingKey::from_bytes(&public_key).map_err(|_| CoreError::InvalidConfig)?;
+        if verifying_key.is_weak() {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(public_key)
+    }
+
+    fn validate(&self) -> Result<(), CoreError> {
+        RegistryWebSocketTransport::new(&self.endpoint).map_err(|_| CoreError::InvalidConfig)?;
+        self.pinned_public_key_bytes()?;
+        if self.max_age_seconds == 0 {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DaemonConfig {
     pub storage_provider: StorageProviderConfig,
     pub relays: Vec<String>,
+    pub dm_relays: Vec<String>,
     pub joined_geohashes: Vec<String>,
     /// Candidate global account handle. This remains local-only until a
     /// verified central-registry receipt is stored.
     pub account_handle: Option<String>,
     pub account_display_name: Option<String>,
+    /// Optional authoritative-registry client. Absence means local-only
+    /// handles and must never be interpreted as a failed global claim.
+    pub registry: Option<RegistryClientConfig>,
     /// Public geohash-chat nickname. This is deliberately independent from
     /// the persistent global account profile.
     pub nickname: Option<String>,
@@ -53,6 +108,22 @@ impl DaemonConfig {
                 return Err(CoreError::InvalidConfig);
             }
         }
+        if self.dm_relays.len() > 16 {
+            return Err(CoreError::InvalidConfig);
+        }
+        let mut private_relays = HashSet::with_capacity(self.dm_relays.len());
+        for relay in &self.dm_relays {
+            let url = url::Url::parse(relay).map_err(|_| CoreError::InvalidConfig)?;
+            if !matches!(url.scheme(), "ws" | "wss")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
+                || !private_relays.insert(url.to_string())
+            {
+                return Err(CoreError::InvalidConfig);
+            }
+        }
         for geohash in &self.joined_geohashes {
             Geohash::parse(geohash).map_err(|_| CoreError::InvalidConfig)?;
         }
@@ -61,6 +132,9 @@ impl DaemonConfig {
         }
         if let Some(display_name) = &self.account_display_name {
             DisplayName::parse(display_name).map_err(|_| CoreError::InvalidConfig)?;
+        }
+        if let Some(registry) = &self.registry {
+            registry.validate()?;
         }
         if self
             .nickname

@@ -154,6 +154,65 @@ impl RelayPool {
         })
     }
 
+    /// Publish only to an explicitly eligible subset of relay indices.
+    ///
+    /// This supports protocols that require an authenticated connection state
+    /// before an event may be sent. Callers cannot satisfy the threshold with
+    /// connected relays outside `relay_indices`.
+    pub async fn publish_to_indices(
+        &self,
+        event: SignedEvent,
+        relay_indices: &HashSet<usize>,
+        acknowledgement_threshold: usize,
+    ) -> Result<PoolPublishResult, RelayPoolError> {
+        if relay_indices.is_empty()
+            || acknowledgement_threshold == 0
+            || acknowledgement_threshold > relay_indices.len()
+            || relay_indices
+                .iter()
+                .any(|relay_index| *relay_index >= self.connections.len())
+        {
+            return Err(RelayPoolError::InvalidConfig(
+                "selected relay indices and threshold must fit the pool",
+            ));
+        }
+        let attempts = self
+            .connections
+            .iter()
+            .enumerate()
+            .filter(|(relay_index, connection)| {
+                relay_indices.contains(relay_index)
+                    && *connection.health().borrow() == RelayHealth::Connected
+            })
+            .map(|(relay_index, connection)| {
+                let event = event.clone();
+                async move {
+                    RelayPublishOutcome {
+                        relay_index,
+                        result: connection.publish(event).await,
+                    }
+                }
+            });
+        let outcomes = join_all(attempts).await;
+        let attempted = outcomes.len();
+        let accepted = outcomes
+            .iter()
+            .filter(|outcome| outcome.result.is_ok())
+            .count();
+        if accepted < acknowledgement_threshold {
+            return Err(RelayPoolError::AcknowledgementThreshold {
+                accepted,
+                required: acknowledgement_threshold,
+                attempted,
+            });
+        }
+        Ok(PoolPublishResult {
+            accepted,
+            attempted,
+            outcomes,
+        })
+    }
+
     /// Store and send one logical subscription to every relay. Repeating an
     /// identical subscription is a no-op; changing its filters replaces it.
     pub async fn subscribe(

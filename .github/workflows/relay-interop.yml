@@ -1,0 +1,26 @@
+name: Relay interoperability
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-interop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  grain-v0-7-1:
+    name: Grain v0.7.1 black-box contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Probe authenticated private inbox persistence
+        run: ./scripts/test-grain-relay.sh

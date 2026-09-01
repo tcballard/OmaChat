@@ -1470,6 +1470,7 @@ version = "0.0.1"
 dependencies = [
  "ed25519-dalek",
  "hex",
+ "k256",
  "omachat-crypto",
  "serde",
  "serde_json",
@@ -1477,9 +1478,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "omachat-registry-host"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "k256",
+ "omachat-crypto",
+ "omachat-registry",
+ "omachat-registry-transport",
+ "omachat-store",
+ "rustix",
+ "tempfile",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "omachat-registry-transport"
 version = "0.0.1"
 dependencies = [
+ "futures-util",
+ "k256",
  "omachat-crypto",
  "omachat-registry",
  "omachat-store",
@@ -1487,6 +1506,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-tungstenite",
+ "url",
 ]
 
 [[package]]
@@ -1496,6 +1517,7 @@ dependencies = [
  "chacha20poly1305",
  "getrandom 0.4.3",
  "hex",
+ "k256",
  "omachat-crypto",
  "omachat-registry",
  "secret-service",
@@ -1520,12 +1542,17 @@ dependencies = [
 name = "omachatd"
 version = "0.0.1"
 dependencies = [
+ "ed25519-dalek",
  "futures-util",
  "getrandom 0.4.3",
  "hex",
+ "k256",
  "omachat-crypto",
  "omachat-nostr",
  "omachat-proto",
+ "omachat-registry",
+ "omachat-registry-host",
+ "omachat-registry-transport",
  "omachat-store",
  "serde",
  "serde_json",

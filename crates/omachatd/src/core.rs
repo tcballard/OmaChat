@@ -1,23 +1,39 @@
 use crate::{
-    config::DaemonConfig,
+    config::{DaemonConfig, RegistryClientConfig, RegistryProtocol},
     core_error::CoreError,
+    dm_inbox_service::{DmInboxHandle, DmInboxService},
     ipc_server::{EventHub, RequestHandler},
     nostr_service::NostrHandle,
+    principal_registry_evidence_service::PrincipalRegistryEvidenceService,
+    registry_evidence_service::RegistryEvidenceService,
 };
 use omachat_crypto::{DisplayName, GlobalHandle, IdentitySecrets};
 use omachat_nostr::{
+    auth::RelayAuthSigner,
+    dm_inbox::DmInboxReceive,
+    dm_inbox_runtime::DmInboxRuntimeEvent,
     envelope::{CreateEnvelope, RumorShape, create as create_private_envelope},
     event::{EventLimits, SignedEvent, xonly_public_key},
     geochat::{ChatInput, ParsedGeoEvent, create_chat, parse_geo_event, subscription_filter},
+    gift_wrap::{ChatRecipient, GiftWrapPersistence, create_chat_rumor, create_gift_wrap},
     mailbox::{MailboxReceive, PrivateMailbox},
     pool::PoolNotification,
     relay::RelayNotification,
 };
 use omachat_proto::ipc::{Command, ErrorBody, ErrorCode, Event, Request, ResponseOutcome, VERSION};
 use omachat_proto::{COMPATIBILITY_PROFILE, geohash::Geohash};
+use omachat_registry::{
+    CommandId,
+    principal_proof::{
+        NostrPrincipalControlPayload, NostrPrincipalControlProof, NostrPrincipalType,
+    },
+    proof_bearing_claim::{ProofBearingDeviceHandleClaim, device_authorisation_hash},
+};
 use omachat_store::{
-    AccountVault, BlockList, IdentityVault, LocalAccount, NostrOutbox, ProviderKind, PublicArchive,
-    PublicArchiveEntry, SealedStore,
+    AccountVault, BlockList, IdentityVault, LocalAccount, NostrDeliveryProfile, NostrOutbox,
+    PrincipalRegistryCacheLookup, PrincipalRegistryClaimIntentStore, ProviderKind, PublicArchive,
+    PublicArchiveEntry, RegistryCacheLookup, RegistryClaimIntentStore, SealedStore,
+    VerifiedPrincipalRegistryCache, VerifiedRegistryCache,
 };
 use serde::Serialize;
 use serde_json::to_value;
@@ -146,6 +162,40 @@ struct RuntimeState {
     joined: BTreeSet<String>,
     blocked: BTreeSet<String>,
 }
+
+#[derive(Clone)]
+enum RegistryEvidenceBoundary {
+    RootClaimV2(RegistryEvidenceService),
+    PrincipalProofV1(PrincipalRegistryEvidenceService),
+}
+
+impl RegistryEvidenceBoundary {
+    fn from_config(config: &RegistryClientConfig) -> Result<Self, CoreError> {
+        match config.protocol {
+            RegistryProtocol::RootClaimV2 => {
+                RegistryEvidenceService::from_config(config).map(Self::RootClaimV2)
+            }
+            RegistryProtocol::PrincipalProofV1 => {
+                PrincipalRegistryEvidenceService::from_config(config).map(Self::PrincipalProofV1)
+            }
+        }
+    }
+
+    const fn protocol_name(&self) -> &'static str {
+        match self {
+            Self::RootClaimV2(_) => "root-claim-v2",
+            Self::PrincipalProofV1(_) => "principal-proof-v1",
+        }
+    }
+
+    fn root_claim_v2(&self) -> Result<&RegistryEvidenceService, CoreError> {
+        match self {
+            Self::RootClaimV2(service) => Ok(service),
+            Self::PrincipalProofV1(_) => Err(CoreError::RegistryProtocolOperationUnavailable),
+        }
+    }
+}
+
 struct CoreInner {
     store: SealedStore,
     identity: Mutex<Option<IdentitySecrets>>,
@@ -156,6 +206,9 @@ struct CoreInner {
     outbox_drain: tokio::sync::Mutex<()>,
     panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
+    dm_inbox: Mutex<Option<DmInboxHandle>>,
+    registry: Option<RegistryEvidenceBoundary>,
+    registry_claim_transaction: tokio::sync::Mutex<()>,
     mailbox: Mutex<PrivateMailbox>,
     state: Mutex<RuntimeState>,
     config: Mutex<DaemonConfig>,
@@ -168,6 +221,24 @@ pub struct DaemonCore {
     inner: Arc<CoreInner>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegistryClaimStatus {
+    AlreadyCurrent,
+    Accepted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegistryClaimResult {
+    pub status: RegistryClaimStatus,
+    pub evidence: RegistryClaimEvidence,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RegistryClaimEvidence {
+    RootClaimV2(Box<RegistryCacheLookup>),
+    PrincipalProofV1(Box<PrincipalRegistryCacheLookup>),
+}
+
 #[derive(Serialize)]
 struct DaemonStatus<'a> {
     compatibility_profile: &'a str,
@@ -177,6 +248,8 @@ struct DaemonStatus<'a> {
     nostr_public_key: String,
     joined_geohashes: Vec<String>,
     relay_count: usize,
+    dm_relay_count: usize,
+    registry_protocol: Option<&'static str>,
     outbox_pending: usize,
     outbox_failed: usize,
     account: AccountStatus,
@@ -190,8 +263,8 @@ struct AccountStatus {
     display_name: Option<String>,
     binding_revision: u64,
     binding_issued_at: u64,
-    /// `local-only` is an explicit non-claim: no central registry receipt has
-    /// established global uniqueness yet.
+    /// Registry evidence state is derived from the independently pinned,
+    /// sealed cache. `local-only` remains an explicit non-claim.
     registry_state: &'static str,
 }
 
@@ -205,6 +278,11 @@ impl DaemonCore {
         let store = SealedStore::open(&state_directory, config.storage_provider.into())
             .await
             .map_err(CoreError::Store)?;
+        let registry = config
+            .registry
+            .as_ref()
+            .map(RegistryEvidenceBoundary::from_config)
+            .transpose()?;
         let identity = IdentityVault::load_or_create(&store).map_err(CoreError::IdentityStore)?;
         let (configured_handle, configured_display_name) = configured_account_profile(&config)?;
         let account = AccountVault::load_or_create(
@@ -247,6 +325,9 @@ impl DaemonCore {
                 outbox_drain: tokio::sync::Mutex::new(()),
                 panic: PanicLifecycle::default(),
                 nostr: Mutex::new(None),
+                dm_inbox: Mutex::new(None),
+                registry,
+                registry_claim_transaction: tokio::sync::Mutex::new(()),
                 mailbox: Mutex::new(mailbox),
                 state: Mutex::new(RuntimeState { joined, blocked }),
                 config: Mutex::new(config),
@@ -298,6 +379,573 @@ impl DaemonCore {
                 .expect("Nostr handle mutex poisoned") = Some(handle);
             Ok(())
         })
+    }
+
+    pub fn remember_dm_relay_list(
+        &self,
+        event: &SignedEvent,
+        expected_recipient_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<omachat_nostr::dm_relay_cache::CacheMutation, CoreError> {
+        self.with_active_transition(|| {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            crate::dm_relay_cache_store::SealedDmRelayCache::new(&self.inner.store)
+                .verify_and_save(
+                    event,
+                    expected_recipient_public_key,
+                    now,
+                    &EventLimits::default(),
+                    &omachat_nostr::inbox::DmInboxPolicy::default(),
+                )
+                .map_err(CoreError::DmRelayCache)
+        })
+    }
+
+    pub async fn discover_dm_relay_list(
+        &self,
+        recipient_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<omachat_nostr::dm_relay_cache::CacheMutation, CoreError> {
+        let _operation = self.inner.operations.read().await;
+        let (relay_configs, auth_signer) = self.with_active_transition(|| {
+            let relay_configs = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .dm_relays
+                .iter()
+                .cloned()
+                .map(|url| {
+                    omachat_nostr::relay::RelayConfig::new(
+                        url,
+                        omachat_nostr::relay::RelayRoute::Direct,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let auth_signer = RelayAuthSigner::from_secret_key(*nostr.private_key())
+                .map_err(|_| CoreError::Nostr)?;
+            Ok((relay_configs, auth_signer))
+        })?;
+        let discovered = omachat_nostr::dm_relay_discovery::discover_dm_relay_list(
+            relay_configs,
+            auth_signer,
+            recipient_public_key,
+            now,
+            &EventLimits::default(),
+            &omachat_nostr::inbox::DmInboxPolicy::default(),
+            &omachat_nostr::dm_relay_discovery::DmRelayDiscoveryConfig::default(),
+        )
+        .await
+        .map_err(CoreError::DmRelayDiscovery)?;
+        self.remember_dm_relay_list(&discovered.event, recipient_public_key, now)
+    }
+
+    pub async fn discover_profile_metadata(
+        &self,
+        participant_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<
+        (
+            omachat_nostr::profile_cache::ProfileCacheMutation,
+            omachat_nostr::profile_verification::VerifiedNostrProfile,
+        ),
+        CoreError,
+    > {
+        let _operation = self.inner.operations.read().await;
+        let (relay_configs, auth_signer) = self.with_active_transition(|| {
+            let relay_configs = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .dm_relays
+                .iter()
+                .cloned()
+                .map(|url| {
+                    omachat_nostr::relay::RelayConfig::new(
+                        url,
+                        omachat_nostr::relay::RelayRoute::Direct,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let auth_signer = RelayAuthSigner::from_secret_key(*nostr.private_key())
+                .map_err(|_| CoreError::Nostr)?;
+            Ok((relay_configs, auth_signer))
+        })?;
+        let discovered = omachat_nostr::profile_discovery::discover_profile_metadata(
+            relay_configs,
+            auth_signer,
+            participant_public_key,
+            now,
+            &EventLimits::default(),
+            &omachat_nostr::profile_discovery::ProfileDiscoveryConfig::default(),
+        )
+        .await
+        .map_err(CoreError::ProfileDiscovery)?;
+        let mutation = self.with_active_transition(|| {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            crate::profile_cache_store::SealedProfileCache::new(&self.inner.store)
+                .verify_and_save(
+                    &discovered.event,
+                    participant_public_key,
+                    now,
+                    &EventLimits::default(),
+                )
+                .map_err(CoreError::ProfileCache)
+        })?;
+        Ok((mutation, discovered.profile))
+    }
+
+    pub fn cached_profile(
+        &self,
+        participant_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<crate::profile_cache_store::SealedProfileCacheLookup, CoreError> {
+        self.with_active_transition(|| {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            crate::profile_cache_store::SealedProfileCache::new(&self.inner.store)
+                .lookup(
+                    participant_public_key,
+                    now,
+                    omachat_nostr::profile_cache::DEFAULT_PROFILE_FRESHNESS_SECONDS,
+                    &EventLimits::default(),
+                )
+                .map_err(CoreError::ProfileCache)
+        })
+    }
+
+    /// Claim the configured local account handle through the authoritative
+    /// registry while preserving one exact signed command across every crash
+    /// and ambiguous transport outcome.
+    pub async fn claim_configured_registry_handle(
+        &self,
+        requested_handle: &GlobalHandle,
+        now: u64,
+    ) -> Result<RegistryClaimResult, CoreError> {
+        let _operation = self.inner.operations.read().await;
+        self.ensure_active()?;
+        self.claim_configured_registry_handle_active(requested_handle, now)
+            .await
+    }
+
+    async fn claim_configured_registry_handle_active(
+        &self,
+        requested_handle: &GlobalHandle,
+        now: u64,
+    ) -> Result<RegistryClaimResult, CoreError> {
+        let registry = self
+            .inner
+            .registry
+            .as_ref()
+            .ok_or(CoreError::RegistryUnconfigured)?;
+        match registry {
+            RegistryEvidenceBoundary::RootClaimV2(_) => {
+                self.claim_root_registry_handle_active(requested_handle, now)
+                    .await
+            }
+            RegistryEvidenceBoundary::PrincipalProofV1(_) => {
+                self.claim_principal_registry_handle_active(requested_handle, now)
+                    .await
+            }
+        }
+    }
+
+    async fn claim_root_registry_handle_active(
+        &self,
+        requested_handle: &GlobalHandle,
+        now: u64,
+    ) -> Result<RegistryClaimResult, CoreError> {
+        let _claim = self.inner.registry_claim_transaction.lock().await;
+        self.ensure_active()?;
+        let registry = self
+            .inner
+            .registry
+            .as_ref()
+            .ok_or(CoreError::RegistryUnconfigured)?
+            .root_claim_v2()?;
+        let (account_id, current_binding) = {
+            let account = self.inner.account.lock().expect("account mutex poisoned");
+            let account = account.as_ref().ok_or(CoreError::Panicked)?;
+            (
+                account.public_identity().account_id,
+                account.binding().clone(),
+            )
+        };
+        if current_binding.handle.as_ref() != Some(requested_handle) {
+            return Err(CoreError::RegistryHandleConflict);
+        }
+
+        let pending = {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            RegistryClaimIntentStore::new(&self.inner.store)
+                .load()
+                .map_err(CoreError::RegistryClaimIntent)?
+        };
+        let claim = if let Some(pending) = pending {
+            if pending.binding().account_id != account_id
+                || pending.binding().handle.as_ref() != Some(requested_handle)
+            {
+                return Err(CoreError::RegistryHandleConflict);
+            }
+            pending
+        } else {
+            let preflight = registry
+                .resolve_account(&self.inner.store, &account_id, now)
+                .await
+                .map_err(CoreError::RegistryEvidence)?;
+            if !preflight.is_online() {
+                return Err(CoreError::RegistryClaimPreflightOffline);
+            }
+            let expected_revision = match preflight.lookup() {
+                RegistryCacheLookup::Missing => 0,
+                RegistryCacheLookup::Fresh(cached) => {
+                    if cached.record.receipt.handle.as_global_handle() != requested_handle {
+                        return Err(CoreError::RegistryHandleConflict);
+                    }
+                    if cached.record.claim.binding() == &current_binding {
+                        return Ok(RegistryClaimResult {
+                            status: RegistryClaimStatus::AlreadyCurrent,
+                            evidence: RegistryClaimEvidence::RootClaimV2(Box::new(
+                                preflight.lookup().clone(),
+                            )),
+                        });
+                    }
+                    cached.record.receipt.account_revision
+                }
+                RegistryCacheLookup::OfflineStale(_)
+                | RegistryCacheLookup::UnusableClockRollback(_) => {
+                    return Err(CoreError::RegistryClaimPreflightUnusable);
+                }
+            };
+            let command_id = CommandId::from_bytes(random_bytes()?);
+            let claim = {
+                let account = self.inner.account.lock().expect("account mutex poisoned");
+                let account = account.as_ref().ok_or(CoreError::Panicked)?;
+                if account.binding() != &current_binding {
+                    return Err(CoreError::RegistryBindingChanged);
+                }
+                account
+                    .sign_registry_handle_claim(command_id, expected_revision)
+                    .map_err(CoreError::RegistryClaim)?
+            };
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            RegistryClaimIntentStore::new(&self.inner.store)
+                .prepare(&claim)
+                .map_err(CoreError::RegistryClaimIntent)?
+        };
+
+        let evidence = registry
+            .claim_handle(&self.inner.store, &claim, now)
+            .await
+            .map_err(CoreError::RegistryEvidence)?;
+        {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            RegistryClaimIntentStore::new(&self.inner.store)
+                .clear(&claim)
+                .map_err(CoreError::RegistryClaimIntent)?;
+        }
+        Ok(RegistryClaimResult {
+            status: RegistryClaimStatus::Accepted,
+            evidence: RegistryClaimEvidence::RootClaimV2(Box::new(evidence)),
+        })
+    }
+
+    async fn claim_principal_registry_handle_active(
+        &self,
+        requested_handle: &GlobalHandle,
+        now: u64,
+    ) -> Result<RegistryClaimResult, CoreError> {
+        let _claim = self.inner.registry_claim_transaction.lock().await;
+        self.ensure_active()?;
+        let registry = match self
+            .inner
+            .registry
+            .as_ref()
+            .ok_or(CoreError::RegistryUnconfigured)?
+        {
+            RegistryEvidenceBoundary::PrincipalProofV1(registry) => registry,
+            RegistryEvidenceBoundary::RootClaimV2(_) => {
+                return Err(CoreError::RegistryProtocolOperationUnavailable);
+            }
+        };
+        let (account_id, current_binding) = {
+            let account = self.inner.account.lock().expect("account mutex poisoned");
+            let account = account.as_ref().ok_or(CoreError::Panicked)?;
+            (
+                account.public_identity().account_id,
+                account.binding().clone(),
+            )
+        };
+        if current_binding.handle.as_ref() != Some(requested_handle) {
+            return Err(CoreError::RegistryHandleConflict);
+        }
+        let (nostr_public_key, nostr_private_key) = {
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            (*nostr.public_key(), *nostr.private_key())
+        };
+
+        let pending = {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            PrincipalRegistryClaimIntentStore::new(&self.inner.store)
+                .load()
+                .map_err(CoreError::PrincipalRegistryClaimIntent)?
+        };
+        let claim = if let Some(pending) = pending {
+            if pending.claim().binding().account_id != account_id
+                || pending.claim().binding().handle.as_ref() != Some(requested_handle)
+                || pending.principal_proof().payload().nostr_public_key() != nostr_public_key
+            {
+                return Err(CoreError::RegistryHandleConflict);
+            }
+            pending
+        } else {
+            let preflight = registry
+                .resolve_account(&self.inner.store, &account_id, now)
+                .await
+                .map_err(CoreError::PrincipalRegistryEvidence)?;
+            if !preflight.is_online() {
+                return Err(CoreError::RegistryClaimPreflightOffline);
+            }
+            let expected_revision = match preflight.lookup() {
+                PrincipalRegistryCacheLookup::Missing => 0,
+                PrincipalRegistryCacheLookup::Fresh(cached) => {
+                    if cached.evidence.claim_receipt.handle.as_global_handle() != requested_handle {
+                        return Err(CoreError::RegistryHandleConflict);
+                    }
+                    if cached.evidence.claim.claim().binding() == &current_binding
+                        && cached
+                            .evidence
+                            .claim
+                            .principal_proof()
+                            .payload()
+                            .nostr_public_key()
+                            == nostr_public_key
+                    {
+                        return Ok(RegistryClaimResult {
+                            status: RegistryClaimStatus::AlreadyCurrent,
+                            evidence: RegistryClaimEvidence::PrincipalProofV1(Box::new(
+                                preflight.lookup().clone(),
+                            )),
+                        });
+                    }
+                    cached.evidence.claim_receipt.account_revision
+                }
+                PrincipalRegistryCacheLookup::OfflineStale(_)
+                | PrincipalRegistryCacheLookup::UnusableClockRollback(_) => {
+                    return Err(CoreError::RegistryClaimPreflightUnusable);
+                }
+            };
+            let command_id_bytes = random_bytes()?;
+            let command_id = CommandId::from_bytes(command_id_bytes);
+            let root_claim = {
+                let account = self.inner.account.lock().expect("account mutex poisoned");
+                let account = account.as_ref().ok_or(CoreError::Panicked)?;
+                if account.binding() != &current_binding {
+                    return Err(CoreError::RegistryBindingChanged);
+                }
+                account
+                    .sign_registry_handle_claim(command_id, expected_revision)
+                    .map_err(CoreError::RegistryClaim)?
+            };
+            let payload = NostrPrincipalControlPayload::new(
+                root_claim.claim_hash(),
+                command_id_bytes,
+                expected_revision,
+                root_claim.binding().account_id.as_str(),
+                requested_handle.as_str(),
+                NostrPrincipalType::Device,
+                nostr_public_key,
+                device_authorisation_hash(root_claim.binding()),
+                now,
+            )
+            .map_err(CoreError::PrincipalRegistryProof)?;
+            let principal_proof = NostrPrincipalControlProof::sign(payload, nostr_private_key)
+                .map_err(CoreError::PrincipalRegistryProof)?;
+            let claim = ProofBearingDeviceHandleClaim::new(root_claim, principal_proof)
+                .map_err(CoreError::ProofBearingRegistryClaim)?;
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            PrincipalRegistryClaimIntentStore::new(&self.inner.store)
+                .prepare(&claim)
+                .map_err(CoreError::PrincipalRegistryClaimIntent)?
+        };
+
+        let evidence = registry
+            .claim_device(&self.inner.store, &claim, now)
+            .await
+            .map_err(CoreError::PrincipalRegistryEvidence)?;
+        {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            PrincipalRegistryClaimIntentStore::new(&self.inner.store)
+                .clear(&claim)
+                .map_err(CoreError::PrincipalRegistryClaimIntent)?;
+        }
+        Ok(RegistryClaimResult {
+            status: RegistryClaimStatus::Accepted,
+            evidence: RegistryClaimEvidence::PrincipalProofV1(Box::new(evidence)),
+        })
+    }
+
+    pub async fn start_dm_inbox(
+        &self,
+        inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
+    ) -> Result<Option<DmInboxService>, CoreError> {
+        let (ready, _ready_receiver) = tokio::sync::mpsc::channel(1);
+        self.start_dm_inbox_with_ready(inbound, ready).await
+    }
+
+    pub async fn start_dm_inbox_with_ready(
+        &self,
+        inbound: tokio::sync::mpsc::Sender<DmInboxRuntimeEvent>,
+        ready: tokio::sync::mpsc::Sender<()>,
+    ) -> Result<Option<DmInboxService>, CoreError> {
+        let _operation = self.inner.operations.read().await;
+        let bootstrap = self.with_active_transition(|| {
+            let relays = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .dm_relays
+                .clone();
+            if relays.is_empty() {
+                return Ok(None);
+            }
+
+            let recipient_secret_key = {
+                let identity = self.identity()?;
+                let nostr = identity
+                    .as_ref()
+                    .expect("checked identity")
+                    .device_nostr_identity()
+                    .map_err(CoreError::Identity)?;
+                *nostr.private_key()
+            };
+            let auth_signer = RelayAuthSigner::from_secret_key(recipient_secret_key)
+                .map_err(|_| CoreError::Nostr)?;
+            let blocked = self
+                .inner
+                .state
+                .lock()
+                .expect("runtime state mutex poisoned")
+                .blocked
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>();
+            Ok(Some((relays, auth_signer, recipient_secret_key, blocked)))
+        })?;
+        let Some((relays, auth_signer, recipient_secret_key, blocked)) = bootstrap else {
+            return Ok(None);
+        };
+
+        let service = DmInboxService::spawn_with_ready(
+            &relays,
+            auth_signer,
+            recipient_secret_key,
+            &blocked,
+            inbound,
+            ready,
+        )
+        .await
+        .map_err(CoreError::DmInbox)?;
+        let handle = service.handle();
+        if let Err(error) = self.with_active_transition(move || {
+            *self
+                .inner
+                .dm_inbox
+                .lock()
+                .expect("DM inbox handle mutex poisoned") = Some(handle);
+            Ok(())
+        }) {
+            let _ = service.shutdown().await;
+            return Err(error);
+        }
+        Ok(Some(service))
+    }
+
+    pub fn receive_dm_inbox_event(&self, event: DmInboxRuntimeEvent) {
+        let _transition = self.inner.panic.transition();
+        if self.ensure_active().is_err() {
+            return;
+        }
+        let DmInboxReceive::Message(message) = event.receive else {
+            return;
+        };
+        if self
+            .inner
+            .state
+            .lock()
+            .expect("runtime state mutex poisoned")
+            .blocked
+            .contains(&message.metadata.author_pubkey)
+        {
+            return;
+        }
+        self.publish_message_event(
+            &message.metadata.gift_wrap_id,
+            &format!("dm:{}", message.metadata.author_pubkey),
+            &message.content,
+            "received",
+        );
     }
 
     #[must_use]
@@ -443,14 +1091,13 @@ impl DaemonCore {
     }
 
     fn apply_reload(&self, replacement: DaemonConfig) -> Result<(), CoreError> {
-        if self
-            .inner
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .relays
-            != replacement.relays
-        {
+        let relay_change_requires_restart = {
+            let current = self.inner.config.lock().expect("config mutex poisoned");
+            current.relays != replacement.relays
+                || current.dm_relays != replacement.dm_relays
+                || current.registry != replacement.registry
+        };
+        if relay_change_requires_restart {
             return Err(CoreError::RestartRequired);
         }
         let joined = replacement
@@ -548,6 +1195,169 @@ impl DaemonCore {
             Command::Join { geohash } => self.join(geohash).await,
             Command::Leave { geohash } => self.leave(geohash).await,
             Command::Send { conversation, text } => self.send(&conversation, &text).await,
+            Command::DiscoverDmRelays { public_key } => {
+                let recipient = decode_xonly(&public_key)?;
+                let mutation = self
+                    .discover_dm_relay_list(&recipient, unix_time()?)
+                    .await?;
+                let status = match mutation {
+                    omachat_nostr::dm_relay_cache::CacheMutation::Stored => "stored",
+                    omachat_nostr::dm_relay_cache::CacheMutation::Unchanged => "unchanged",
+                };
+                Ok(serde_json::json!({
+                    "public_key": hex::encode(recipient),
+                    "status": status,
+                }))
+            }
+            Command::DiscoverProfile { public_key } => {
+                let participant = decode_xonly(&public_key)?;
+                let (mutation, profile) = self
+                    .discover_profile_metadata(&participant, unix_time()?)
+                    .await?;
+                let status = match mutation {
+                    omachat_nostr::profile_cache::ProfileCacheMutation::Stored => "stored",
+                    omachat_nostr::profile_cache::ProfileCacheMutation::Unchanged => "unchanged",
+                };
+                let name_classification = profile.name_classification().map(|classification| {
+                    match classification {
+                        omachat_nostr::profile_verification::ProfileNameClassification::HandleSyntaxCandidate => "handle-syntax-candidate",
+                        omachat_nostr::profile_verification::ProfileNameClassification::PresentationOnly => "presentation-only",
+                    }
+                });
+                Ok(serde_json::json!({
+                    "public_key": hex::encode(profile.public_key()),
+                    "source_event_id": profile.source_event_id(),
+                    "status": status,
+                    "nostr_name": profile.nostr_name(),
+                    "name_classification": name_classification,
+                    "display_name": profile.display_name(),
+                    "about": profile.about(),
+                    "picture": profile.picture(),
+                    "global_handle_verified": false,
+                }))
+            }
+            Command::ShowProfile { public_key } => {
+                let participant = decode_xonly(&public_key)?;
+                let lookup = self.cached_profile(&participant, unix_time()?)?;
+                let value =
+                    |profile: &omachat_nostr::profile_verification::VerifiedNostrProfile,
+                     cache_status: &str| {
+                        let name_classification = profile.name_classification().map(|classification| {
+                        match classification {
+                            omachat_nostr::profile_verification::ProfileNameClassification::HandleSyntaxCandidate => "handle-syntax-candidate",
+                            omachat_nostr::profile_verification::ProfileNameClassification::PresentationOnly => "presentation-only",
+                        }
+                    });
+                        serde_json::json!({
+                            "public_key": hex::encode(profile.public_key()),
+                            "source_event_id": profile.source_event_id(),
+                            "cache_status": cache_status,
+                            "nostr_name": profile.nostr_name(),
+                            "name_classification": name_classification,
+                            "display_name": profile.display_name(),
+                            "about": profile.about(),
+                            "picture": profile.picture(),
+                            "global_handle_verified": false,
+                        })
+                    };
+                Ok(match lookup {
+                    crate::profile_cache_store::SealedProfileCacheLookup::Missing => {
+                        serde_json::json!({
+                            "public_key": hex::encode(participant),
+                            "cache_status": "missing",
+                            "global_handle_verified": false,
+                        })
+                    }
+                    crate::profile_cache_store::SealedProfileCacheLookup::Fresh(profile) => {
+                        value(&profile, "fresh")
+                    }
+                    crate::profile_cache_store::SealedProfileCacheLookup::OfflineStale(profile) => {
+                        value(&profile, "offline-stale")
+                    }
+                    crate::profile_cache_store::SealedProfileCacheLookup::UnusableClockRollback(
+                        profile,
+                    ) => value(&profile, "unusable-clock-rollback"),
+                })
+            }
+            Command::ResolveRegistryHandle { handle } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                let registry = self
+                    .inner
+                    .registry
+                    .as_ref()
+                    .ok_or(CoreError::RegistryUnconfigured)?;
+                match registry {
+                    RegistryEvidenceBoundary::RootClaimV2(registry) => {
+                        let resolution = registry
+                            .resolve_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::RegistryEvidence)?;
+                        let source = if resolution.is_online() {
+                            "online"
+                        } else {
+                            "offline"
+                        };
+                        Ok(registry_lookup_value(&handle, source, resolution.lookup()))
+                    }
+                    RegistryEvidenceBoundary::PrincipalProofV1(registry) => {
+                        let resolution = registry
+                            .resolve_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::PrincipalRegistryEvidence)?;
+                        let source = if resolution.is_online() {
+                            "online"
+                        } else {
+                            "offline"
+                        };
+                        Ok(principal_registry_lookup_value(
+                            &handle,
+                            source,
+                            resolution.lookup(),
+                        ))
+                    }
+                }
+            }
+            Command::ShowRegistryHandle { handle } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                let registry = self
+                    .inner
+                    .registry
+                    .as_ref()
+                    .ok_or(CoreError::RegistryUnconfigured)?;
+                match registry {
+                    RegistryEvidenceBoundary::RootClaimV2(registry) => {
+                        let lookup = registry
+                            .cached_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::RegistryEvidence)?;
+                        Ok(registry_lookup_value(&handle, "cache-only", &lookup))
+                    }
+                    RegistryEvidenceBoundary::PrincipalProofV1(registry) => {
+                        let lookup = registry
+                            .cached_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::PrincipalRegistryEvidence)?;
+                        Ok(principal_registry_lookup_value(
+                            &handle,
+                            "cache-only",
+                            &lookup,
+                        ))
+                    }
+                }
+            }
+            Command::ClaimRegistryHandle {
+                handle,
+                confirmation,
+            } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                if confirmation != handle.as_str() {
+                    return Err(CoreError::RegistryClaimConfirmationRequired);
+                }
+                let result = self
+                    .claim_configured_registry_handle_active(&handle, unix_time()?)
+                    .await?;
+                Ok(registry_claim_value(&handle, &result))
+            }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
             Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),
@@ -562,14 +1372,14 @@ impl DaemonCore {
         let nostr = identity
             .device_nostr_identity()
             .map_err(CoreError::Identity)?;
-        let account = self.account_status()?;
+        let now = unix_time()?;
+        let account = self.account_status(now)?;
         let state = self
             .inner
             .state
             .lock()
             .expect("runtime state mutex poisoned");
         let config = self.inner.config.lock().expect("config mutex poisoned");
-        let now = unix_time()?;
         let _storage = self
             .inner
             .storage_transaction
@@ -591,6 +1401,12 @@ impl DaemonCore {
             nostr_public_key: nostr.public_key_hex(),
             joined_geohashes: state.joined.iter().cloned().collect(),
             relay_count: config.relays.len(),
+            dm_relay_count: config.dm_relays.len(),
+            registry_protocol: self
+                .inner
+                .registry
+                .as_ref()
+                .map(RegistryEvidenceBoundary::protocol_name),
             outbox_pending: pending,
             outbox_failed: failed,
             account,
@@ -790,6 +1606,17 @@ impl DaemonCore {
             .unwrap_or(conversation)
             .to_ascii_lowercase();
         let recipient = decode_xonly(&peer)?;
+        if self
+            .inner
+            .dm_inbox
+            .lock()
+            .expect("DM inbox handle mutex poisoned")
+            .is_some()
+        {
+            return self
+                .send_standard_dm(conversation, text, &peer, &recipient, now)
+                .await;
+        }
         let one_time_secret = random_valid_secp()?;
         let seal_nonce = random_bytes()?;
         let gift_wrap_nonce = random_bytes()?;
@@ -888,16 +1715,105 @@ impl DaemonCore {
         Ok(serde_json::json!({"id": event.id, "delivery": delivery}))
     }
 
-    async fn drain_outbox(&self) {
-        let Some(handle) = self
+    async fn send_standard_dm(
+        &self,
+        conversation: &str,
+        text: &str,
+        peer: &str,
+        recipient: &[u8; 32],
+        now: u64,
+    ) -> Result<serde_json::Value, CoreError> {
+        let relay_hint = self
+            .inner
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .dm_relays
+            .first()
+            .cloned();
+        let event = {
+            let identity = self.identity()?;
+            let sender = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let rumor = create_chat_rumor(
+                sender.private_key(),
+                now,
+                &[ChatRecipient {
+                    public_key: *recipient,
+                    relay_hint,
+                }],
+                text.to_owned(),
+                None,
+                None,
+                &EventLimits::default(),
+            )
+            .map_err(|_| CoreError::Nostr)?;
+            create_gift_wrap(
+                &rumor,
+                sender.private_key(),
+                recipient,
+                now,
+                GiftWrapPersistence::Persistent,
+                &EventLimits::default(),
+            )
+            .map_err(|_| CoreError::Nostr)?
+        };
+        let gift_wrap = serde_json::to_string(&event).map_err(|_| CoreError::Encoding)?;
+        {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            NostrOutbox::load(&self.inner.store, now)
+                .map_err(CoreError::Outbox)?
+                .enqueue_with_profile(&event.id, peer, gift_wrap, NostrDeliveryProfile::Nip17, now)
+                .map_err(CoreError::Outbox)?;
+        }
+
+        self.drain_outbox().await;
+        let delivery = {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            self.ensure_active()?;
+            let outbox = NostrOutbox::load(&self.inner.store, now).map_err(CoreError::Outbox)?;
+            if outbox
+                .messages()
+                .iter()
+                .any(|message| message.id == event.id)
+            {
+                "queued"
+            } else {
+                "stored"
+            }
+        };
+        self.publish_message_event(&event.id, conversation, text, delivery);
+        Ok(serde_json::json!({"id": event.id, "delivery": delivery}))
+    }
+
+    pub async fn drain_outbox(&self) {
+        let compatibility_handle = self
             .inner
             .nostr
             .lock()
             .expect("Nostr handle mutex poisoned")
-            .clone()
-        else {
+            .clone();
+        let nip17_handle = self
+            .inner
+            .dm_inbox
+            .lock()
+            .expect("DM inbox handle mutex poisoned")
+            .clone();
+        if compatibility_handle.is_none() && nip17_handle.is_none() {
             return;
-        };
+        }
         let _drain = self.inner.outbox_drain.lock().await;
         loop {
             let now = unix_time().unwrap_or_default();
@@ -913,11 +1829,16 @@ impl DaemonCore {
                 let Ok(outbox) = NostrOutbox::load(&self.inner.store, now) else {
                     return;
                 };
-                outbox
-                    .next_pending()
-                    .map(|message| (message.id.clone(), message.gift_wrap.clone()))
+                outbox.next_pending().map(|message| {
+                    (
+                        message.id.clone(),
+                        message.peer.clone(),
+                        message.gift_wrap.clone(),
+                        message.nostr_profile,
+                    )
+                })
             };
-            let Some((id, gift_wrap)) = pending else {
+            let Some((id, peer, gift_wrap, nostr_profile)) = pending else {
                 return;
             };
             if self.is_panicked() {
@@ -935,10 +1856,78 @@ impl DaemonCore {
                         return;
                     }
                 };
-            let outcome = if handle.publish(event).await.is_ok() {
-                omachat_store::AttemptOutcome::Acknowledged
-            } else {
-                omachat_store::AttemptOutcome::Unavailable
+            let outcome = match nostr_profile {
+                NostrDeliveryProfile::Compatibility => {
+                    let Some(handle) = compatibility_handle.as_ref() else {
+                        return;
+                    };
+                    if handle.publish(event).await.is_ok() {
+                        omachat_store::AttemptOutcome::Acknowledged
+                    } else {
+                        omachat_store::AttemptOutcome::Unavailable
+                    }
+                }
+                NostrDeliveryProfile::Nip17 => {
+                    let Some(handle) = nip17_handle.as_ref() else {
+                        return;
+                    };
+                    let recipient = match decode_xonly(&peer) {
+                        Ok(recipient) => recipient,
+                        Err(_) => {
+                            self.record_outbox_attempt(
+                                &id,
+                                omachat_store::AttemptOutcome::Rejected,
+                                now,
+                            );
+                            return;
+                        }
+                    };
+                    let bootstrap_relays = self
+                        .inner
+                        .config
+                        .lock()
+                        .expect("config mutex poisoned")
+                        .dm_relays
+                        .clone();
+                    let route = {
+                        let _storage = self
+                            .inner
+                            .storage_transaction
+                            .lock()
+                            .expect("storage transaction mutex poisoned");
+                        crate::dm_relay_cache_store::SealedDmRelayCache::new(&self.inner.store)
+                            .route(
+                                &recipient,
+                                now,
+                                &bootstrap_relays,
+                                omachat_nostr::dm_relay_routing::DmRelayRoutingPolicy {
+                                    allow_bootstrap_when_missing: true,
+                                    ..omachat_nostr::dm_relay_routing::DmRelayRoutingPolicy::default()
+                                },
+                                &EventLimits::default(),
+                                &omachat_nostr::inbox::DmInboxPolicy::default(),
+                            )
+                    };
+                    let published = match route {
+                        Ok(route) => {
+                            match omachat_nostr::dm_routed_publish::plan_routed_dm_publish(
+                                event,
+                                route,
+                                now,
+                                &EventLimits::default(),
+                            ) {
+                                Ok(plan) => handle.publish(plan).await.is_ok(),
+                                Err(_) => false,
+                            }
+                        }
+                        Err(_) => false,
+                    };
+                    if published {
+                        omachat_store::AttemptOutcome::Acknowledged
+                    } else {
+                        omachat_store::AttemptOutcome::Unavailable
+                    }
+                }
             };
             let state = self.record_outbox_attempt(&id, outcome, now);
             if outcome != omachat_store::AttemptOutcome::Acknowledged {
@@ -990,11 +1979,66 @@ impl DaemonCore {
         self.panic_state() == PanicState::Active
     }
 
-    fn account_status(&self) -> Result<AccountStatus, CoreError> {
-        let account = self.inner.account.lock().expect("account mutex poisoned");
-        let account = account.as_ref().ok_or(CoreError::Panicked)?;
-        let public = account.public_identity();
-        let binding = account.binding();
+    fn account_status(&self, now: u64) -> Result<AccountStatus, CoreError> {
+        let (public, binding) = {
+            let account = self.inner.account.lock().expect("account mutex poisoned");
+            let account = account.as_ref().ok_or(CoreError::Panicked)?;
+            (account.public_identity(), account.binding().clone())
+        };
+        let registry_state = match (&binding.handle, &self.inner.registry) {
+            (None, _) => "unconfigured",
+            (Some(_), None) => "local-only",
+            (Some(handle), Some(RegistryEvidenceBoundary::RootClaimV2(registry))) => {
+                let cache = VerifiedRegistryCache::load_or_create(
+                    &self.inner.store,
+                    *registry.pinned_public_key(),
+                )
+                .map_err(CoreError::RegistryCache)?;
+                let classify = |state, cached: &omachat_store::CachedRegistryRecord| {
+                    if cached.record.receipt.handle.as_global_handle() == handle {
+                        state
+                    } else {
+                        "registry-conflict"
+                    }
+                };
+                match cache.lookup_account(&binding.account_id, now, registry.max_age_seconds()) {
+                    RegistryCacheLookup::Missing => "local-only",
+                    RegistryCacheLookup::Fresh(cached) => classify("verified-fresh", &cached),
+                    RegistryCacheLookup::OfflineStale(cached) => {
+                        classify("verified-offline-stale", &cached)
+                    }
+                    RegistryCacheLookup::UnusableClockRollback(cached) => {
+                        classify("unusable-clock-rollback", &cached)
+                    }
+                }
+            }
+            (Some(handle), Some(RegistryEvidenceBoundary::PrincipalProofV1(registry))) => {
+                let cache = VerifiedPrincipalRegistryCache::load_or_create(
+                    &self.inner.store,
+                    *registry.pinned_public_key(),
+                )
+                .map_err(CoreError::PrincipalRegistryCache)?;
+                let classify = |state, cached: &omachat_store::CachedPrincipalRegistryRecord| {
+                    if cached.evidence.claim_receipt.handle.as_global_handle() == handle {
+                        state
+                    } else {
+                        "registry-conflict"
+                    }
+                };
+                match cache.lookup_account(&binding.account_id, now, registry.max_age_seconds()) {
+                    PrincipalRegistryCacheLookup::Missing => "local-only",
+                    PrincipalRegistryCacheLookup::Fresh(cached) => {
+                        classify("verified-principal-fresh", &cached)
+                    }
+                    PrincipalRegistryCacheLookup::OfflineStale(cached) => {
+                        classify("verified-principal-offline-stale", &cached)
+                    }
+                    PrincipalRegistryCacheLookup::UnusableClockRollback(cached) => {
+                        classify("unusable-principal-clock-rollback", &cached)
+                    }
+                }
+            }
+        };
         Ok(AccountStatus {
             account_id: public.account_id.to_string(),
             device_id: binding.device_id.to_string(),
@@ -1008,11 +2052,7 @@ impl DaemonCore {
                 .map(|name| name.as_str().to_owned()),
             binding_revision: binding.revision,
             binding_issued_at: binding.issued_at,
-            registry_state: if binding.handle.is_some() {
-                "local-only"
-            } else {
-                "unconfigured"
-            },
+            registry_state,
         })
     }
 
@@ -1047,6 +2087,16 @@ impl DaemonCore {
     }
 
     async fn perform_panic_cleanup(&self) -> Result<serde_json::Value, CoreError> {
+        let dm_inbox = self
+            .inner
+            .dm_inbox
+            .lock()
+            .expect("DM inbox handle mutex poisoned")
+            .take();
+        if let Some(handle) = dm_inbox {
+            handle.quiesce().await;
+        }
+
         // Stop relay work before dropping keys. Quiescing rejects new
         // commands, cancels the active publish/subscribe, discards the outer
         // queue, closes every relay, and only then returns.
@@ -1164,6 +2214,123 @@ fn configured_account_profile(
         .transpose()
         .map_err(|_| CoreError::InvalidConfig)?;
     Ok((handle, display_name))
+}
+
+fn registry_lookup_value(
+    handle: &GlobalHandle,
+    source: &str,
+    lookup: &RegistryCacheLookup,
+) -> serde_json::Value {
+    let (evidence_status, cached) = match lookup {
+        RegistryCacheLookup::Missing => ("missing", None),
+        RegistryCacheLookup::Fresh(cached) => ("fresh", Some(cached)),
+        RegistryCacheLookup::OfflineStale(cached) => ("offline-stale", Some(cached)),
+        RegistryCacheLookup::UnusableClockRollback(cached) => {
+            ("unusable-clock-rollback", Some(cached))
+        }
+    };
+    let Some(cached) = cached else {
+        return serde_json::json!({
+            "handle": handle.as_str(),
+            "source": source,
+            "evidence_status": evidence_status,
+            "receipt_verified": false,
+            "usable_current_evidence": false,
+        });
+    };
+    let receipt = &cached.record.receipt;
+    serde_json::json!({
+        "handle": handle.as_str(),
+        "source": source,
+        "evidence_status": evidence_status,
+        "receipt_verified": true,
+        "usable_current_evidence": matches!(lookup, RegistryCacheLookup::Fresh(_)),
+        "verified_at": cached.verified_at,
+        "account_id": receipt.account_id.as_str(),
+        "account_revision": receipt.account_revision,
+        "registry_sequence": receipt.sequence,
+        "accepted_at": receipt.accepted_at,
+        "nostr_public_key": hex::encode(
+            cached.record.claim.binding().device_keys.nostr_public_key,
+        ),
+        "nostr_public_key_provenance": "account-root-asserted",
+        "nostr_key_control_verified": false,
+        "claim_hash": hex::encode(receipt.claim_hash),
+        "receipt_hash": hex::encode(receipt.receipt_hash()),
+    })
+}
+
+fn registry_claim_value(handle: &GlobalHandle, result: &RegistryClaimResult) -> serde_json::Value {
+    let mut value = match &result.evidence {
+        RegistryClaimEvidence::RootClaimV2(evidence) => {
+            registry_lookup_value(handle, "online", evidence)
+        }
+        RegistryClaimEvidence::PrincipalProofV1(evidence) => {
+            principal_registry_lookup_value(handle, "online", evidence)
+        }
+    };
+    let claim_status = match result.status {
+        RegistryClaimStatus::AlreadyCurrent => "already-current",
+        RegistryClaimStatus::Accepted => "accepted",
+    };
+    value
+        .as_object_mut()
+        .expect("registry evidence output is an object")
+        .insert("claim_status".into(), claim_status.into());
+    value
+}
+
+fn principal_registry_lookup_value(
+    handle: &GlobalHandle,
+    source: &str,
+    lookup: &PrincipalRegistryCacheLookup,
+) -> serde_json::Value {
+    let (evidence_status, cached) = match lookup {
+        PrincipalRegistryCacheLookup::Missing => ("missing", None),
+        PrincipalRegistryCacheLookup::Fresh(cached) => ("fresh", Some(cached)),
+        PrincipalRegistryCacheLookup::OfflineStale(cached) => ("offline-stale", Some(cached)),
+        PrincipalRegistryCacheLookup::UnusableClockRollback(cached) => {
+            ("unusable-clock-rollback", Some(cached))
+        }
+    };
+    let Some(cached) = cached else {
+        return serde_json::json!({
+            "handle": handle.as_str(),
+            "source": source,
+            "evidence_protocol": "principal-proof-v1",
+            "evidence_status": evidence_status,
+            "receipt_verified": false,
+            "principal_receipt_verified": false,
+            "nostr_key_control_verified": false,
+            "usable_current_evidence": false,
+        });
+    };
+    let claim_receipt = &cached.evidence.claim_receipt;
+    let principal_receipt = &cached.evidence.principal_receipt;
+    serde_json::json!({
+        "handle": handle.as_str(),
+        "source": source,
+        "evidence_protocol": "principal-proof-v1",
+        "evidence_status": evidence_status,
+        "receipt_verified": true,
+        "principal_receipt_verified": true,
+        "usable_current_evidence": matches!(lookup, PrincipalRegistryCacheLookup::Fresh(_)),
+        "verified_at": cached.verified_at,
+        "account_id": claim_receipt.account_id.as_str(),
+        "account_revision": claim_receipt.account_revision,
+        "registry_sequence": claim_receipt.sequence,
+        "accepted_at": claim_receipt.accepted_at,
+        "principal_type": "device",
+        "nostr_public_key": hex::encode(principal_receipt.nostr_public_key),
+        "nostr_public_key_provenance": "principal-proof-verified",
+        "nostr_key_control_verified": true,
+        "account_root_authorisation_verified": true,
+        "receipt_chains_verified": true,
+        "claim_hash": hex::encode(claim_receipt.claim_hash),
+        "receipt_hash": hex::encode(claim_receipt.receipt_hash()),
+        "principal_proof_hash": hex::encode(principal_receipt.principal_proof_hash),
+        "principal_receipt_hash": hex::encode(principal_receipt.receipt_hash()),
+    })
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], CoreError> {

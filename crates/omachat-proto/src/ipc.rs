@@ -34,6 +34,25 @@ pub enum Command {
         conversation: String,
         text: String,
     },
+    DiscoverDmRelays {
+        public_key: String,
+    },
+    DiscoverProfile {
+        public_key: String,
+    },
+    ShowProfile {
+        public_key: String,
+    },
+    ResolveRegistryHandle {
+        handle: String,
+    },
+    ShowRegistryHandle {
+        handle: String,
+    },
+    ClaimRegistryHandle {
+        handle: String,
+        confirmation: String,
+    },
     Who {
         geohash: String,
     },
@@ -111,6 +130,36 @@ enum StrictRequestWire {
         id: String,
         params: SendParams,
     },
+    DiscoverDmRelays {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
+    },
+    DiscoverProfile {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
+    },
+    ShowProfile {
+        version: u16,
+        id: String,
+        params: PublicKeyParams,
+    },
+    ResolveRegistryHandle {
+        version: u16,
+        id: String,
+        params: HandleParams,
+    },
+    ShowRegistryHandle {
+        version: u16,
+        id: String,
+        params: HandleParams,
+    },
+    ClaimRegistryHandle {
+        version: u16,
+        id: String,
+        params: RegistryClaimParams,
+    },
     Who {
         version: u16,
         id: String,
@@ -161,6 +210,19 @@ struct PublicKeyParams {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct HandleParams {
+    handle: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegistryClaimParams {
+    handle: String,
+    confirmation: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ConfirmationParams {
     confirmation: String,
 }
@@ -207,6 +269,47 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: SendParams { conversation, text },
             } => (version, id, Command::Send { conversation, text }),
+            StrictRequestWire::DiscoverDmRelays {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::DiscoverDmRelays { public_key }),
+            StrictRequestWire::DiscoverProfile {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::DiscoverProfile { public_key }),
+            StrictRequestWire::ShowProfile {
+                version,
+                id,
+                params: PublicKeyParams { public_key },
+            } => (version, id, Command::ShowProfile { public_key }),
+            StrictRequestWire::ResolveRegistryHandle {
+                version,
+                id,
+                params: HandleParams { handle },
+            } => (version, id, Command::ResolveRegistryHandle { handle }),
+            StrictRequestWire::ShowRegistryHandle {
+                version,
+                id,
+                params: HandleParams { handle },
+            } => (version, id, Command::ShowRegistryHandle { handle }),
+            StrictRequestWire::ClaimRegistryHandle {
+                version,
+                id,
+                params:
+                    RegistryClaimParams {
+                        handle,
+                        confirmation,
+                    },
+            } => (
+                version,
+                id,
+                Command::ClaimRegistryHandle {
+                    handle,
+                    confirmation,
+                },
+            ),
             StrictRequestWire::Who {
                 version,
                 id,

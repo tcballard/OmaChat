@@ -363,16 +363,9 @@ async fn run_actor_loop(
         };
         let _ = health.send(RelayHealth::Connected);
         notify(&notifications, RelayNotification::Connected)?;
-        for (subscription_id, filters) in &subscriptions {
-            send_frame(
-                &mut socket,
-                &ClientFrame::Request {
-                    subscription_id: subscription_id.clone(),
-                    filters: filters.clone(),
-                },
-                &config.frame_limits,
-            )
-            .await?;
+        let mut session_authenticated = config.auth.is_none();
+        if session_authenticated {
+            replay_subscriptions(&mut socket, &subscriptions, &config).await?;
         }
 
         let mut ping = tokio::time::interval(config.ping_interval);
@@ -385,6 +378,12 @@ async fn run_actor_loop(
                 command = commands.recv() => {
                     match command {
                         Some(Command::Publish { event, response }) => {
+                            if !session_authenticated {
+                                let _ = response.send(Err(RelayError::Authentication(
+                                    "relay session is not authenticated".to_owned(),
+                                )));
+                                continue;
+                            }
                             let id = event.id.clone();
                             if pending.get(&id).is_some_and(|sender| !sender.is_closed()) {
                                 let _ = response.send(Err(RelayError::DuplicatePublish));
@@ -400,6 +399,11 @@ async fn run_actor_loop(
                             }
                         }
                         Some(Command::Subscribe { subscription_id, filters, response }) => {
+                            if !session_authenticated {
+                                subscriptions.insert(subscription_id, filters);
+                                let _ = response.send(Ok(()));
+                                continue;
+                            }
                             let frame = ClientFrame::Request { subscription_id: subscription_id.clone(), filters: filters.clone() };
                             match send_frame(&mut socket, &frame, &config.frame_limits).await {
                                 Ok(()) => {
@@ -414,6 +418,10 @@ async fn run_actor_loop(
                         }
                         Some(Command::Close { subscription_id, response }) => {
                             subscriptions.remove(&subscription_id);
+                            if !session_authenticated {
+                                let _ = response.send(Ok(()));
+                                continue;
+                            }
                             match send_frame(&mut socket, &ClientFrame::Close { subscription_id }, &config.frame_limits).await {
                                 Ok(()) => { let _ = response.send(Ok(())); }
                                 Err(error) => {
@@ -435,12 +443,17 @@ async fn run_actor_loop(
                         Ok(Message::Text(text)) => {
                             session_progress = true;
                             idle.as_mut().reset(tokio::time::Instant::now() + config.idle_timeout);
+                            let mut frame_state = RelayFrameState {
+                                pending_authentication: &mut pending_authentication,
+                                subscriptions: &subscriptions,
+                                session_authenticated: &mut session_authenticated,
+                            };
                             if handle_relay_frame(
                                 text.as_bytes(),
                                 &config,
                                 &notifications,
                                 &mut pending,
-                                &mut pending_authentication,
+                                &mut frame_state,
                                 &mut socket,
                             ).await.is_err() {
                                 break true;
@@ -484,6 +497,25 @@ async fn run_actor_loop(
         }
     }
     fail_pending(&mut pending, RelayError::Stopped);
+    Ok(())
+}
+
+async fn replay_subscriptions(
+    socket: &mut RelaySocket,
+    subscriptions: &HashMap<String, Vec<Value>>,
+    config: &RelayConfig,
+) -> Result<(), RelayError> {
+    for (subscription_id, filters) in subscriptions {
+        send_frame(
+            socket,
+            &ClientFrame::Request {
+                subscription_id: subscription_id.clone(),
+                filters: filters.clone(),
+            },
+            &config.frame_limits,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -540,12 +572,18 @@ struct PendingAuthentication {
     public_key: String,
 }
 
+struct RelayFrameState<'a> {
+    pending_authentication: &'a mut Option<PendingAuthentication>,
+    subscriptions: &'a HashMap<String, Vec<Value>>,
+    session_authenticated: &'a mut bool,
+}
+
 async fn handle_relay_frame(
     bytes: &[u8],
     config: &RelayConfig,
     notifications: &mpsc::Sender<RelayNotification>,
     pending: &mut HashMap<String, oneshot::Sender<Result<PublishAcknowledgement, RelayError>>>,
-    pending_authentication: &mut Option<PendingAuthentication>,
+    state: &mut RelayFrameState<'_>,
     socket: &mut RelaySocket,
 ) -> Result<(), RelayError> {
     let frame = RelayFrame::from_json(
@@ -574,14 +612,18 @@ async fn handle_relay_frame(
             accepted,
             message,
         } => {
-            if pending_authentication
+            if state
+                .pending_authentication
                 .as_ref()
                 .is_some_and(|authentication| authentication.event_id == event_id)
             {
-                let authentication = pending_authentication
+                let authentication = state
+                    .pending_authentication
                     .take()
                     .expect("matching pending authentication exists");
                 return if accepted {
+                    *state.session_authenticated = true;
+                    replay_subscriptions(socket, state.subscriptions, config).await?;
                     notify(
                         notifications,
                         RelayNotification::Authenticated {
@@ -589,6 +631,7 @@ async fn handle_relay_frame(
                         },
                     )
                 } else {
+                    *state.session_authenticated = false;
                     notify(
                         notifications,
                         RelayNotification::AuthenticationRejected {
@@ -627,6 +670,7 @@ async fn handle_relay_frame(
             let Some(signer) = &config.auth else {
                 return Ok(());
             };
+            *state.session_authenticated = false;
             let event = signer
                 .sign_challenge(
                     &config.url,
@@ -640,7 +684,7 @@ async fn handle_relay_frame(
                 public_key: event.pubkey.clone(),
             };
             send_frame(socket, &ClientFrame::Auth(event), &config.frame_limits).await?;
-            *pending_authentication = Some(authentication);
+            *state.pending_authentication = Some(authentication);
             Ok(())
         }
     }

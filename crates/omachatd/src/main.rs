@@ -64,6 +64,27 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             inbound_core.receive_nostr_notification(notification);
         }
     });
+    let (dm_inbound_sender, mut dm_inbound_receiver) = tokio::sync::mpsc::channel(256);
+    let (dm_ready_sender, mut dm_ready_receiver) = tokio::sync::mpsc::channel(1);
+    let dm_inbox = core
+        .start_dm_inbox_with_ready(dm_inbound_sender, dm_ready_sender)
+        .await?;
+    let dm_inbound_core = core.clone();
+    tokio::spawn(async move {
+        while let Some(event) = dm_inbound_receiver.recv().await {
+            dm_inbound_core.receive_dm_inbox_event(event);
+        }
+    });
+    let dm_ready_core = core.clone();
+    tokio::spawn(async move {
+        while dm_ready_receiver.recv().await.is_some() {
+            dm_ready_core.drain_outbox().await;
+        }
+    });
+    if dm_inbox.is_some() {
+        let startup_drain = core.clone();
+        tokio::spawn(async move { startup_drain.drain_outbox().await });
+    }
     let server = IpcServer::bind(&options.socket, core.clone(), events)?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -96,6 +117,9 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     });
     let server_result = server.run(shutdown_rx).await;
     core.prepare_for_shutdown().await;
+    if let Some(service) = dm_inbox {
+        let _ = service.shutdown().await;
+    }
     if let Some(service) = nostr {
         let _ = service.shutdown().await;
     }

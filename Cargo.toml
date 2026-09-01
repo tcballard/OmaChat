@@ -4,6 +4,7 @@ members = [
     "crates/omachat-proto",
     "crates/omachat-crypto",
     "crates/omachat-registry",
+    "crates/omachat-registry-host",
     "crates/omachat-registry-transport",
     "crates/omachat-mesh",
     "crates/omachat-nostr",
