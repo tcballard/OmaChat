@@ -189,7 +189,11 @@ fn relay_signed_metadata_exposes_discord_class_room_properties() {
             vec!["private".to_owned()],
             vec!["restricted".to_owned()],
             vec!["livekit".to_owned()],
-            vec!["supported_kinds".to_owned(), "9".to_owned(), "11".to_owned()],
+            vec![
+                "supported_kinds".to_owned(),
+                "9".to_owned(),
+                "11".to_owned(),
+            ],
             vec!["parent".to_owned(), "linux".to_owned()],
             vec!["child".to_owned(), "install-help".to_owned()],
             vec!["child".to_owned(), "showcase".to_owned()],
@@ -198,13 +202,8 @@ fn relay_signed_metadata_exposes_discord_class_room_properties() {
         &limits,
     )
     .expect("metadata event");
-    let metadata = GroupMetadata::verify(
-        sign(event, &OWNER_SECRET),
-        &relay_pubkey,
-        NOW,
-        &limits,
-    )
-    .expect("relay-authenticated metadata");
+    let metadata = GroupMetadata::verify(sign(event, &OWNER_SECRET), &relay_pubkey, NOW, &limits)
+        .expect("relay-authenticated metadata");
 
     assert_eq!(metadata.group_id(), "omarchy");
     assert_eq!(metadata.name(), Some("Omarchy"));
@@ -256,18 +255,12 @@ fn absent_and_empty_supported_kinds_remain_distinct() {
             &limits,
         )
         .expect("metadata event");
-        GroupMetadata::verify(
-            sign(event, &OWNER_SECRET),
-            &relay_pubkey,
-            NOW,
-            &limits,
-        )
-        .expect("metadata verifies")
+        GroupMetadata::verify(sign(event, &OWNER_SECRET), &relay_pubkey, NOW, &limits)
+            .expect("metadata verifies")
     };
 
     assert_eq!(
-        metadata(vec![vec!["d".to_owned(), "all-kinds".to_owned()]])
-            .supported_kinds(),
+        metadata(vec![vec!["d".to_owned(), "all-kinds".to_owned()]]).supported_kinds(),
         None
     );
     assert_eq!(
@@ -309,13 +302,8 @@ fn ambiguous_metadata_tags_fail_closed() {
         )
         .expect("bounded metadata");
         assert!(
-            GroupMetadata::verify(
-                sign(event, &OWNER_SECRET),
-                &relay_pubkey,
-                NOW,
-                &limits,
-            )
-            .is_err()
+            GroupMetadata::verify(sign(event, &OWNER_SECRET), &relay_pubkey, NOW, &limits,)
+                .is_err()
         );
     }
 }

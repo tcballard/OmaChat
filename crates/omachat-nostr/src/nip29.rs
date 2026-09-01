@@ -384,7 +384,10 @@ fn optional_list_tag(
     name: &'static str,
 ) -> Result<Option<Vec<String>>, GroupEventError> {
     let mut value = None;
-    for tag in tags.iter().filter(|tag| tag.first().is_some_and(|part| part == name)) {
+    for tag in tags
+        .iter()
+        .filter(|tag| tag.first().is_some_and(|part| part == name))
+    {
         if value.is_some() {
             return Err(GroupEventError::DuplicateTag(name));
         }
@@ -407,12 +410,12 @@ fn flag_tag(tags: &[Tag], name: &'static str) -> Result<bool, GroupEventError> {
     Ok(!matching.is_empty())
 }
 
-fn repeated_pair_tags(
-    tags: &[Tag],
-    name: &'static str,
-) -> Result<Vec<String>, GroupEventError> {
+fn repeated_pair_tags(tags: &[Tag], name: &'static str) -> Result<Vec<String>, GroupEventError> {
     let mut values = Vec::new();
-    for tag in tags.iter().filter(|tag| tag.first().is_some_and(|part| part == name)) {
+    for tag in tags
+        .iter()
+        .filter(|tag| tag.first().is_some_and(|part| part == name))
+    {
         if tag.len() != 2 {
             return Err(GroupEventError::MalformedTag(name));
         }
