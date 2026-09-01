@@ -12,8 +12,9 @@ pub use process::{
 };
 
 use omachat_registry_transport::{
-    PendingRegistryWebSocketRequest, RegistryService, RegistryServiceError,
-    RegistryWebSocketServerError, accept_registry_websocket_request,
+    PendingRegistryWebSocketRequest, PrincipalRegistryService, PrincipalRegistryServiceError,
+    RegistryService, RegistryServiceError, RegistryWebSocketServerError,
+    accept_registry_websocket_request,
 };
 use std::{
     collections::BTreeMap,
@@ -86,6 +87,40 @@ enum AdmissionFailure {
     WebSocket(RegistryWebSocketServerError),
 }
 
+enum HostedRegistryService<'service, 'store> {
+    Legacy(&'service mut RegistryService<'store>),
+    Principal(&'service mut PrincipalRegistryService<'store>),
+}
+
+enum HostedServiceFailure {
+    Protocol,
+    Legacy(RegistryServiceError),
+    Principal(PrincipalRegistryServiceError),
+}
+
+impl HostedRegistryService<'_, '_> {
+    fn handle(
+        &mut self,
+        request: &[u8],
+        accepted_at: u64,
+    ) -> Result<Vec<u8>, HostedServiceFailure> {
+        match self {
+            Self::Legacy(service) => match service.handle(request, accepted_at) {
+                Ok(response) => Ok(response),
+                Err(RegistryServiceError::Protocol(_)) => Err(HostedServiceFailure::Protocol),
+                Err(error) => Err(HostedServiceFailure::Legacy(error)),
+            },
+            Self::Principal(service) => match service.handle(request, accepted_at) {
+                Ok(response) => Ok(response),
+                Err(PrincipalRegistryServiceError::Protocol(_)) => {
+                    Err(HostedServiceFailure::Protocol)
+                }
+                Err(error) => Err(HostedServiceFailure::Principal(error)),
+            },
+        }
+    }
+}
+
 /// Run a bounded registry host on an already bound loopback listener.
 ///
 /// Handshakes and request reads run concurrently without registry access. Once
@@ -96,6 +131,50 @@ enum AdmissionFailure {
 pub async fn run_registry_host<C, S>(
     listener: TcpListener,
     service: &mut RegistryService<'_>,
+    limits: RegistryHostLimits,
+    accepted_at: C,
+    shutdown: S,
+) -> Result<RegistryHostReport, RegistryHostError>
+where
+    C: FnMut() -> Result<u64, RegistryHostError>,
+    S: Future<Output = ()>,
+{
+    run_host(
+        listener,
+        HostedRegistryService::Legacy(service),
+        limits,
+        accepted_at,
+        shutdown,
+    )
+    .await
+}
+
+/// Run the separately versioned proof-bearing registry service through the
+/// same bounded loopback admission, abuse-limit, and shutdown machinery.
+pub async fn run_principal_registry_host<C, S>(
+    listener: TcpListener,
+    service: &mut PrincipalRegistryService<'_>,
+    limits: RegistryHostLimits,
+    accepted_at: C,
+    shutdown: S,
+) -> Result<RegistryHostReport, RegistryHostError>
+where
+    C: FnMut() -> Result<u64, RegistryHostError>,
+    S: Future<Output = ()>,
+{
+    run_host(
+        listener,
+        HostedRegistryService::Principal(service),
+        limits,
+        accepted_at,
+        shutdown,
+    )
+    .await
+}
+
+async fn run_host<C, S>(
+    listener: TcpListener,
+    mut service: HostedRegistryService<'_, '_>,
     limits: RegistryHostLimits,
     mut accepted_at: C,
     shutdown: S,
@@ -153,7 +232,7 @@ where
             joined = admissions.join_next(), if !admissions.is_empty() => {
                 process_admission(
                     joined.expect("non-empty admission set must yield a result"),
-                    service,
+                    &mut service,
                     &mut accepted_at,
                     &mut responses,
                     &mut active_by_ip,
@@ -178,7 +257,7 @@ where
                 joined = admissions.join_next(), if !admissions.is_empty() => {
                     process_admission(
                         joined.expect("non-empty admission set must yield a result"),
-                        service,
+                        &mut service,
                         &mut accepted_at,
                         &mut responses,
                         &mut active_by_ip,
@@ -213,7 +292,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn process_admission<C>(
     joined: Result<AdmissionResult, JoinError>,
-    service: &mut RegistryService<'_>,
+    service: &mut HostedRegistryService<'_, '_>,
     accepted_at: &mut C,
     responses: &mut JoinSet<ResponseResult>,
     active_by_ip: &mut BTreeMap<IpAddr, usize>,
@@ -229,11 +308,16 @@ where
             Ok(response) => {
                 responses.spawn(async move { (ip, pending.respond(response).await) });
             }
-            Err(RegistryServiceError::Protocol(_)) => {
+            Err(HostedServiceFailure::Protocol) => {
                 report.rejected_protocol_requests += 1;
                 release_connection(ip, active_by_ip, active_total)?;
             }
-            Err(error) => return Err(RegistryHostError::Service(error)),
+            Err(HostedServiceFailure::Legacy(error)) => {
+                return Err(RegistryHostError::Service(error));
+            }
+            Err(HostedServiceFailure::Principal(error)) => {
+                return Err(RegistryHostError::PrincipalService(error));
+            }
         },
         Err(AdmissionFailure::Timeout) => {
             report.admission_timeouts += 1;
@@ -288,6 +372,7 @@ pub enum RegistryHostError {
     NonLoopbackListener(SocketAddr),
     Listener(std::io::Error),
     Service(RegistryServiceError),
+    PrincipalService(PrincipalRegistryServiceError),
     Task(JoinError),
     ClockBeforeUnixEpoch,
     ClockRollback { previous: u64, current: u64 },
@@ -306,6 +391,9 @@ impl fmt::Display for RegistryHostError {
             }
             Self::Listener(error) => write!(formatter, "registry listener failed: {error}"),
             Self::Service(error) => write!(formatter, "registry service failed: {error}"),
+            Self::PrincipalService(error) => {
+                write!(formatter, "principal registry service failed: {error}")
+            }
             Self::Task(error) => write!(formatter, "registry connection task failed: {error}"),
             Self::ClockBeforeUnixEpoch => {
                 formatter.write_str("registry host clock is before the Unix epoch")
@@ -326,6 +414,7 @@ impl Error for RegistryHostError {
         match self {
             Self::Listener(error) => Some(error),
             Self::Service(error) => Some(error),
+            Self::PrincipalService(error) => Some(error),
             Self::Task(error) => Some(error),
             _ => None,
         }

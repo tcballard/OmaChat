@@ -1482,6 +1482,7 @@ name = "omachat-registry-host"
 version = "0.0.1"
 dependencies = [
  "hex",
+ "k256",
  "omachat-crypto",
  "omachat-registry",
  "omachat-registry-transport",
