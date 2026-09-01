@@ -1,0 +1,31 @@
+{
+  "_comment_pubkey": "Leave empty on a fresh deployment — first run will route operators to /setup to claim ownership via any Nostr signer. Or set GRAIN_OWNER_PUBKEY (hex or npub) in the environment to claim declaratively at startup without the UI step.",
+  "_comment_version": "version is overlaid at NIP-11 response time from the running build; the placeholder below is fine to leave as-is.",
+  "_comment_ui": "Most string fields default to empty: name / description / banner / icon / contact / policy URLs are best edited via the /admin dashboard once the relay is running. The dashboard's Ops section fires the corresponding NIP-86 changerelay* methods.",
+
+  "name": "OmaChat bootstrap relay",
+  "description": "Authenticated Nostr bootstrap relay for portable OmaChat participants",
+  "banner": "",
+  "icon": "",
+  "pubkey": "",
+  "contact": "",
+  "supported_nips": [1, 7, 9, 11, 17, 19, 40, 42, 45, 50, 55, 59, 65, 70, 86, 98],
+  "software": "https://github.com/0ceanslim/grain",
+  "version": "v0.7.1",
+  "privacy_policy": "",
+  "terms_of_service": "",
+  "posting_policy": "",
+  "limitation": {
+    "max_message_length": 65536,
+    "max_content_length": 65536,
+    "max_subscriptions": 10,
+    "max_limit": 500,
+    "auth_required": true,
+    "payment_required": false,
+    "restricted_writes": false,
+    "created_at_lower_limit": 1577836800,
+    "created_at_upper_limit": null
+  },
+  "language_tags": ["en", "en-US"],
+  "tags": ["omachat", "bootstrap", "authenticated"]
+}

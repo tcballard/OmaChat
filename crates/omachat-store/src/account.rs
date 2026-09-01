@@ -3,6 +3,7 @@ use omachat_crypto::{
     AccountError, AccountPublicIdentity, AccountSecrets, DevicePublicKeys, DisplayName,
     GlobalHandle, IdentityError, IdentitySecrets, SignedLocalAccountBinding,
 };
+use omachat_registry::{CommandId, HandleClaim, RegistryError};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt, io::Cursor};
 use zeroize::Zeroizing;
@@ -45,6 +46,22 @@ impl LocalAccount {
     #[must_use]
     pub fn binding(&self) -> &SignedLocalAccountBinding {
         &self.binding
+    }
+
+    /// Sign one idempotent registry command for this account's current
+    /// root-signed binding without exposing the account root as a general
+    /// signing oracle.
+    pub fn sign_registry_handle_claim(
+        &self,
+        command_id: CommandId,
+        expected_revision: u64,
+    ) -> Result<HandleClaim, RegistryError> {
+        HandleClaim::sign(
+            command_id,
+            expected_revision,
+            self.binding.clone(),
+            &self.secrets,
+        )
     }
 }
 

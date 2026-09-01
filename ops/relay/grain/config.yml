@@ -1,0 +1,208 @@
+# GRAIN Relay Configuration Example
+# This file provides sensible defaults for most relay deployments
+# See docs/configuration.md for detailed explanations
+
+logging:
+  level: "info" # Log levels: "debug", "info", "warn", "error"
+  file: "debug" # Log file name
+  max_log_size_mb: 10 # Maximum log file size in MB before trimming
+  structure: true # Production logs must be machine-readable.
+  stdout: true # Mirror log records to stdout (pretty single-line). Useful for Docker so `docker logs` works.
+  check_interval_min: 10 # Check every 10 minutes
+  backup_count: 2 # Keep 2 backup files (.bak1, .bak2)
+
+  # Components listed here have their INFO/DEBUG records dropped; WARN/ERROR
+  # always pass through. The default list silences high-volume utility and
+  # storage-layer chatter. Connection-layer components (relay-client,
+  # relay-connection, client-connection) are intentionally NOT suppressed —
+  # those are where lockup symptoms surface and you want them visible by
+  # default. Add components here only if you confirm they're spamming.
+  suppress_components:
+    - "util" # generic helper logs
+    - "log" # the logger reporting on itself (rotation, write errors)
+    - "db-query" # one INFO per query/search/count — extremely noisy under load
+    - "db-store" # one INFO per ingested/deleted event
+    - "close-handler" # subscription teardown noise
+    - "client-main"
+    - "client-api"
+    - "client-core"
+    - "client-tools"
+    - "client-data"
+    - "client-session"
+    - "client-cache"
+
+# See docs/configuration.md for the full component list and what each emits.
+
+database:
+  path: "data" # Directory for nostrdb data files (relative to data dir)
+  map_size_mb: 4096 # Maximum database size in MB (4GB default)
+
+# Client configuration for the built-in Nostr client
+client:
+  # Index relays — seed/discovery set the client library connects to first.
+  # Queried to resolve a user's NIP-65 mailbox list and profile metadata
+  # when no per-user relay set is known.
+  # The relay service is not a discovery authority. OmaChat clients perform
+  # NIP-65/NIP-17 discovery through their own configured relay sets.
+  index_relays: []
+
+  # Connection settings (in seconds)
+  connection_timeout: 10 # Time to wait for relay connection
+  read_timeout: 30 # Time to wait for relay responses
+  write_timeout: 10 # Time to wait when sending to relays
+
+  # Connection management
+  max_connections: 10 # Maximum simultaneous relay connections
+  retry_attempts: 3 # Number of retry attempts for failed connections
+  retry_delay: 2 # Delay between retry attempts (seconds)
+
+  # Client behavior
+  keep_alive: true # Maintain persistent connections
+  user_agent: "grain-client/1.0" # User agent string for relay connections
+
+server:
+  port: :8181
+  read_timeout: 60 # Timeout for reading a single WebSocket message from client
+  write_timeout: 20 # Timeout for writing a single WebSocket message to client
+  idle_timeout: 1200 # Connection-level timeout for inactive clients (in seconds); 0 disables.
+  max_connections: 100 # Hard cap on concurrent WebSocket clients. 0 disables the gate. Without this set, the relay accepts unlimited connections — set it on every production deployment.
+  max_subscriptions_per_client: 10
+  implicit_req_limit: 500 # Default limit applied to REQ when no limit is specified
+  connection_rate_limit_per_ip: 30 # Per-IP connection attempts per minute. Rejected before WS upgrade with HTTP 429. 0 disables.
+
+resource_limits:
+  cpu_cores: 2 # Limit the number of CPU cores the application can use
+  memory_mb: 2048 # Hard RSS cap in MB. Production grain at moderate load runs ~1GB; this leaves headroom. Raise for hosts with more RAM.
+  heap_size_mb: 1024 # Go GC heap soft target in MB. Should be roughly half of memory_mb so the runtime has room for stacks, mmap'd LMDB, etc.
+
+auth:
+  # Grain v0.7.1 protects kind 1059 reads, but only global AUTH also prevents
+  # unauthenticated gift-wrap writes. Keep this true until a narrower,
+  # independently verified write policy is available.
+  required: true
+  # When required: true, this MUST be set to the externally-reachable URL clients
+  # use to connect (e.g. wss://relay.yourdomain.com/). The string is signed into
+  # the AUTH challenge and must match what the client sees, or the AUTH fails.
+  # Leave empty if required: false.
+  # Deliberately invalid until rendered for the real TLS endpoint. Grain must
+  # fail AUTH rather than silently accepting a mismatched deployment URL.
+  relay_url: "wss://relay.omachat.invalid"
+  # How strictly the AUTH `relay` tag is compared against relay_url.
+  # Both modes canonicalize scheme + host (lowercase, strip default ports) and
+  # ignore trailing slashes. They differ in path handling:
+  #   strict (default) - path is significant. Safe for shared-host/multi-tenant
+  #                      deployments (a relay at /v1 won't accept AUTH for /v2).
+  #   host             - path is ignored entirely. Use this if clients in the
+  #                      wild append fingerprint suffixes to your URL and you
+  #                      don't share the host with another relay.
+  # Unknown values fall back to strict.
+  relay_url_match: "strict"
+
+backup_relay:
+  enabled: false # Set to true to enable sending events to the backup relays
+  urls: [] # Each accepted event is fanned out (in parallel) to every URL.
+          # Common patterns:
+          #   - a public blaster / broadcaster that re-publishes to many relays
+          #   - a private archival relay you control
+          #   - a peer relay you've paired with for federation
+          # Each entry must start with ws:// or wss://.
+
+event_purge:
+  enabled: false # Toggle to enable/disable event purging
+  disable_at_startup: true # Disable purging at startup
+  keep_interval_hours: 24 # Number of hours to keep events before purging
+  purge_interval_minutes: 240 # Interval in minutes for running the purge
+  purge_by_category: # Configure purging based on categories
+    regular: true
+    replaceable: false
+    addressable: false
+    deprecated: true
+  purge_by_kind_enabled: false # Enable purging by specific kinds, if false, all collections will be purged
+  kinds_to_purge: # List of event kinds to explicitly purge (kind 2 is deprecated and never stored, so don't list it)
+    - 1
+    - 1000
+  exclude_whitelisted: true # Exclude events from whitelisted pubkeys during purging
+
+event_time_constraints:
+  min_created_at: 1577836800 # January 1, 2020, as Unix timestamp
+  # min_created_at_string: now-5m  # Custom value to indicate 5 minutes in the past
+  # max_created_at: 0 # Set to 0 to use the default behavior of 'now'
+  max_created_at_string: now+5m # Use a string to set a date for max created at in the future or past from current time
+
+rate_limit:
+  ws_limit: 50 # WebSocket messages per second per client (any frame: EVENT, REQ, CLOSE, etc.)
+  ws_burst: 100 # Allowed burst of WebSocket messages
+  event_limit: 10 # EVENT messages per second per client
+  event_burst: 20 # Allowed burst of EVENTs
+  req_limit: 10 # REQ subscription messages per second per client. Clients commonly fire several REQs at startup (one per filter shape), so don't set this too tight.
+  req_burst: 30 # Allowed burst of REQs
+  max_event_size: 65536 # 64 KiB aggregate event ceiling, including encrypted wrappers.
+
+  # Size limits for specific event kinds. Aligned with the
+  # "suggested" chips in the admin dashboard's Rate Limit section
+  # — same numbers, so a fresh deploy gets sensible defaults
+  # before the operator ever opens /admin.
+  kind_size_limits:
+    - kind: 0 # User metadata (profile info)
+      max_size: 8192 # 8KB - sufficient for detailed profiles with images
+    - kind: 1 # Text notes
+      max_size: 4096 # 4KB - prevents spam while allowing normal posts
+    - kind: 3 # Follow lists
+      max_size: 65536 # 64KB - allows large Follow lists (1000+ Follows)
+    - kind: 7 # Reactions (likes, etc.)
+      max_size: 512 # 512B - reactions should be tiny
+    - kind: 9735 # Zap receipts (NIP-57)
+      max_size: 4096 # 4KB - small structured payload + LN proof
+    - kind: 10050 # NIP-17 DM inbox relay list
+      max_size: 4096
+    - kind: 1059 # NIP-59 persistent gift wrap
+      max_size: 65536
+    - kind: 30023 # Long-form content (NIP-23)
+      max_size: 262144 # 256KB - articles can be big; tighten if seeing abuse
+
+  # Rate limits for different event categories
+  category_limits:
+    regular: # Kind 1, 4-44, 1000-9999 (most social media content)
+      limit: 8 # 8 events per second - most common events
+      burst: 16 # Allow posting several messages quickly
+    replaceable: # Kind 0, 3, 10000-19999 (profiles, contact lists, relay lists, mute lists)
+      limit: 5 # New users editing profile + contact list + relay list back-to-back can hit this; 5/sec leaves room.
+      burst: 10 # Allow a quick wave of replaceable updates at account-setup time
+    ephemeral: # Kind 20000-29999 (temporary events, not stored)
+      limit: 50 # 50 events per second - higher since not stored permanently
+      burst: 100 # Allow high bursts for real-time features
+    addressable: # Kind 30000-39999 (replaceable by d-tag)
+      limit: 3 # 3 events per second - often larger content
+      burst: 8 # Moderate burst for content creation sessions
+
+  # Rate limits for specific event kinds. Overrides category_limits
+  # for the listed kinds. Default is empty so operators opt in to
+  # per-kind tightening; the admin dashboard's "suggested" chips
+  # pre-fill these exact values for one-click adds.
+  #
+  # kind_limits:
+  #   - kind: 0       # Profile metadata — tight; identity updates should be rare
+  #     limit: 1
+  #     burst: 2
+  #   - kind: 1       # Text notes — tighter than regular category for spam control
+  #     limit: 5
+  #     burst: 12
+  #   - kind: 6       # Reposts — same tightness as notes
+  #     limit: 5
+  #     burst: 12
+  #   - kind: 7       # Reactions — loose; high volume but tiny
+  #     limit: 20
+  #     burst: 40
+  #   - kind: 9735    # Zap receipts — moderate; payment flows can spike
+  #     limit: 10
+  #     burst: 20
+  #   - kind: 30023   # Long-form articles — usually authored slowly
+  #     limit: 1
+  #     burst: 3
+  kind_limits:
+    - kind: 10050
+      limit: 1
+      burst: 3
+    - kind: 1059
+      limit: 4
+      burst: 12

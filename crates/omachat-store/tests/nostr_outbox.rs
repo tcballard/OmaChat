@@ -1,4 +1,6 @@
-use omachat_store::{NostrOutbox, OutboxError, OutboxState, RequestedProvider, SealedStore};
+use omachat_store::{
+    NostrDeliveryProfile, NostrOutbox, OutboxError, OutboxState, RequestedProvider, SealedStore,
+};
 use std::fs;
 use tempfile::tempdir;
 
@@ -35,6 +37,10 @@ async fn restart_preserves_order_attempts_and_sealed_plaintext() {
         .expect("reopen store");
     let mut reopened = NostrOutbox::load(&reopened_store, 103).expect("reopen outbox");
     assert_eq!(reopened.messages()[0].id, "one");
+    assert_eq!(
+        reopened.messages()[0].nostr_profile,
+        NostrDeliveryProfile::Compatibility
+    );
     assert_eq!(reopened.messages()[0].attempts, 1);
     assert_eq!(reopened.messages()[1].id, "two");
 
@@ -42,6 +48,43 @@ async fn restart_preserves_order_attempts_and_sealed_plaintext() {
         .record_attempt("one", true, 104)
         .expect("acknowledge");
     assert_eq!(reopened.next_pending().expect("second pending").id, "two");
+}
+
+#[tokio::test]
+async fn restart_preserves_nip17_profile_and_old_records_default_to_compatibility() {
+    let temporary = tempdir().expect("temporary directory");
+    let store = SealedStore::open(temporary.path(), RequestedProvider::File)
+        .await
+        .expect("store");
+    let mut outbox = NostrOutbox::load(&store, 100).expect("outbox");
+    outbox
+        .enqueue_with_profile(
+            "nip17",
+            "peer",
+            "signed gift wrap",
+            NostrDeliveryProfile::Nip17,
+            100,
+        )
+        .expect("NIP-17 enqueue");
+    drop(outbox);
+    let reopened = NostrOutbox::load(&store, 101).expect("reopen NIP-17 outbox");
+    assert_eq!(
+        reopened.messages()[0].nostr_profile,
+        NostrDeliveryProfile::Nip17
+    );
+    drop(reopened);
+
+    store
+        .write(
+            "nostr-outbox-v1",
+            br#"{"messages":[{"id":"old","peer":"peer","gift_wrap":"legacy","created_at":102,"attempts":0,"last_attempt_at":null,"state":"pending"}]}"#,
+        )
+        .expect("write pre-profile record");
+    let migrated = NostrOutbox::load(&store, 103).expect("load pre-profile record");
+    assert_eq!(
+        migrated.messages()[0].nostr_profile,
+        NostrDeliveryProfile::Compatibility
+    );
 }
 
 #[tokio::test]

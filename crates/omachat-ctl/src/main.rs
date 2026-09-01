@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -119,6 +119,62 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["discover-dm-relays", public_key] => Ok((
+            Command::DiscoverDmRelays {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["discover-profile", public_key] => Ok((
+            Command::DiscoverProfile {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["show-profile", public_key] => Ok((
+            Command::ShowProfile {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["resolve-handle", handle] => Ok((
+            Command::ResolveRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["resolve-handle", handle, "--json"] => Ok((
+            Command::ResolveRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Json,
+        )),
+        ["show-handle", handle] => Ok((
+            Command::ShowRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["show-handle", handle, "--json"] => Ok((
+            Command::ShowRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Json,
+        )),
+        ["claim-handle", handle, "--confirm", confirmation] => Ok((
+            Command::ClaimRegistryHandle {
+                handle: (*handle).into(),
+                confirmation: (*confirmation).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["claim-handle", handle, "--confirm", confirmation, "--json"] => Ok((
+            Command::ClaimRegistryHandle {
+                handle: (*handle).into(),
+                confirmation: (*confirmation).into(),
+            },
+            OutputMode::Json,
+        )),
         ["panic", "--confirm", confirmation] => Ok((
             Command::Panic {
                 confirmation: (*confirmation).into(),
@@ -138,4 +194,144 @@ fn default_socket() -> Result<PathBuf, CliError> {
 enum CliError {
     Usage(String),
     Client(ClientError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_explicit_dm_relay_discovery() {
+        let arguments = [
+            std::ffi::OsString::from("discover-dm-relays"),
+            std::ffi::OsString::from("11".repeat(32)),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("discovery command did not parse"),
+        };
+        assert!(mode == OutputMode::Human);
+        assert_eq!(
+            command,
+            Command::DiscoverDmRelays {
+                public_key: "11".repeat(32),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_explicit_profile_discovery() {
+        let arguments = [
+            std::ffi::OsString::from("discover-profile"),
+            std::ffi::OsString::from("22".repeat(32)),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("profile discovery command did not parse"),
+        };
+        assert!(mode == OutputMode::Human);
+        assert_eq!(
+            command,
+            Command::DiscoverProfile {
+                public_key: "22".repeat(32),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_offline_profile_lookup() {
+        let arguments = [
+            std::ffi::OsString::from("show-profile"),
+            std::ffi::OsString::from("33".repeat(32)),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("profile lookup command did not parse"),
+        };
+        assert!(mode == OutputMode::Human);
+        assert_eq!(
+            command,
+            Command::ShowProfile {
+                public_key: "33".repeat(32),
+            }
+        );
+    }
+
+    #[test]
+    fn parses_verified_registry_resolution_with_explicit_output_modes() {
+        let human = [
+            std::ffi::OsString::from("resolve-handle"),
+            std::ffi::OsString::from("alice"),
+        ];
+        let json = [
+            std::ffi::OsString::from("resolve-handle"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (human_command, human_mode) = match parse_command(&human) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("human command did not parse"),
+        };
+        let (json_command, json_mode) = match parse_command(&json) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("JSON command did not parse"),
+        };
+        let expected = Command::ResolveRegistryHandle {
+            handle: "alice".into(),
+        };
+        assert_eq!(human_command, expected);
+        assert_eq!(json_command, expected);
+        assert!(human_mode == OutputMode::Human);
+        assert!(json_mode == OutputMode::Json);
+    }
+
+    #[test]
+    fn parses_registry_claim_only_with_explicit_confirmation() {
+        let arguments = [
+            std::ffi::OsString::from("claim-handle"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--confirm"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("claim command did not parse"),
+        };
+        assert_eq!(
+            command,
+            Command::ClaimRegistryHandle {
+                handle: "alice".into(),
+                confirmation: "alice".into(),
+            }
+        );
+        assert!(mode == OutputMode::Json);
+        assert!(
+            parse_command(&[
+                std::ffi::OsString::from("claim-handle"),
+                std::ffi::OsString::from("alice"),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parses_cache_only_registry_lookup() {
+        let arguments = [
+            std::ffi::OsString::from("show-handle"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (command, mode) = match parse_command(&arguments) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("cache-only lookup did not parse"),
+        };
+        assert_eq!(
+            command,
+            Command::ShowRegistryHandle {
+                handle: "alice".into(),
+            }
+        );
+        assert!(mode == OutputMode::Json);
+    }
 }

@@ -1,5 +1,6 @@
 //! Pure protocol codecs and compatibility metadata.
 
+pub mod agent_loop;
 pub mod geohash;
 pub mod ipc;
 

@@ -2,6 +2,7 @@
 
 mod account;
 mod agent;
+mod agent_state;
 mod identity;
 mod nip44;
 
@@ -12,6 +13,10 @@ pub use account::{
 pub use agent::{
     AgentAuthorizationId, AgentAuthorizationRequest, AgentError, PrincipalType,
     SignedAgentAuthorization, SignedAgentRevocation,
+};
+pub use agent_state::{
+    AgentLifecycleError, AgentLifecycleMutation, AgentLifecycleRecord, AgentLifecycleState,
+    AgentLifecycleStatus, MAX_AGENTS_PER_ACCOUNT,
 };
 pub use identity::{
     DerivationSource, DerivedNostrIdentity, IdentityError, IdentitySecrets, PublicIdentity,

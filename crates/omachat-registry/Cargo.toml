@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 ed25519-dalek = "=2.2.0"
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
 sha2 = "=0.10.9"
 serde = { version = "=1.0.229", features = ["derive"] }

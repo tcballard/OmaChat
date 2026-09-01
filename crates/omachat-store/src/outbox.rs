@@ -15,6 +15,14 @@ pub enum OutboxState {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NostrDeliveryProfile {
+    #[default]
+    Compatibility,
+    Nip17,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OutboxMessage {
     pub id: String,
@@ -24,6 +32,8 @@ pub struct OutboxMessage {
     pub attempts: u8,
     pub last_attempt_at: Option<u64>,
     pub state: OutboxState,
+    #[serde(default)]
+    pub nostr_profile: NostrDeliveryProfile,
     #[serde(default)]
     pub attempt_history: Vec<TransportAttempt>,
 }
@@ -88,6 +98,23 @@ impl<'store> NostrOutbox<'store> {
         gift_wrap: impl Into<String>,
         now: u64,
     ) -> Result<(), OutboxError> {
+        self.enqueue_with_profile(
+            id,
+            peer,
+            gift_wrap,
+            NostrDeliveryProfile::Compatibility,
+            now,
+        )
+    }
+
+    pub fn enqueue_with_profile(
+        &mut self,
+        id: impl Into<String>,
+        peer: impl Into<String>,
+        gift_wrap: impl Into<String>,
+        nostr_profile: NostrDeliveryProfile,
+        now: u64,
+    ) -> Result<(), OutboxError> {
         self.expire(now);
         let id = id.into();
         let peer = peer.into();
@@ -118,6 +145,7 @@ impl<'store> NostrOutbox<'store> {
             attempts: 0,
             last_attempt_at: None,
             state: OutboxState::Pending,
+            nostr_profile,
             attempt_history: Vec::new(),
         });
         self.persist()

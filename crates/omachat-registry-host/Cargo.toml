@@ -1,0 +1,26 @@
+[package]
+name = "omachat-registry-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hex = "=0.4.3"
+omachat-registry-transport = { path = "../omachat-registry-transport", version = "=0.0.1" }
+omachat-store = { path = "../omachat-store", version = "=0.0.1" }
+rustix = { version = "=1.1.4", features = ["fs"] }
+tokio = { version = "=1.53.1", features = ["macros", "net", "rt", "signal", "sync", "time"] }
+zeroize = "=1.9.0"
+
+[dev-dependencies]
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
+omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+omachat-registry = { path = "../omachat-registry", version = "=0.0.1" }
+omachat-store = { path = "../omachat-store", version = "=0.0.1" }
+tempfile = "=3.27.0"
+tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true
