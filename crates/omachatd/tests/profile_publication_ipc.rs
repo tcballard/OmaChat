@@ -75,6 +75,9 @@ async fn ipc_publishes_the_device_authored_account_profile() {
     assert_eq!(result["acknowledged_relays"], 1);
     assert_eq!(result["required_acknowledgements"], 1);
     assert_eq!(result["global_handle_verified_by_profile"], false);
+    assert_eq!(result["principal_type"], "device");
+    assert_eq!(result["profile_subject"], "device_nostr_key");
+    assert_eq!(result["account_root_authorship"], false);
     core.prepare_for_shutdown().await;
     let event = relay.await.unwrap();
     assert_eq!(event.kind, PROFILE_METADATA_KIND);

@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-nip65-relays PUBLIC_KEY | show-nip65-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-profile [--json] | publish-nip65-relays [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-nip65-relays PUBLIC_KEY | show-nip65-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-device-profile [--json] | publish-nip65-relays [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -152,6 +152,10 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["publish-device-profile"] => Ok((Command::PublishProfile, OutputMode::Human)),
+        ["publish-device-profile", "--json"] => {
+            Ok((Command::PublishProfile, OutputMode::Json))
+        }
         ["publish-profile"] => Ok((Command::PublishProfile, OutputMode::Human)),
         ["publish-profile", "--json"] => Ok((Command::PublishProfile, OutputMode::Json)),
         ["publish-nip65-relays"] => Ok((Command::PublishNip65Relays, OutputMode::Nip65Publication)),
@@ -375,9 +379,9 @@ mod tests {
 
     #[test]
     fn parses_profile_publication_with_explicit_output_modes() {
-        let human = [std::ffi::OsString::from("publish-profile")];
+        let human = [std::ffi::OsString::from("publish-device-profile")];
         let json = [
-            std::ffi::OsString::from("publish-profile"),
+            std::ffi::OsString::from("publish-device-profile"),
             std::ffi::OsString::from("--json"),
         ];
         let (human_command, human_mode) = match parse_command(&human) {

@@ -35,6 +35,11 @@ It also has two material gaps:
 - The account has no account-wide human Nostr principal. The current stable
   mailbox identity is a device Nostr key. Rebranding that device key as a
   human/account key would silently collapse two principals.
+- Kind `0` metadata published by the current daemon is therefore explicitly a
+  device-principal profile. Account-derived presentation hints do not make the
+  device key an account root, human principal, or account-wide author. The CLI
+  calls this `publish-device-profile` until a separately reviewed human Nostr
+  principal and root-signed binding exist.
 - The v1 handle registry models one account-bound handle and per-account CAS.
   It cannot represent separately addressable agents without a versioned
   subject model.

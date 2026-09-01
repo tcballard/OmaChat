@@ -744,6 +744,9 @@ impl DaemonCore {
             "publication_source": source,
             "acknowledged_relays": outcome.acknowledged_relays,
             "required_acknowledgements": outcome.required_acknowledgements,
+            "principal_type": "device",
+            "profile_subject": "device_nostr_key",
+            "account_root_authorship": false,
             "global_handle_verified_by_profile": false,
         }))
     }
