@@ -7,6 +7,7 @@ mod erase;
 mod identity;
 mod outbox;
 mod principal_registry;
+mod principal_registry_cache;
 mod registry;
 mod registry_cache;
 mod registry_claim_intent;
@@ -23,6 +24,10 @@ pub use outbox::{
     OutboxTransport, TransportAttempt,
 };
 pub use principal_registry::{PrincipalRegistryVault, PrincipalRegistryVaultError};
+pub use principal_registry_cache::{
+    CachedPrincipalRegistryRecord, PrincipalRegistryCacheError, PrincipalRegistryCacheLookup,
+    PrincipalRegistryEvidence, VerifiedPrincipalRegistryCache,
+};
 pub use registry::{RegistryVault, RegistryVaultError};
 pub use registry_cache::{
     CachedRegistryRecord, RegistryCacheError, RegistryCacheLookup, VerifiedRegistryCache,
