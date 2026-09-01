@@ -12,7 +12,7 @@ use tokio::sync::oneshot;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
 #[tokio::test]
-async fn ipc_publishes_the_device_authored_account_profile() {
+async fn ipc_publishes_a_device_principal_profile() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let relay_url = format!("ws://{}/", listener.local_addr().unwrap());
     let relay = tokio::spawn(async move {

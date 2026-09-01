@@ -153,9 +153,7 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             OutputMode::Human,
         )),
         ["publish-device-profile"] => Ok((Command::PublishProfile, OutputMode::Human)),
-        ["publish-device-profile", "--json"] => {
-            Ok((Command::PublishProfile, OutputMode::Json))
-        }
+        ["publish-device-profile", "--json"] => Ok((Command::PublishProfile, OutputMode::Json)),
         ["publish-profile"] => Ok((Command::PublishProfile, OutputMode::Human)),
         ["publish-profile", "--json"] => Ok((Command::PublishProfile, OutputMode::Json)),
         ["publish-nip65-relays"] => Ok((Command::PublishNip65Relays, OutputMode::Nip65Publication)),
