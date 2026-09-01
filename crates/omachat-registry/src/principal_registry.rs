@@ -2,21 +2,20 @@
 
 use crate::{
     HandleClaim, RegistryError, RegistryReceipt, RegistryState,
+    principal_receipt::PrincipalProofReceipt,
     proof_bearing_claim::{ProofBearingClaimError, ProofBearingDeviceHandleClaim},
 };
+use ed25519_dalek::SigningKey;
 use omachat_crypto::GlobalHandle;
 use std::collections::BTreeMap;
 
-/// An accepted device-principal binding plus its existing v1 registry receipt.
-///
-/// The v1 receipt verifies the root-signed handle claim but does not bind the
-/// principal proof. This record must not cross a trust boundary until a
-/// registry-signed proof receipt is added.
+/// An accepted device-principal binding with claim and proof receipts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrincipalRegistryRecord {
     claim: HandleClaim,
     principal_proof: crate::principal_proof::NostrPrincipalControlProof,
     receipt: RegistryReceipt,
+    principal_receipt: PrincipalProofReceipt,
 }
 
 impl PrincipalRegistryRecord {
@@ -34,14 +33,22 @@ impl PrincipalRegistryRecord {
     pub fn claim_receipt(&self) -> &RegistryReceipt {
         &self.receipt
     }
+
+    /// Returns the registry-signed receipt binding the exact principal proof.
+    pub fn principal_receipt(&self) -> &PrincipalProofReceipt {
+        &self.principal_receipt
+    }
 }
 
 /// In-memory proof-bearing registry state, not yet wired to host transport.
 pub struct PrincipalRegistryState {
     registry: RegistryState,
+    proof_signing_key: SigningKey,
     records_by_command: BTreeMap<[u8; 32], PrincipalRegistryRecord>,
     current_command_by_account: BTreeMap<String, [u8; 32]>,
     current_command_by_public_key: BTreeMap<[u8; 32], [u8; 32]>,
+    proof_head: Option<PrincipalProofReceipt>,
+    account_proof_heads: BTreeMap<String, PrincipalProofReceipt>,
 }
 
 impl PrincipalRegistryState {
@@ -50,9 +57,12 @@ impl PrincipalRegistryState {
     pub fn from_signing_seed(signing_seed: [u8; 32]) -> Self {
         Self {
             registry: RegistryState::from_signing_seed(signing_seed),
+            proof_signing_key: SigningKey::from_bytes(&signing_seed),
             records_by_command: BTreeMap::new(),
             current_command_by_account: BTreeMap::new(),
             current_command_by_public_key: BTreeMap::new(),
+            proof_head: None,
+            account_proof_heads: BTreeMap::new(),
         }
     }
 
@@ -97,15 +107,33 @@ impl PrincipalRegistryState {
             .registry
             .apply(claim.clone(), accepted_at)
             .map_err(PrincipalRegistryError::Registry)?;
+        let previous_proof_receipt_hash = self
+            .proof_head
+            .as_ref()
+            .map(PrincipalProofReceipt::receipt_hash)
+            .unwrap_or([0; 32]);
+        let previous_account_proof_receipt_hash = self
+            .account_proof_heads
+            .get(&account_id)
+            .map(PrincipalProofReceipt::receipt_hash)
+            .unwrap_or([0; 32]);
+        let principal_receipt = PrincipalProofReceipt::issue(
+            &self.proof_signing_key,
+            &validated,
+            &receipt,
+            previous_proof_receipt_hash,
+            previous_account_proof_receipt_hash,
+        );
         let record = PrincipalRegistryRecord {
             claim,
             principal_proof,
             receipt,
+            principal_receipt: principal_receipt.clone(),
         };
 
         if let Some(previous_command) = self
             .current_command_by_account
-            .insert(account_id, command_id)
+            .insert(account_id.clone(), command_id)
         {
             let previous = self
                 .records_by_command
@@ -120,6 +148,9 @@ impl PrincipalRegistryState {
         self.current_command_by_public_key
             .insert(public_key, command_id);
         self.records_by_command.insert(command_id, record.clone());
+        self.proof_head = Some(principal_receipt.clone());
+        self.account_proof_heads
+            .insert(account_id, principal_receipt);
         Ok(record)
     }
 

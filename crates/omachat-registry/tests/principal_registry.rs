@@ -145,4 +145,62 @@ fn same_account_can_rotate_its_device_nostr_key_atomically() {
         .claim_receipt()
         .verify_for_claim(&registry.verifying_key(), current.claim())
         .unwrap();
+    let validated = ProofBearingDeviceHandleClaim::new(
+        current.claim().clone(),
+        current.principal_proof().clone(),
+    )
+    .unwrap();
+    current
+        .principal_receipt()
+        .verify_for(
+            &registry.verifying_key(),
+            &validated,
+            current.claim_receipt(),
+        )
+        .unwrap();
+}
+
+#[test]
+fn proof_receipts_bind_evidence_and_preserve_both_chains() {
+    let alice = AccountSecrets::from_seeds([0x11; 32], [0x12; 32]);
+    let bob = AccountSecrets::from_seeds([0x51; 32], [0x52; 32]);
+    let alice_first = validated_claim(&alice, 0x20, [0x31; 32], [0x41; 32], "alice", 0, 1, 1_002);
+    let bob_first = validated_claim(&bob, 0x60, [0x71; 32], [0x61; 32], "bob", 0, 1, 1_002);
+    let alice_second = validated_claim(&alice, 0x20, [0x32; 32], [0x42; 32], "alice", 1, 2, 1_003);
+    let mut registry = PrincipalRegistryState::from_signing_seed([0x71; 32]);
+    let pinned_key = registry.verifying_key();
+
+    let first = registry.apply_device(alice_first, 2_000).unwrap();
+    let second = registry.apply_device(bob_first, 2_001).unwrap();
+    let third = registry.apply_device(alice_second, 2_002).unwrap();
+
+    first
+        .principal_receipt()
+        .verify_after(&pinned_key, None)
+        .unwrap();
+    second
+        .principal_receipt()
+        .verify_after(&pinned_key, Some(first.principal_receipt()))
+        .unwrap();
+    third
+        .principal_receipt()
+        .verify_after(&pinned_key, Some(second.principal_receipt()))
+        .unwrap();
+
+    first
+        .principal_receipt()
+        .verify_account_after(&pinned_key, None)
+        .unwrap();
+    second
+        .principal_receipt()
+        .verify_account_after(&pinned_key, None)
+        .unwrap();
+    third
+        .principal_receipt()
+        .verify_account_after(&pinned_key, Some(first.principal_receipt()))
+        .unwrap();
+
+    let mut tampered = third.principal_receipt().clone();
+    tampered.accepted_at += 1;
+    assert!(tampered.verify(&pinned_key).is_err());
 }
