@@ -219,11 +219,12 @@ fn signed_actions_remain_inert_without_explicit_relay_policy_acceptance() {
         Some(LifecycleStateError::GroupUnknown)
     );
 
-    state.apply_accepted(
-        &AcceptedLifecycleAction::from_authoritative_relay(request, &relay)
-            .expect("relay accepted exact request"),
-    )
-    .expect("apply");
+    state
+        .apply_accepted(
+            &AcceptedLifecycleAction::from_authoritative_relay(request, &relay)
+                .expect("relay accepted exact request"),
+        )
+        .expect("apply");
     assert_eq!(state.status("omarchy"), Some(GroupStatus::Active));
 }
 
@@ -325,11 +326,7 @@ fn accepted_deletion_is_terminal_and_preserves_history() {
 fn invitations_are_scoped_and_are_not_membership() {
     let mut state = state();
     state
-        .apply_accepted(&accepted(create(
-            &AGENT_SECRET,
-            "omarchy",
-            NOW - 5,
-        )))
+        .apply_accepted(&accepted(create(&AGENT_SECRET, "omarchy", NOW - 5)))
         .expect("create");
     let issued = accepted(invite(&MODERATOR_SECRET, "omarchy", NOW - 4, "welcome"));
     state.apply_accepted(&issued).expect("invite");
@@ -399,7 +396,7 @@ fn multi_relay_duplicates_and_foreign_relays_are_handled() {
     assert_eq!(state, before);
 
     let foreign = AcceptedLifecycleAction::from_authoritative_relay(request, &other_relay)
-    .expect("accepted elsewhere");
+        .expect("accepted elsewhere");
     assert_eq!(
         state.apply_accepted(&foreign).err(),
         Some(LifecycleStateError::RelayMismatch)
