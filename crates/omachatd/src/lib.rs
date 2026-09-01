@@ -11,6 +11,7 @@ mod ipc_server;
 mod nostr_service;
 mod principal_registry_evidence_service;
 mod profile_cache_store;
+mod profile_publication_service;
 mod profile_publication_store;
 mod registry_evidence_service;
 
@@ -37,6 +38,10 @@ pub use principal_registry_evidence_service::PrincipalRegistryEvidenceService;
 pub use profile_cache_store::{
     PROFILE_CACHE_RECORD_NAME, SealedProfileCache, SealedProfileCacheError,
     SealedProfileCacheLookup, SealedProfileCacheState,
+};
+pub use profile_publication_service::{
+    ProfilePublicationHandle, ProfilePublicationService, ProfilePublicationServiceConfig,
+    ProfilePublicationServiceError,
 };
 pub use profile_publication_store::{
     MAX_PROFILE_PUBLICATION_RELAYS, PROFILE_PUBLICATION_INTENT_RECORD_NAME,
