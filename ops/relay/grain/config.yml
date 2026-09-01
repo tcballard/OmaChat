@@ -153,6 +153,8 @@ rate_limit:
       max_size: 512 # 512B - reactions should be tiny
     - kind: 9735 # Zap receipts (NIP-57)
       max_size: 4096 # 4KB - small structured payload + LN proof
+    - kind: 10002 # NIP-65 read/write relay list
+      max_size: 4096
     - kind: 10050 # NIP-17 DM inbox relay list
       max_size: 4096
     - kind: 1059 # NIP-59 persistent gift wrap
@@ -200,6 +202,9 @@ rate_limit:
   #     limit: 1
   #     burst: 3
   kind_limits:
+    - kind: 10002
+      limit: 1
+      burst: 3
     - kind: 10050
       limit: 1
       burst: 3

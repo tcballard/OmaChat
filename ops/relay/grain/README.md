@@ -54,7 +54,11 @@ WebSocket client. It verifies:
 - authenticated kind `1059` publication under a distinct wrapper key;
 - recipient-only historical reads and counts;
 - denial of the same data and count to an authenticated stranger;
-- exact event identity after a full relay restart.
+- replaceable kind `0` profile behavior;
+- exact NIP-65 kind `10002` read/write relay-list storage;
+- exact NIP-17 kind `10050` inbox relay-list storage;
+- signature and event-ID revalidation on every queried event;
+- exact metadata and message event identity after a full relay restart.
 
 The Rust suite separately verifies the NIP-44/NIP-59 cryptographic envelope and
 OmaChat client delivery path. Passing this probe does not prove TLS, backups,
