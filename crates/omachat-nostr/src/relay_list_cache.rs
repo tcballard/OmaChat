@@ -75,10 +75,10 @@ impl VerifiedRelayListCache {
             if source_event.created_at < current.source_event.created_at {
                 return Err(RelayListCacheError::Rollback);
             }
-            if source_event.created_at == current.source_event.created_at {
-                if source_event.id >= current.source_event.id {
-                    return Ok(RelayListCacheMutation::Unchanged);
-                }
+            if source_event.created_at == current.source_event.created_at
+                && source_event.id >= current.source_event.id
+            {
+                return Ok(RelayListCacheMutation::Unchanged);
             }
         } else if self.records.len() >= MAX_CACHED_RELAY_LISTS {
             return Err(RelayListCacheError::CacheFull);
