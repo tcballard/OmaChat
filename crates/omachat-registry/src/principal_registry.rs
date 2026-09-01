@@ -51,6 +51,7 @@ pub struct PrincipalRegistryState {
     proof_signing_key: SigningKey,
     records_by_command: BTreeMap<[u8; 32], PrincipalRegistryRecord>,
     current_command_by_account: BTreeMap<String, [u8; 32]>,
+    current_command_by_handle: BTreeMap<GlobalHandle, [u8; 32]>,
     current_command_by_public_key: BTreeMap<[u8; 32], [u8; 32]>,
     proof_head: Option<PrincipalProofReceipt>,
     account_proof_heads: BTreeMap<String, PrincipalProofReceipt>,
@@ -117,6 +118,7 @@ impl PrincipalRegistryState {
             proof_signing_key: SigningKey::from_bytes(&signing_seed),
             records_by_command: BTreeMap::new(),
             current_command_by_account: BTreeMap::new(),
+            current_command_by_handle: BTreeMap::new(),
             current_command_by_public_key: BTreeMap::new(),
             proof_head: None,
             account_proof_heads: BTreeMap::new(),
@@ -204,6 +206,7 @@ impl PrincipalRegistryState {
         }
         self.current_command_by_public_key
             .insert(public_key, command_id);
+        self.current_command_by_handle.insert(handle, command_id);
         self.records_by_command.insert(command_id, record.clone());
         self.proof_head = Some(principal_receipt.clone());
         self.account_proof_heads
@@ -216,6 +219,14 @@ impl PrincipalRegistryState {
     pub fn public_key_record(&self, public_key: &[u8; 32]) -> Option<&PrincipalRegistryRecord> {
         self.current_command_by_public_key
             .get(public_key)
+            .and_then(|command| self.records_by_command.get(command))
+    }
+
+    /// Returns the current proof-bearing record for a canonical handle.
+    #[must_use]
+    pub fn handle_record(&self, handle: &GlobalHandle) -> Option<&PrincipalRegistryRecord> {
+        self.current_command_by_handle
+            .get(handle)
             .and_then(|command| self.records_by_command.get(command))
     }
 

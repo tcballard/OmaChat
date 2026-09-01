@@ -6,7 +6,7 @@
 //! boundaries.
 
 use crate::{MAX_REGISTRY_MESSAGE_BYTES, RegistryClaim};
-use omachat_crypto::AccountId;
+use omachat_crypto::{AccountId, GlobalHandle};
 use omachat_registry::{
     RegistryReceipt, principal_proof::NostrPrincipalControlProof,
     principal_receipt::PrincipalProofReceipt, principal_registry::PrincipalRegistryRecord,
@@ -69,6 +69,7 @@ pub struct PrincipalRegistryRequest {
 pub enum PrincipalRegistryOperation {
     ClaimDevice { claim: Box<PrincipalRegistryClaim> },
     LookupPublicKey { nostr_public_key: [u8; 32] },
+    LookupHandle { handle: GlobalHandle },
     LookupAccount { account_id: AccountId },
 }
 
@@ -90,6 +91,15 @@ impl PrincipalRegistryRequest {
             version: PRINCIPAL_REGISTRY_TRANSPORT_VERSION,
             request_id,
             operation: PrincipalRegistryOperation::LookupPublicKey { nostr_public_key },
+        }
+    }
+
+    #[must_use]
+    pub fn lookup_handle(request_id: u64, handle: GlobalHandle) -> Self {
+        Self {
+            version: PRINCIPAL_REGISTRY_TRANSPORT_VERSION,
+            request_id,
+            operation: PrincipalRegistryOperation::LookupHandle { handle },
         }
     }
 

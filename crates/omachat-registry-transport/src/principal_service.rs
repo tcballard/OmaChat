@@ -105,6 +105,14 @@ impl<'store> PrincipalRegistryService<'store> {
                     },
                 )
             }
+            PrincipalRegistryOperation::LookupHandle { handle } => {
+                self.state.handle_record(&handle).map_or(
+                    PrincipalRegistryResponseOutcome::NotFound,
+                    |record| PrincipalRegistryResponseOutcome::Found {
+                        record: Box::new(PrincipalRegistryRecordWire::from_record(record)),
+                    },
+                )
+            }
             PrincipalRegistryOperation::LookupAccount { account_id } => {
                 self.state.account_record(account_id.as_str()).map_or(
                     PrincipalRegistryResponseOutcome::NotFound,

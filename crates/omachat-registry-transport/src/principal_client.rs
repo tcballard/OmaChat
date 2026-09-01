@@ -4,7 +4,7 @@ use crate::{
     PrincipalRegistryResponseOutcome, RegistryTransport, VerifiedPrincipalRegistryRecord,
     decode_principal_response, encode_principal_request,
 };
-use omachat_crypto::AccountId;
+use omachat_crypto::{AccountId, GlobalHandle};
 use omachat_registry::proof_bearing_claim::ProofBearingDeviceHandleClaim;
 use std::{error::Error, fmt};
 
@@ -71,6 +71,21 @@ impl<T: RegistryTransport> PrincipalRegistryClient<T> {
                 .payload()
                 .nostr_public_key()
                 == *nostr_public_key
+        })
+    }
+
+    pub async fn lookup_handle(
+        &mut self,
+        handle: &GlobalHandle,
+    ) -> Result<Option<VerifiedPrincipalRegistryRecord>, PrincipalRegistryClientError<T::Error>>
+    {
+        let outcome = self
+            .request(PrincipalRegistryOperation::LookupHandle {
+                handle: handle.clone(),
+            })
+            .await?;
+        self.verify_lookup(outcome, |record| {
+            record.claim_receipt().handle.as_global_handle() == handle
         })
     }
 
