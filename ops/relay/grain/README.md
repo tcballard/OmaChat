@@ -23,8 +23,10 @@ e000dad4c35669a32284a66876b6171e23fee2a12bfbfcce7824ebc3316a602d
 - NIP-42 authentication is required for every read and write.
 - Kind `1059` historical reads, live delivery, and counts remain constrained
   by Grain to the authenticated `p`-tagged recipient.
-- The internal listener is plain HTTP/WebSocket on port `8181`; a production
-  reverse proxy must terminate TLS and expose only `wss://`.
+- Grain v0.7.1 requires its plain HTTP/WebSocket listener in `:8181` form,
+  which binds every interface in its network namespace. Production must place
+  it on an un-published private network; only the TLS reverse proxy may expose
+  public ports and `wss://`.
 - The configured relay URL is `wss://relay.omachat.invalid`. Deployment tooling
   must replace it with the exact public URL or authentication fails closed.
 - Event size is capped at 64 KiB. Kind `10050` and `1059` have tighter rate and
@@ -63,6 +65,38 @@ WebSocket client. It verifies:
 The Rust suite separately verifies the NIP-44/NIP-59 cryptographic envelope and
 OmaChat client delivery path. Passing this probe does not prove TLS, backups,
 monitoring, public reachability, load capacity, or cross-Buzz messaging.
+
+## Private-network deployment candidate
+
+`compose.yml` packages the pinned Linux amd64/arm64 Grain release behind Caddy
+2.11.4. Both base images and the Caddy image are pinned by multi-architecture
+manifest digest. Grain has no host-published port and joins only an internal
+network; Caddy is the sole service on public ports 80/443. The Caddy policy
+blocks `/admin`, `/setup`, and `/metrics` at public ingress and actively probes
+Grain's `/health` endpoint.
+
+The Compose services are behind the explicit `candidate` profile and required
+environment values have no defaults. The Grain entrypoint also refuses startup
+without all of the following:
+
+- a separately reviewed deployment approval marker;
+- a retention-policy identifier resolving issue #79;
+- the exact lowercase relay domain;
+- a 32-byte hex owner public key;
+- contact, privacy, terms, and posting-policy locations.
+
+Validate the package without building an image or starting a relay:
+
+```sh
+sh ./scripts/check-grain-deployment.sh
+```
+
+Do not run `docker compose up`, set the deployment approval marker, or expose a
+real domain from this candidate package without a separate explicitly approved
+deployment PR. A production run must still add backup/restore, external
+monitoring and alert routing, target-host resource evidence, load/upgrade/
+rollback drills, the per-authenticated-pubkey abuse control identified below,
+and a black-box probe through the real TLS endpoint.
 
 ## Production blockers
 

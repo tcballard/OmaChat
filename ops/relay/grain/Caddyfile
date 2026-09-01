@@ -1,0 +1,25 @@
+{
+	admin off
+	email {$OMACHAT_ACME_EMAIL}
+}
+
+{$OMACHAT_RELAY_DOMAIN} {
+	@operator path /admin /admin/* /setup /setup/* /metrics /metrics/*
+	respond @operator 404
+
+	reverse_proxy grain:8181 {
+		health_uri /health
+		health_interval 10s
+		health_timeout 2s
+		health_fails 3
+		health_passes 2
+		fail_duration 30s
+		max_fails 3
+		stream_close_delay 5m
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

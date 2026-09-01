@@ -1,0 +1,89 @@
+name: omachat-relay-candidate
+
+services:
+  grain:
+    profiles: ["candidate"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        GRAIN_VERSION: v0.7.1
+    image: omachat/grain-candidate:v0.7.1-c0709db
+    environment:
+      OMACHAT_RELAY_DEPLOYMENT_APPROVED: ${OMACHAT_RELAY_DEPLOYMENT_APPROVED:?explicitly approved deployment required}
+      OMACHAT_RELAY_RETENTION_POLICY_ID: ${OMACHAT_RELAY_RETENTION_POLICY_ID:?issue 79 decision required}
+      OMACHAT_RELAY_DOMAIN: ${OMACHAT_RELAY_DOMAIN:?relay domain required}
+      OMACHAT_RELAY_OWNER_PUBKEY: ${OMACHAT_RELAY_OWNER_PUBKEY:?relay owner pubkey required}
+      OMACHAT_RELAY_CONTACT: ${OMACHAT_RELAY_CONTACT:?relay contact required}
+      OMACHAT_RELAY_PRIVACY_URL: ${OMACHAT_RELAY_PRIVACY_URL:?privacy policy URL required}
+      OMACHAT_RELAY_TERMS_URL: ${OMACHAT_RELAY_TERMS_URL:?terms URL required}
+      OMACHAT_RELAY_POSTING_URL: ${OMACHAT_RELAY_POSTING_URL:?posting policy URL required}
+    expose:
+      - "8181"
+    networks:
+      - relay_private
+    volumes:
+      - grain_state:/var/lib/grain
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1700,uid=65532,gid=65532
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2304m
+    cpus: 2.0
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  caddy:
+    profiles: ["candidate"]
+    image: docker.io/library/caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    environment:
+      OMACHAT_RELAY_DOMAIN: ${OMACHAT_RELAY_DOMAIN:?relay domain required}
+      OMACHAT_ACME_EMAIL: ${OMACHAT_ACME_EMAIL:?ACME contact required}
+    depends_on:
+      grain:
+        condition: service_started
+    ports:
+      - "80:80/tcp"
+      - "443:443/tcp"
+      - "443:443/udp"
+    networks:
+      - relay_private
+      - relay_public
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1700
+    cap_drop: ["ALL"]
+    cap_add: ["NET_BIND_SERVICE"]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  relay_private:
+    internal: true
+  relay_public: {}
+
+volumes:
+  grain_state: {}
+  caddy_data: {}
+  caddy_config: {}

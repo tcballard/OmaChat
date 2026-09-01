@@ -61,6 +61,9 @@ client:
   user_agent: "grain-client/1.0" # User agent string for relay connections
 
 server:
+  # Grain v0.7.1 requires the :PORT form and therefore listens on every
+  # interface in its network namespace. Production must place this listener
+  # on a private container/network namespace and must never publish port 8181.
   port: :8181
   read_timeout: 60 # Timeout for reading a single WebSocket message from client
   write_timeout: 20 # Timeout for writing a single WebSocket message to client
