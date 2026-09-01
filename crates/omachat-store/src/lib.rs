@@ -6,6 +6,7 @@ mod courier;
 mod erase;
 mod identity;
 mod outbox;
+mod principal_registry;
 mod registry;
 mod registry_cache;
 mod registry_claim_intent;
@@ -21,6 +22,7 @@ pub use outbox::{
     AttemptOutcome, NostrDeliveryProfile, NostrOutbox, OutboxError, OutboxMessage, OutboxState,
     OutboxTransport, TransportAttempt,
 };
+pub use principal_registry::{PrincipalRegistryVault, PrincipalRegistryVaultError};
 pub use registry::{RegistryVault, RegistryVaultError};
 pub use registry_cache::{
     CachedRegistryRecord, RegistryCacheError, RegistryCacheLookup, VerifiedRegistryCache,
