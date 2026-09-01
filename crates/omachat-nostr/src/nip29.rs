@@ -200,12 +200,12 @@ fn unique_pair_tag(
     optional_pair_tag(tags, name)?.ok_or(missing)
 }
 
-fn optional_pair_tag(
-    tags: &[Tag],
-    name: &'static str,
-) -> Result<Option<String>, GroupEventError> {
+fn optional_pair_tag(tags: &[Tag], name: &'static str) -> Result<Option<String>, GroupEventError> {
     let mut value = None;
-    for tag in tags.iter().filter(|tag| tag.first().is_some_and(|part| part == name)) {
+    for tag in tags
+        .iter()
+        .filter(|tag| tag.first().is_some_and(|part| part == name))
+    {
         if value.is_some() {
             return Err(GroupEventError::DuplicateTag(name));
         }

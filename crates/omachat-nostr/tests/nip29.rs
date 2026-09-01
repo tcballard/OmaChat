@@ -1,7 +1,7 @@
 use omachat_nostr::{
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
     nip29::{
-        GroupEventError, GroupUserAction, GroupUserEvent, GROUP_MESSAGE_KIND, group_message,
+        GROUP_MESSAGE_KIND, GroupEventError, GroupUserAction, GroupUserEvent, group_message,
         join_request, leave_request,
     },
 };
@@ -92,9 +92,19 @@ fn join_and_leave_follow_the_standard_user_event_shapes() {
 fn ambiguous_group_and_invite_tags_fail_closed() {
     let limits = EventLimits::default();
     for tags in [
-        vec![vec!["h".to_owned(), "one".to_owned()], vec!["h".to_owned(), "two".to_owned()]],
-        vec![vec!["h".to_owned(), "one".to_owned(), "smuggled".to_owned()]],
-        vec![vec!["h".to_owned(), "one".to_owned()], vec!["code".to_owned(), "invite".to_owned()]],
+        vec![
+            vec!["h".to_owned(), "one".to_owned()],
+            vec!["h".to_owned(), "two".to_owned()],
+        ],
+        vec![vec![
+            "h".to_owned(),
+            "one".to_owned(),
+            "smuggled".to_owned(),
+        ]],
+        vec![
+            vec!["h".to_owned(), "one".to_owned()],
+            vec!["code".to_owned(), "invite".to_owned()],
+        ],
     ] {
         let event = UnsignedEvent::new(
             pubkey(&AGENT_SECRET),
