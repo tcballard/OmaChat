@@ -34,7 +34,9 @@ struct Intermediates {
 struct Outputs {
     schema_version: u16,
     proof_version: u16,
+    encoded_proof_hex: String,
     nostr_public_key_hex: String,
+    proof_hash_hex: String,
     signature_hex: String,
 }
 
@@ -110,10 +112,16 @@ fn principal_proof_matches_independent_python_transcript() {
             .expect("fixture secret must sign");
     assert_eq!(proof.signature(), &hex_array(&outputs.signature_hex));
     proof.verify().expect("generated proof must verify");
+    assert_eq!(
+        proof.to_bytes(),
+        hex::decode(&outputs.encoded_proof_hex).unwrap()
+    );
+    assert_eq!(proof.proof_hash(), hex_array(&outputs.proof_hash_hex));
 
     let decoded =
-        NostrPrincipalControlProof::from_parts(payload, hex_array(&outputs.signature_hex))
-            .expect("independent signature must verify");
+        NostrPrincipalControlProof::from_bytes(&hex::decode(&outputs.encoded_proof_hex).unwrap())
+            .expect("independent encoding and signature must verify");
+    assert_eq!(decoded.payload(), &payload);
     assert_eq!(decoded.payload().nostr_public_key(), expected_public_key);
 }
 
@@ -168,5 +176,60 @@ fn malformed_identity_fields_fail_closed() {
     assert_eq!(
         result.unwrap_err(),
         NostrPrincipalProofError::InvalidAccountId
+    );
+}
+
+#[test]
+fn encoded_proof_rejects_truncation_corruption_and_trailing_bytes() {
+    const DOMAIN: &[u8] = b"omachat.nostr-principal-control.v1\0";
+
+    let outputs: Outputs = read_json("outputs.json");
+    let encoded = hex::decode(&outputs.encoded_proof_hex).unwrap();
+
+    for length in 0..encoded.len() {
+        assert!(
+            NostrPrincipalControlProof::from_bytes(&encoded[..length]).is_err(),
+            "truncation at {length} bytes must fail"
+        );
+    }
+
+    let mut wrong_domain = encoded.clone();
+    wrong_domain[0] ^= 1;
+    assert_eq!(
+        NostrPrincipalControlProof::from_bytes(&wrong_domain).unwrap_err(),
+        NostrPrincipalProofError::InvalidEncoding
+    );
+
+    let mut unknown_version = encoded.clone();
+    unknown_version[DOMAIN.len() + 1] = 2;
+    assert_eq!(
+        NostrPrincipalControlProof::from_bytes(&unknown_version).unwrap_err(),
+        NostrPrincipalProofError::UnsupportedVersion
+    );
+
+    let public_key = hex_array::<32>(&outputs.nostr_public_key_hex);
+    let tag_offset = encoded
+        .windows(33)
+        .position(|window| window[0] == 1 && window[1..] == public_key[..])
+        .expect("device tag must immediately precede the fixture public key");
+    let mut unknown_type = encoded.clone();
+    unknown_type[tag_offset] = 99;
+    assert_eq!(
+        NostrPrincipalControlProof::from_bytes(&unknown_type).unwrap_err(),
+        NostrPrincipalProofError::UnknownPrincipalType
+    );
+
+    let mut corrupt_signature = encoded.clone();
+    *corrupt_signature.last_mut().unwrap() ^= 1;
+    assert_eq!(
+        NostrPrincipalControlProof::from_bytes(&corrupt_signature).unwrap_err(),
+        NostrPrincipalProofError::InvalidSignature
+    );
+
+    let mut trailing = encoded;
+    trailing.push(0);
+    assert_eq!(
+        NostrPrincipalControlProof::from_bytes(&trailing).unwrap_err(),
+        NostrPrincipalProofError::InvalidEncoding
     );
 }

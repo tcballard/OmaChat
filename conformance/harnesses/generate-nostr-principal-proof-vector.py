@@ -20,6 +20,7 @@ G = (
     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
 )
 DOMAIN = b"omachat.nostr-principal-control.v1\0"
+PROOF_HASH_DOMAIN = b"omachat.nostr-principal-control-hash.v1\0"
 VERSION = 1
 PRINCIPAL_TYPES = {"device": 1, "agent": 2, "account": 3}
 
@@ -174,6 +175,7 @@ def generate():
     )
     digest = sha256(transcript)
     signature = sign_bip340_zero_aux(secret, digest)
+    encoded_proof = transcript + signature
     intermediates = {
         "schema_version": 1,
         "signing_bytes_hex": transcript.hex(),
@@ -181,8 +183,10 @@ def generate():
         "aux_rand_hex": bytes(32).hex(),
     }
     outputs = {
+        "encoded_proof_hex": encoded_proof.hex(),
         "schema_version": 1,
         "proof_version": VERSION,
+        "proof_hash_hex": sha256(PROOF_HASH_DOMAIN + encoded_proof).hex(),
         "nostr_public_key_hex": nostr_public_key.hex(),
         "signature_hex": signature.hex(),
     }

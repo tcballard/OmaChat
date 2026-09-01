@@ -106,7 +106,7 @@
     {
       "id": "omachat-nostr-principal-proof-v1",
       "protocol_area": "account-registry",
-      "description": "Independent synthetic canonical transcript, SHA-256 digest, x-only public key, and deterministic BIP-340 signature for a Nostr principal-control proof.",
+      "description": "Independent synthetic canonical transcript, encoding, hashes, x-only public key, and deterministic BIP-340 signature for a Nostr principal-control proof.",
       "producer": {
         "kind": "synthetic",
         "implementation": "independent pure-Python Nostr principal-proof reference generator",
@@ -152,8 +152,8 @@
           "disclosure": "public-committed",
           "encoding": "json",
           "path": "fixtures/omachat-nostr-principal-proof-v1/outputs.json",
-          "bytes": 293,
-          "sha256": "d0e9d9faef7849d1d8a154614c33b0d02fdaa125878f5097de02979c1b9f5853"
+          "bytes": 1068,
+          "sha256": "afe4c1963d123f7e5bbfa88dc3ebc41dbd20a27b2441288e578b7ffac20d3f53"
         }
       ]
     },

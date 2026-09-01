@@ -5,6 +5,7 @@ use omachat_crypto::GlobalHandle;
 use sha2::{Digest, Sha256};
 
 const PROOF_DOMAIN: &[u8] = b"omachat.nostr-principal-control.v1\0";
+const PROOF_HASH_DOMAIN: &[u8] = b"omachat.nostr-principal-control-hash.v1\0";
 const PROOF_VERSION: u16 = 1;
 const ZERO_AUXILIARY_RANDOMNESS: [u8; 32] = [0; 32];
 
@@ -212,6 +213,64 @@ impl NostrPrincipalControlProof {
             .map_err(|_| NostrPrincipalProofError::InvalidSignature)
     }
 
+    /// Encodes the exact canonical payload and signature for storage or transport.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut encoded = self.payload.signing_bytes();
+        encoded.extend_from_slice(&self.signature);
+        encoded
+    }
+
+    /// Decodes one canonical proof and rejects truncation or trailing bytes.
+    pub fn from_bytes(encoded: &[u8]) -> Result<Self, NostrPrincipalProofError> {
+        let mut cursor = ProofCursor::new(encoded);
+        if cursor.take_slice(PROOF_DOMAIN.len())? != PROOF_DOMAIN {
+            return Err(NostrPrincipalProofError::InvalidEncoding);
+        }
+        let version = cursor.take_u16()?;
+        if version != PROOF_VERSION {
+            return Err(NostrPrincipalProofError::UnsupportedVersion);
+        }
+        let claim_hash = cursor.take_array()?;
+        let command_id = cursor.take_array()?;
+        let expected_registry_revision = cursor.take_u64()?;
+        let account_id = cursor.take_string()?;
+        let handle = cursor.take_string()?;
+        let principal_type = match cursor.take_u8()? {
+            1 => NostrPrincipalType::Device,
+            2 => NostrPrincipalType::Agent,
+            3 => NostrPrincipalType::Account,
+            _ => return Err(NostrPrincipalProofError::UnknownPrincipalType),
+        };
+        let nostr_public_key = cursor.take_array()?;
+        let authorisation_hash = cursor.take_array()?;
+        let created_at = cursor.take_u64()?;
+        let signature = cursor.take_array()?;
+        if !cursor.is_empty() {
+            return Err(NostrPrincipalProofError::InvalidEncoding);
+        }
+
+        let payload = NostrPrincipalControlPayload::new(
+            claim_hash,
+            command_id,
+            expected_registry_revision,
+            &account_id,
+            &handle,
+            principal_type,
+            nostr_public_key,
+            authorisation_hash,
+            created_at,
+        )?;
+        Self::from_parts(payload, signature)
+    }
+
+    /// Returns a domain-separated hash of the complete encoded proof.
+    pub fn proof_hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(PROOF_HASH_DOMAIN);
+        hasher.update(self.to_bytes());
+        hasher.finalize().into()
+    }
+
     /// Returns the signed payload.
     pub fn payload(&self) -> &NostrPrincipalControlPayload {
         &self.payload
@@ -248,6 +307,12 @@ pub enum NostrPrincipalProofError {
     SigningFailed,
     /// The BIP-340 signature is malformed or does not verify.
     InvalidSignature,
+    /// The encoded proof is truncated, malformed, or has trailing bytes.
+    InvalidEncoding,
+    /// The encoded proof uses a version this implementation cannot verify.
+    UnsupportedVersion,
+    /// The encoded proof contains an unknown principal-role tag.
+    UnknownPrincipalType,
 }
 
 impl std::fmt::Display for NostrPrincipalProofError {
@@ -264,6 +329,9 @@ impl std::fmt::Display for NostrPrincipalProofError {
             Self::PublicKeyMismatch => "Nostr secret key does not match the proof public key",
             Self::SigningFailed => "Nostr principal proof signing failed",
             Self::InvalidSignature => "Nostr principal proof signature is invalid",
+            Self::InvalidEncoding => "Nostr principal proof encoding is invalid",
+            Self::UnsupportedVersion => "Nostr principal proof version is unsupported",
+            Self::UnknownPrincipalType => "Nostr principal type is unknown",
         })
     }
 }
@@ -284,4 +352,56 @@ fn valid_account_id(candidate: &str) -> bool {
         && encoded
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+struct ProofCursor<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> ProofCursor<'a> {
+    fn new(encoded: &'a [u8]) -> Self {
+        Self { remaining: encoded }
+    }
+
+    fn take_slice(&mut self, length: usize) -> Result<&'a [u8], NostrPrincipalProofError> {
+        if self.remaining.len() < length {
+            return Err(NostrPrincipalProofError::InvalidEncoding);
+        }
+        let (value, remaining) = self.remaining.split_at(length);
+        self.remaining = remaining;
+        Ok(value)
+    }
+
+    fn take_array<const N: usize>(&mut self) -> Result<[u8; N], NostrPrincipalProofError> {
+        self.take_slice(N)?
+            .try_into()
+            .map_err(|_| NostrPrincipalProofError::InvalidEncoding)
+    }
+
+    fn take_u8(&mut self) -> Result<u8, NostrPrincipalProofError> {
+        Ok(self.take_array::<1>()?[0])
+    }
+
+    fn take_u16(&mut self) -> Result<u16, NostrPrincipalProofError> {
+        Ok(u16::from_be_bytes(self.take_array()?))
+    }
+
+    fn take_u32(&mut self) -> Result<u32, NostrPrincipalProofError> {
+        Ok(u32::from_be_bytes(self.take_array()?))
+    }
+
+    fn take_u64(&mut self) -> Result<u64, NostrPrincipalProofError> {
+        Ok(u64::from_be_bytes(self.take_array()?))
+    }
+
+    fn take_string(&mut self) -> Result<String, NostrPrincipalProofError> {
+        let length = self.take_u32()? as usize;
+        std::str::from_utf8(self.take_slice(length)?)
+            .map(str::to_owned)
+            .map_err(|_| NostrPrincipalProofError::InvalidEncoding)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.remaining.is_empty()
+    }
 }
