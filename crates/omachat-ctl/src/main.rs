@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -137,6 +137,18 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["resolve-handle", handle] => Ok((
+            Command::ResolveRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["resolve-handle", handle, "--json"] => Ok((
+            Command::ResolveRegistryHandle {
+                handle: (*handle).into(),
+            },
+            OutputMode::Json,
+        )),
         ["panic", "--confirm", confirmation] => Ok((
             Command::Panic {
                 confirmation: (*confirmation).into(),
@@ -217,5 +229,33 @@ mod tests {
                 public_key: "33".repeat(32),
             }
         );
+    }
+
+    #[test]
+    fn parses_verified_registry_resolution_with_explicit_output_modes() {
+        let human = [
+            std::ffi::OsString::from("resolve-handle"),
+            std::ffi::OsString::from("alice"),
+        ];
+        let json = [
+            std::ffi::OsString::from("resolve-handle"),
+            std::ffi::OsString::from("alice"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (human_command, human_mode) = match parse_command(&human) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("human command did not parse"),
+        };
+        let (json_command, json_mode) = match parse_command(&json) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("JSON command did not parse"),
+        };
+        let expected = Command::ResolveRegistryHandle {
+            handle: "alice".into(),
+        };
+        assert_eq!(human_command, expected);
+        assert_eq!(json_command, expected);
+        assert!(human_mode == OutputMode::Human);
+        assert!(json_mode == OutputMode::Json);
     }
 }
