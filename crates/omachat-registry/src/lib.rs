@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, error::Error, fmt};
 
 mod agent_claim;
+pub mod principal_proof;
 
 pub use agent_claim::{
     AgentHandleClaim, AgentHandleClaimError, AgentHandleClaimSnapshot, AgentRegistrySubject,
