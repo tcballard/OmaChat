@@ -37,6 +37,12 @@ pub enum Command {
     DiscoverDmRelays {
         public_key: String,
     },
+    DiscoverNip65Relays {
+        public_key: String,
+    },
+    ShowNip65Relays {
+        public_key: String,
+    },
     DiscoverProfile {
         public_key: String,
     },

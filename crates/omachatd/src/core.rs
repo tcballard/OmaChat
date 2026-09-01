@@ -551,6 +551,49 @@ impl DaemonCore {
         Ok((mutation, discovered.profile))
     }
 
+    pub async fn discover_nip65_relay_list(
+        &self,
+        participant_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<crate::SealedRelayListDiscoveryResult, CoreError> {
+        let _operation = self.inner.operations.read().await;
+        let (relay_configs, auth_signer) = self.with_active_transition(|| {
+            let relay_configs = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .dm_relays
+                .iter()
+                .cloned()
+                .map(|url| {
+                    omachat_nostr::relay::RelayConfig::new(
+                        url,
+                        omachat_nostr::relay::RelayRoute::Direct,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let identity = self.identity()?;
+            let nostr = identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?;
+            let auth_signer = RelayAuthSigner::from_secret_key(*nostr.private_key())
+                .map_err(|_| CoreError::Nostr)?;
+            Ok((relay_configs, auth_signer))
+        })?;
+        crate::SealedRelayListDiscoveryService::new(
+            &self.inner.store,
+            EventLimits::default(),
+            omachat_nostr::discovery::RelayDiscoveryLimits::default(),
+            omachat_nostr::relay_list_discovery::RelayListDiscoveryConfig::default(),
+        )
+        .discover_and_save(relay_configs, auth_signer, participant_public_key, now)
+        .await
+        .map_err(CoreError::RelayListDiscovery)
+    }
+
     async fn publish_account_profile(&self, now: u64) -> Result<serde_json::Value, CoreError> {
         let handle = self
             .inner
@@ -639,6 +682,29 @@ impl DaemonCore {
                     &EventLimits::default(),
                 )
                 .map_err(CoreError::ProfileCache)
+        })
+    }
+
+    pub fn cached_nip65_relay_list(
+        &self,
+        participant_public_key: &[u8; 32],
+        now: u64,
+    ) -> Result<crate::SealedRelayListCacheLookup, CoreError> {
+        self.with_active_transition(|| {
+            let _storage = self
+                .inner
+                .storage_transaction
+                .lock()
+                .expect("storage transaction mutex poisoned");
+            crate::SealedRelayListCache::new(&self.inner.store)
+                .lookup(
+                    participant_public_key,
+                    now,
+                    omachat_nostr::relay_list_cache::DEFAULT_RELAY_LIST_FRESHNESS_SECONDS,
+                    &EventLimits::default(),
+                    &omachat_nostr::discovery::RelayDiscoveryLimits::default(),
+                )
+                .map_err(CoreError::RelayListCache)
         })
     }
 
@@ -1312,6 +1378,82 @@ impl DaemonCore {
                     "public_key": hex::encode(recipient),
                     "status": status,
                 }))
+            }
+            Command::DiscoverNip65Relays { public_key } => {
+                let participant = decode_xonly(&public_key)?;
+                let discovered = self
+                    .discover_nip65_relay_list(&participant, unix_time()?)
+                    .await?;
+                let cache_status = match discovered.mutation {
+                    omachat_nostr::relay_list_cache::RelayListCacheMutation::Stored => "stored",
+                    omachat_nostr::relay_list_cache::RelayListCacheMutation::Unchanged => {
+                        "unchanged"
+                    }
+                };
+                let relays = discovered
+                    .relay_list
+                    .relays
+                    .iter()
+                    .map(|relay| {
+                        serde_json::json!({
+                            "url": relay.url,
+                            "read": relay.read,
+                            "write": relay.write,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Ok(serde_json::json!({
+                    "public_key": discovered.relay_list.public_key,
+                    "event_id": discovered.event.id,
+                    "created_at": discovered.relay_list.created_at,
+                    "cache_status": cache_status,
+                    "queried_relays": discovered.queried_relays,
+                    "completed_relays": discovered.completed_relays,
+                    "relays": relays,
+                    "identity_verified_by_relay_list": false,
+                }))
+            }
+            Command::ShowNip65Relays { public_key } => {
+                let participant = decode_xonly(&public_key)?;
+                let lookup = self.cached_nip65_relay_list(&participant, unix_time()?)?;
+                let value = |relay_list: &omachat_nostr::discovery::RelayList,
+                             cache_status: &str| {
+                    let relays = relay_list
+                        .relays
+                        .iter()
+                        .map(|relay| {
+                            serde_json::json!({
+                                "url": relay.url,
+                                "read": relay.read,
+                                "write": relay.write,
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    serde_json::json!({
+                        "public_key": relay_list.public_key,
+                        "created_at": relay_list.created_at,
+                        "cache_status": cache_status,
+                        "relays": relays,
+                        "identity_verified_by_relay_list": false,
+                    })
+                };
+                Ok(match lookup {
+                    crate::SealedRelayListCacheLookup::Missing => serde_json::json!({
+                        "public_key": hex::encode(participant),
+                        "cache_status": "missing",
+                        "relays": [],
+                        "identity_verified_by_relay_list": false,
+                    }),
+                    crate::SealedRelayListCacheLookup::Fresh(relay_list) => {
+                        value(&relay_list, "fresh")
+                    }
+                    crate::SealedRelayListCacheLookup::OfflineStale(relay_list) => {
+                        value(&relay_list, "offline-stale")
+                    }
+                    crate::SealedRelayListCacheLookup::UnusableClockRollback(relay_list) => {
+                        value(&relay_list, "unusable-clock-rollback")
+                    }
+                })
             }
             Command::DiscoverProfile { public_key } => {
                 let participant = decode_xonly(&public_key)?;

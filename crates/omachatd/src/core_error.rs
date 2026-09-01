@@ -17,6 +17,8 @@ pub enum CoreError {
     ProfileDiscovery(omachat_nostr::profile_discovery::ProfileDiscoveryError),
     ProfilePublication(crate::ProfilePublicationCoordinatorError),
     ProfilePublicationUnconfigured,
+    RelayListCache(crate::SealedRelayListCacheError),
+    RelayListDiscovery(crate::SealedRelayListDiscoveryServiceError),
     RegistryEvidence(
         omachat_registry_transport::RegistryEvidenceError<
             omachat_registry_transport::RegistryWebSocketError,
@@ -99,6 +101,8 @@ impl CoreError {
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
             | Self::ProfilePublication(_)
+            | Self::RelayListCache(_)
+            | Self::RelayListDiscovery(_)
             | Self::RegistryEvidence(_)
             | Self::PrincipalRegistryEvidence(_)
             | Self::RegistryCache(_)
@@ -141,6 +145,10 @@ impl fmt::Display for CoreError {
             }
             Self::ProfilePublicationUnconfigured => {
                 formatter.write_str("profile publication is not configured")
+            }
+            Self::RelayListCache(error) => write!(formatter, "NIP-65 relay cache failed: {error}"),
+            Self::RelayListDiscovery(error) => {
+                write!(formatter, "NIP-65 relay discovery failed: {error}")
             }
             Self::RegistryEvidence(error) => {
                 write!(formatter, "registry evidence resolution failed: {error}")
@@ -230,6 +238,8 @@ impl Error for CoreError {
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
             Self::ProfilePublication(error) => Some(error),
+            Self::RelayListCache(error) => Some(error),
+            Self::RelayListDiscovery(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
             Self::PrincipalRegistryEvidence(error) => Some(error),
             Self::RegistryCache(error) => Some(error),
