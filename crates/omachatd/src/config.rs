@@ -1,6 +1,8 @@
 use crate::core_error::CoreError;
+use ed25519_dalek::VerifyingKey;
 use omachat_crypto::{DisplayName, GlobalHandle};
 use omachat_proto::geohash::Geohash;
+use omachat_registry_transport::RegistryWebSocketTransport;
 use omachat_store::RequestedProvider;
 use serde::Deserialize;
 use std::{collections::HashSet, fs, path::Path};
@@ -23,6 +25,41 @@ impl From<StorageProviderConfig> for RequestedProvider {
     }
 }
 
+/// Client-side trust and freshness policy for the authoritative handle registry.
+///
+/// The public key is pinned independently from the endpoint so DNS or TLS
+/// compromise cannot replace signed registry evidence.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryClientConfig {
+    pub endpoint: String,
+    pub pinned_public_key: String,
+    pub max_age_seconds: u64,
+}
+
+impl RegistryClientConfig {
+    pub fn pinned_public_key_bytes(&self) -> Result<[u8; 32], CoreError> {
+        let mut public_key = [0_u8; 32];
+        hex::decode_to_slice(&self.pinned_public_key, &mut public_key)
+            .map_err(|_| CoreError::InvalidConfig)?;
+        let verifying_key =
+            VerifyingKey::from_bytes(&public_key).map_err(|_| CoreError::InvalidConfig)?;
+        if verifying_key.is_weak() {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(public_key)
+    }
+
+    fn validate(&self) -> Result<(), CoreError> {
+        RegistryWebSocketTransport::new(&self.endpoint).map_err(|_| CoreError::InvalidConfig)?;
+        self.pinned_public_key_bytes()?;
+        if self.max_age_seconds == 0 {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DaemonConfig {
@@ -34,6 +71,9 @@ pub struct DaemonConfig {
     /// verified central-registry receipt is stored.
     pub account_handle: Option<String>,
     pub account_display_name: Option<String>,
+    /// Optional authoritative-registry client. Absence means local-only
+    /// handles and must never be interpreted as a failed global claim.
+    pub registry: Option<RegistryClientConfig>,
     /// Public geohash-chat nickname. This is deliberately independent from
     /// the persistent global account profile.
     pub nickname: Option<String>,
@@ -78,6 +118,9 @@ impl DaemonConfig {
         }
         if let Some(display_name) = &self.account_display_name {
             DisplayName::parse(display_name).map_err(|_| CoreError::InvalidConfig)?;
+        }
+        if let Some(registry) = &self.registry {
+            registry.validate()?;
         }
         if self
             .nickname

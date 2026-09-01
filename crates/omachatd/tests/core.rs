@@ -118,6 +118,7 @@ async fn invalid_reload_keeps_the_prior_configuration_active() {
             joined_geohashes: vec!["gcpvj".into()],
             account_handle: None,
             account_display_name: None,
+            registry: None,
             nickname: None,
         },
         EventHub::default(),

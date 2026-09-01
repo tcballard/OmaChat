@@ -7,11 +7,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+ed25519-dalek = "=2.2.0"
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
 omachat-nostr = { path = "../omachat-nostr", version = "=0.0.1" }
 omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
+omachat-registry-transport = { path = "../omachat-registry-transport", version = "=0.0.1" }
 omachat-store = { path = "../omachat-store", version = "=0.0.1" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
