@@ -20,6 +20,12 @@ pub enum CoreError {
             omachat_registry_transport::RegistryWebSocketError,
         >,
     ),
+    RegistryClaim(omachat_registry::RegistryError),
+    RegistryClaimIntent(omachat_store::RegistryClaimIntentError),
+    RegistryClaimPreflightOffline,
+    RegistryClaimPreflightUnusable,
+    RegistryHandleConflict,
+    RegistryBindingChanged,
     RegistryUnconfigured,
     InvalidConfig,
     InvalidCommand,
@@ -47,9 +53,17 @@ impl CoreError {
             | Self::InvalidHandle
             | Self::InvalidPublicKey
             | Self::InvalidMessage => ErrorCode::InvalidRequest,
-            Self::ConfirmationRequired => ErrorCode::Conflict,
+            Self::ConfirmationRequired
+            | Self::RegistryHandleConflict
+            | Self::RegistryBindingChanged => ErrorCode::Conflict,
+            Self::RegistryClaimIntent(
+                omachat_store::RegistryClaimIntentError::PendingConflict
+                | omachat_store::RegistryClaimIntentError::PendingMissing,
+            ) => ErrorCode::Conflict,
             Self::RestartRequired => ErrorCode::Conflict,
-            Self::Panicked | Self::RegistryUnconfigured => ErrorCode::Unavailable,
+            Self::Panicked | Self::RegistryUnconfigured | Self::RegistryClaimPreflightOffline => {
+                ErrorCode::Unavailable
+            }
             Self::NotJoined => ErrorCode::NotFound,
             Self::Io(_)
             | Self::Store(_)
@@ -64,6 +78,9 @@ impl CoreError {
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
             | Self::RegistryEvidence(_)
+            | Self::RegistryClaim(_)
+            | Self::RegistryClaimIntent(_)
+            | Self::RegistryClaimPreflightUnusable
             | Self::Nostr
             | Self::Encoding
             | Self::Clock
@@ -93,6 +110,20 @@ impl fmt::Display for CoreError {
             Self::ProfileDiscovery(error) => write!(formatter, "profile discovery failed: {error}"),
             Self::RegistryEvidence(error) => {
                 write!(formatter, "registry evidence resolution failed: {error}")
+            }
+            Self::RegistryClaim(error) => write!(formatter, "registry claim failed: {error}"),
+            Self::RegistryClaimIntent(error) => {
+                write!(formatter, "pending registry claim failed: {error}")
+            }
+            Self::RegistryClaimPreflightOffline => {
+                formatter.write_str("registry must be online before preparing a new handle claim")
+            }
+            Self::RegistryClaimPreflightUnusable => formatter
+                .write_str("registry preflight did not return usable current account state"),
+            Self::RegistryHandleConflict => formatter
+                .write_str("requested handle conflicts with local or authoritative account state"),
+            Self::RegistryBindingChanged => {
+                formatter.write_str("local account binding changed during registry preflight")
             }
             Self::RegistryUnconfigured => {
                 formatter.write_str("authoritative registry client is not configured")
@@ -137,6 +168,8 @@ impl Error for CoreError {
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
+            Self::RegistryClaim(error) => Some(error),
+            Self::RegistryClaimIntent(error) => Some(error),
             _ => None,
         }
     }
