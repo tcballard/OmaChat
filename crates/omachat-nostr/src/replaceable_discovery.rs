@@ -125,7 +125,7 @@ where
     let query_deadline = Instant::now() + config.query_timeout;
     let mut completed = HashSet::new();
     let mut best: Option<SignedEvent> = None;
-    while !subscribed.is_subset(&completed) {
+    while completed.len() < config.minimum_ready_relays {
         let notification = next_before(pool, query_deadline)
             .await
             .map_err(|_| ReplaceableDiscoveryError::QueryTimeout)?;
@@ -139,8 +139,8 @@ where
             } if subscription_id == config.subscription_id => {
                 if validate_event(&event)
                     && best.as_ref().is_none_or(|current| {
-                        (event.created_at, event.id.as_str())
-                            > (current.created_at, current.id.as_str())
+                        event.created_at > current.created_at
+                            || (event.created_at == current.created_at && event.id < current.id)
                     })
                 {
                     best = Some(event);

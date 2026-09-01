@@ -104,6 +104,50 @@ async fn public_relay_without_an_auth_challenge_remains_discoverable() {
     server.await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_completed_relay_is_not_blocked_by_a_stalled_optional_relay() {
+    let participant_secret = [110; 32];
+    let participant = xonly_public_key(&participant_secret).unwrap();
+    let now = unix_now();
+    let expected = profile(
+        participant_secret,
+        now - 1,
+        "resilient-agent",
+        "Resilient Agent",
+        111,
+    );
+    let completed_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stalled_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let completed_url = format!("ws://{}", completed_listener.local_addr().unwrap());
+    let stalled_url = format!("ws://{}", stalled_listener.local_addr().unwrap());
+    let completed = tokio::spawn(serve_public_query(completed_listener, expected.clone()));
+    let stalled = tokio::spawn(serve_public_query_without_eose(stalled_listener));
+
+    let result = discover_profile_metadata(
+        vec![relay(&completed_url), relay(&stalled_url)],
+        RelayAuthSigner::from_secret_key([112; 32]).unwrap(),
+        &participant,
+        now,
+        &EventLimits::default(),
+        &ProfileDiscoveryConfig {
+            authentication_timeout: Duration::from_secs(2),
+            authentication_policy: RelayAuthenticationPolicy::AuthenticateWhenChallenged,
+            challenge_settle_timeout: Duration::from_millis(25),
+            query_timeout: Duration::from_secs(2),
+            minimum_ready_relays: 1,
+            subscription_id: "resilient-profile-query".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.event, expected);
+    assert_eq!(result.queried_relays, 2);
+    assert_eq!(result.completed_relays, 1);
+    completed.await.unwrap();
+    stalled.abort();
+}
+
 fn relay(url: &str) -> RelayConfig {
     let mut config = RelayConfig::new(url.into(), RelayRoute::Direct);
     config.connect_timeout = Duration::from_secs(1);
@@ -202,6 +246,20 @@ async fn serve_public_query(listener: TcpListener, event: SignedEvent) {
         ))
         .await
         .unwrap();
+    while let Some(message) = socket.next().await {
+        match message {
+            Ok(Message::Ping(payload)) => socket.send(Message::Pong(payload)).await.unwrap(),
+            Ok(Message::Close(_)) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
+}
+
+async fn serve_public_query_without_eose(listener: TcpListener) {
+    let (stream, _) = listener.accept().await.unwrap();
+    let mut socket = accept_async(stream).await.unwrap();
+    let request = next_json(&mut socket).await;
+    assert_eq!(request[0], "REQ");
     while let Some(message) = socket.next().await {
         match message {
             Ok(Message::Ping(payload)) => socket.send(Message::Pong(payload)).await.unwrap(),

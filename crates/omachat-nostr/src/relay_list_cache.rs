@@ -76,10 +76,9 @@ impl VerifiedRelayListCache {
                 return Err(RelayListCacheError::Rollback);
             }
             if source_event.created_at == current.source_event.created_at {
-                if source_event.id != current.source_event.id {
-                    return Err(RelayListCacheError::Equivocation);
+                if source_event.id >= current.source_event.id {
+                    return Ok(RelayListCacheMutation::Unchanged);
                 }
-                return Ok(RelayListCacheMutation::Unchanged);
             }
         } else if self.records.len() >= MAX_CACHED_RELAY_LISTS {
             return Err(RelayListCacheError::CacheFull);
@@ -221,7 +220,6 @@ pub enum RelayListCacheError {
     InvalidEncoding,
     UnsupportedVersion(u16),
     Rollback,
-    Equivocation,
     CacheFull,
     CacheTooLarge,
 }
@@ -239,9 +237,6 @@ impl fmt::Display for RelayListCacheError {
             }
             Self::Rollback => {
                 formatter.write_str("older relay metadata cannot replace newer state")
-            }
-            Self::Equivocation => {
-                formatter.write_str("conflicting relay-list events share a timestamp")
             }
             Self::CacheFull => formatter.write_str("relay-list cache is full"),
             Self::CacheTooLarge => {

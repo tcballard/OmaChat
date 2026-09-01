@@ -65,17 +65,24 @@ fn freshness_offline_state_and_clock_rollback_are_explicit() {
 }
 
 #[test]
-fn rollback_and_same_timestamp_equivocation_fail_closed() {
+fn rollback_fails_closed_and_same_timestamp_uses_the_nip01_lowest_id() {
     let secret = [93; 32];
     let current = relay_list(secret, NOW - 10, "wss://current.example", 94);
+    let alternative = relay_list(secret, NOW - 10, "wss://conflict.example", 96);
+    let (lowest, highest) = if current.id < alternative.id {
+        (current, alternative)
+    } else {
+        (alternative, current)
+    };
+    let public_key = xonly_public_key(&secret).expect("public key");
     let mut cache = VerifiedRelayListCache::new();
     assert_eq!(
-        insert(&mut cache, current.clone()),
+        insert(&mut cache, highest.clone()),
         Ok(RelayListCacheMutation::Stored)
     );
     assert_eq!(
-        insert(&mut cache, current),
-        Ok(RelayListCacheMutation::Unchanged)
+        insert(&mut cache, lowest.clone()),
+        Ok(RelayListCacheMutation::Stored)
     );
     assert_eq!(
         insert(
@@ -84,13 +91,11 @@ fn rollback_and_same_timestamp_equivocation_fail_closed() {
         ),
         Err(RelayListCacheError::Rollback)
     );
-    assert_eq!(
-        insert(
-            &mut cache,
-            relay_list(secret, NOW - 10, "wss://conflict.example", 96)
-        ),
-        Err(RelayListCacheError::Equivocation)
-    );
+    assert_eq!(insert(&mut cache, highest), Ok(RelayListCacheMutation::Unchanged));
+    let RelayListCacheLookup::Fresh(selected) = cache.lookup(&public_key, NOW, 10) else {
+        panic!("selected relay list must remain fresh");
+    };
+    assert_eq!(selected.source_event().id, lowest.id);
 }
 
 #[test]
