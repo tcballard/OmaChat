@@ -91,7 +91,10 @@ fn rollback_fails_closed_and_same_timestamp_uses_the_nip01_lowest_id() {
         ),
         Err(RelayListCacheError::Rollback)
     );
-    assert_eq!(insert(&mut cache, highest), Ok(RelayListCacheMutation::Unchanged));
+    assert_eq!(
+        insert(&mut cache, highest),
+        Ok(RelayListCacheMutation::Unchanged)
+    );
     let RelayListCacheLookup::Fresh(selected) = cache.lookup(&public_key, NOW, 10) else {
         panic!("selected relay list must remain fresh");
     };
