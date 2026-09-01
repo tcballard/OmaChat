@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-profile [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-nip65-relays PUBLIC_KEY | show-nip65-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-profile [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -121,6 +121,18 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
         )),
         ["discover-dm-relays", public_key] => Ok((
             Command::DiscoverDmRelays {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["discover-nip65-relays", public_key] => Ok((
+            Command::DiscoverNip65Relays {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["show-nip65-relays", public_key] => Ok((
+            Command::ShowNip65Relays {
                 public_key: (*public_key).into(),
             },
             OutputMode::Human,
@@ -238,6 +250,36 @@ mod tests {
                 public_key: "22".repeat(32),
             }
         );
+    }
+
+    #[test]
+    fn parses_nip65_discovery_and_offline_lookup() {
+        let public_key = "44".repeat(32);
+        let discover = [
+            std::ffi::OsString::from("discover-nip65-relays"),
+            std::ffi::OsString::from(&public_key),
+        ];
+        let show = [
+            std::ffi::OsString::from("show-nip65-relays"),
+            std::ffi::OsString::from(&public_key),
+        ];
+        let (discover_command, discover_mode) = match parse_command(&discover) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("NIP-65 discovery command did not parse"),
+        };
+        let (show_command, show_mode) = match parse_command(&show) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("NIP-65 lookup command did not parse"),
+        };
+        assert_eq!(
+            discover_command,
+            Command::DiscoverNip65Relays {
+                public_key: public_key.clone(),
+            }
+        );
+        assert_eq!(show_command, Command::ShowNip65Relays { public_key });
+        assert!(discover_mode == OutputMode::Human);
+        assert!(show_mode == OutputMode::Human);
     }
 
     #[test]
