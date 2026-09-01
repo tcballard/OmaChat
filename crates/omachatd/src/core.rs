@@ -254,6 +254,9 @@ struct DaemonStatus<'a> {
     profile_publication_state: &'static str,
     profile_publication_acknowledged_relays: usize,
     profile_publication_required_acknowledgements: usize,
+    relay_list_publication_state: &'static str,
+    relay_list_publication_acknowledged_relays: usize,
+    relay_list_publication_required_acknowledgements: usize,
     registry_protocol: Option<&'static str>,
     outbox_pending: usize,
     outbox_failed: usize,
@@ -1763,6 +1766,47 @@ impl DaemonCore {
                 )
             }
         };
+        let relay_list_pending =
+            crate::RelayListPublicationIntentStore::new(self.inner.store.as_ref())
+                .load(now, &EventLimits::default(), &Default::default())
+                .map_err(|_| CoreError::Encoding)?;
+        let (
+            relay_list_publication_state,
+            relay_list_publication_acknowledged_relays,
+            relay_list_publication_required_acknowledgements,
+        ) = match (&config.relay_list_publication, relay_list_pending) {
+            (None, crate::RelayListPublicationIntentState::Missing) => ("disabled", 0, 0),
+            (None, crate::RelayListPublicationIntentState::Pending(pending)) => (
+                "blocked-config-missing",
+                pending.acknowledged_relays().len(),
+                pending.required_acknowledgements(),
+            ),
+            (Some(config), crate::RelayListPublicationIntentState::Missing) => {
+                ("ready", 0, config.required_acknowledgements)
+            }
+            (Some(config), crate::RelayListPublicationIntentState::Pending(pending)) => {
+                let policy_matches = config.canonical_relays().is_ok_and(|relays| {
+                    relays.len() == pending.relay_list().relays.len()
+                        && relays.iter().zip(&pending.relay_list().relays).all(
+                            |(configured, signed)| {
+                                configured.url == signed.url
+                                    && configured.read == signed.read
+                                    && configured.write == signed.write
+                            },
+                        )
+                }) && config.required_acknowledgements
+                    == pending.required_acknowledgements();
+                (
+                    if policy_matches {
+                        "pending"
+                    } else {
+                        "blocked-policy-mismatch"
+                    },
+                    pending.acknowledged_relays().len(),
+                    pending.required_acknowledgements(),
+                )
+            }
+        };
         to_value(DaemonStatus {
             compatibility_profile: COMPATIBILITY_PROFILE,
             storage_provider: self.inner.store.status().provider,
@@ -1775,6 +1819,9 @@ impl DaemonCore {
             profile_publication_state,
             profile_publication_acknowledged_relays,
             profile_publication_required_acknowledgements,
+            relay_list_publication_state,
+            relay_list_publication_acknowledged_relays,
+            relay_list_publication_required_acknowledgements,
             registry_protocol: self
                 .inner
                 .registry
