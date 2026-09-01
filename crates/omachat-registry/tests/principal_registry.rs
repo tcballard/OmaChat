@@ -1,0 +1,148 @@
+use k256::schnorr::SigningKey as SchnorrSigningKey;
+use omachat_crypto::{AccountSecrets, DevicePublicKeys, DisplayName, GlobalHandle};
+use omachat_registry::{
+    CommandId, HandleClaim,
+    principal_proof::{
+        NostrPrincipalControlPayload, NostrPrincipalControlProof, NostrPrincipalType,
+    },
+    principal_registry::{PrincipalRegistryError, PrincipalRegistryState},
+    proof_bearing_claim::{ProofBearingDeviceHandleClaim, device_authorisation_hash},
+};
+
+fn nostr_public_key(secret: &[u8; 32]) -> [u8; 32] {
+    SchnorrSigningKey::from_bytes(secret)
+        .unwrap()
+        .verifying_key()
+        .to_bytes()
+        .into()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validated_claim(
+    account: &AccountSecrets,
+    account_seed: u8,
+    nostr_secret_key: [u8; 32],
+    command_id: [u8; 32],
+    handle: &str,
+    expected_revision: u64,
+    binding_revision: u64,
+    proof_created_at: u64,
+) -> ProofBearingDeviceHandleClaim {
+    let device_signer = AccountSecrets::from_seeds(
+        [account_seed.wrapping_add(1); 32],
+        [account_seed.wrapping_add(2); 32],
+    );
+    let binding = account.sign_local_binding(
+        Some(GlobalHandle::parse(handle).unwrap()),
+        Some(DisplayName::parse("Principal Registry Test").unwrap()),
+        DevicePublicKeys {
+            signing_public_key: device_signer.public_identity().account_root_public_key,
+            noise_public_key: [account_seed.wrapping_add(3); 32],
+            nostr_public_key: nostr_public_key(&nostr_secret_key),
+        },
+        binding_revision,
+        1_000 + binding_revision,
+    );
+    let claim = HandleClaim::sign(
+        CommandId::from_bytes(command_id),
+        expected_revision,
+        binding,
+        account,
+    )
+    .unwrap();
+    let payload = NostrPrincipalControlPayload::new(
+        claim.claim_hash(),
+        command_id,
+        expected_revision,
+        claim.binding().account_id.as_str(),
+        claim.binding().handle.as_ref().unwrap().as_str(),
+        NostrPrincipalType::Device,
+        claim.binding().device_keys.nostr_public_key,
+        device_authorisation_hash(claim.binding()),
+        proof_created_at,
+    )
+    .unwrap();
+    let proof = NostrPrincipalControlProof::sign(payload, nostr_secret_key).unwrap();
+    ProofBearingDeviceHandleClaim::new(claim, proof).unwrap()
+}
+
+#[test]
+fn exact_replay_is_idempotent_and_conflicting_proof_is_rejected() {
+    let account = AccountSecrets::from_seeds([0x11; 32], [0x12; 32]);
+    let claim = validated_claim(&account, 0x20, [0x31; 32], [0x41; 32], "alice", 0, 1, 1_002);
+    let different_proof =
+        validated_claim(&account, 0x20, [0x31; 32], [0x41; 32], "alice", 0, 1, 1_003);
+    let mut registry = PrincipalRegistryState::from_signing_seed([0x71; 32]);
+
+    let first = registry.apply_device(claim.clone(), 2_000).unwrap();
+    let replay = registry.apply_device(claim, 9_999).unwrap();
+    assert_eq!(first, replay);
+    assert_eq!(registry.head().unwrap().sequence, 1);
+    assert_eq!(
+        registry.apply_device(different_proof, 2_001),
+        Err(PrincipalRegistryError::CommandIdConflict)
+    );
+    assert_eq!(registry.head().unwrap().sequence, 1);
+}
+
+#[test]
+fn duplicate_public_key_is_rejected_before_root_state_mutates() {
+    let alice = AccountSecrets::from_seeds([0x11; 32], [0x12; 32]);
+    let bob = AccountSecrets::from_seeds([0x51; 32], [0x52; 32]);
+    let shared_nostr_secret = [0x31; 32];
+    let alice_claim = validated_claim(
+        &alice,
+        0x20,
+        shared_nostr_secret,
+        [0x41; 32],
+        "alice",
+        0,
+        1,
+        1_002,
+    );
+    let bob_claim = validated_claim(
+        &bob,
+        0x60,
+        shared_nostr_secret,
+        [0x61; 32],
+        "bob",
+        0,
+        1,
+        1_002,
+    );
+    let bob_id = bob.public_identity().account_id;
+    let mut registry = PrincipalRegistryState::from_signing_seed([0x71; 32]);
+    let first = registry.apply_device(alice_claim, 2_000).unwrap();
+
+    assert!(matches!(
+        registry.apply_device(bob_claim, 2_001),
+        Err(PrincipalRegistryError::PublicKeyAlreadyBound { .. })
+    ));
+    assert_eq!(registry.head(), Some(first.claim_receipt()));
+    assert!(registry.account_record(bob_id.as_str()).is_none());
+}
+
+#[test]
+fn same_account_can_rotate_its_device_nostr_key_atomically() {
+    let account = AccountSecrets::from_seeds([0x11; 32], [0x12; 32]);
+    let account_id = account.public_identity().account_id;
+    let old_secret = [0x31; 32];
+    let new_secret = [0x32; 32];
+    let first = validated_claim(&account, 0x20, old_secret, [0x41; 32], "alice", 0, 1, 1_002);
+    let second = validated_claim(&account, 0x20, new_secret, [0x42; 32], "alice", 1, 2, 1_003);
+    let old_public_key = nostr_public_key(&old_secret);
+    let new_public_key = nostr_public_key(&new_secret);
+    let mut registry = PrincipalRegistryState::from_signing_seed([0x71; 32]);
+
+    registry.apply_device(first, 2_000).unwrap();
+    let current = registry.apply_device(second, 2_001).unwrap();
+
+    assert!(registry.public_key_record(&old_public_key).is_none());
+    assert_eq!(registry.public_key_record(&new_public_key), Some(&current));
+    assert_eq!(registry.account_record(account_id.as_str()), Some(&current));
+    assert_eq!(registry.head().unwrap().sequence, 2);
+    current
+        .claim_receipt()
+        .verify_for_claim(&registry.verifying_key(), current.claim())
+        .unwrap();
+}
