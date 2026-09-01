@@ -8,6 +8,7 @@ mod identity;
 mod outbox;
 mod principal_registry;
 mod principal_registry_cache;
+mod principal_registry_claim_intent;
 mod registry;
 mod registry_cache;
 mod registry_claim_intent;
@@ -27,6 +28,10 @@ pub use principal_registry::{PrincipalRegistryVault, PrincipalRegistryVaultError
 pub use principal_registry_cache::{
     CachedPrincipalRegistryRecord, PrincipalRegistryCacheError, PrincipalRegistryCacheLookup,
     PrincipalRegistryEvidence, VerifiedPrincipalRegistryCache,
+};
+pub use principal_registry_claim_intent::{
+    PRINCIPAL_REGISTRY_CLAIM_INTENT_RECORD_NAME, PrincipalRegistryClaimIntentError,
+    PrincipalRegistryClaimIntentStore,
 };
 pub use registry::{RegistryVault, RegistryVaultError};
 pub use registry_cache::{
