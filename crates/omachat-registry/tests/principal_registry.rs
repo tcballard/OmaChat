@@ -5,7 +5,10 @@ use omachat_registry::{
     principal_proof::{
         NostrPrincipalControlPayload, NostrPrincipalControlProof, NostrPrincipalType,
     },
-    principal_registry::{PrincipalRegistryError, PrincipalRegistryState},
+    principal_registry::{
+        PrincipalRegistryError, PrincipalRegistryRestoreError, PrincipalRegistrySnapshot,
+        PrincipalRegistryState,
+    },
     proof_bearing_claim::{ProofBearingDeviceHandleClaim, device_authorisation_hash},
 };
 
@@ -203,4 +206,81 @@ fn proof_receipts_bind_evidence_and_preserve_both_chains() {
     let mut tampered = third.principal_receipt().clone();
     tampered.accepted_at += 1;
     assert!(tampered.verify(&pinned_key).is_err());
+}
+
+#[test]
+fn signed_snapshot_replays_exact_state_and_indexes_after_restart() {
+    let signing_seed = [0x71; 32];
+    let account = AccountSecrets::from_seeds([0x11; 32], [0x12; 32]);
+    let account_id = account.public_identity().account_id;
+    let first = validated_claim(&account, 0x20, [0x31; 32], [0x41; 32], "alice", 0, 1, 1_002);
+    let second = validated_claim(&account, 0x20, [0x32; 32], [0x42; 32], "alice", 1, 2, 1_003);
+    let replay = second.clone();
+    let current_public_key = second.principal_proof().payload().nostr_public_key();
+    let mut registry = PrincipalRegistryState::from_signing_seed(signing_seed);
+    registry.apply_device(first, 2_000).unwrap();
+    let expected = registry.apply_device(second, 2_001).unwrap();
+    let snapshot = registry.snapshot();
+    let expected_head = snapshot.head.clone();
+    let encoded = serde_json::to_vec(&snapshot).unwrap();
+    let decoded: PrincipalRegistrySnapshot = serde_json::from_slice(&encoded).unwrap();
+
+    let mut restored =
+        PrincipalRegistryState::restore(signing_seed, decoded, Some(&expected_head)).unwrap();
+    assert_eq!(
+        restored.account_record(account_id.as_str()),
+        Some(&expected)
+    );
+    assert_eq!(
+        restored.public_key_record(&current_public_key),
+        Some(&expected)
+    );
+    assert_eq!(restored.apply_device(replay, 9_999).unwrap(), expected);
+    assert_eq!(restored.head().unwrap().sequence, 2);
+}
+
+#[test]
+fn snapshot_corruption_truncation_wrong_key_and_rollback_fail_closed() {
+    let signing_seed = [0x71; 32];
+    let account = AccountSecrets::from_seeds([0x11; 32], [0x12; 32]);
+    let first = validated_claim(&account, 0x20, [0x31; 32], [0x41; 32], "alice", 0, 1, 1_002);
+    let second = validated_claim(&account, 0x20, [0x32; 32], [0x42; 32], "alice", 1, 2, 1_003);
+    let mut registry = PrincipalRegistryState::from_signing_seed(signing_seed);
+    registry.apply_device(first, 2_000).unwrap();
+    let old_snapshot = registry.snapshot();
+    registry.apply_device(second, 2_001).unwrap();
+    let current_snapshot = registry.snapshot();
+    let current_head = current_snapshot.head.clone();
+
+    let mut corrupt = current_snapshot.clone();
+    corrupt.entries[0].principal_proof[0] ^= 1;
+    assert_eq!(
+        PrincipalRegistryState::restore(signing_seed, corrupt, None)
+            .err()
+            .unwrap(),
+        PrincipalRegistryRestoreError::InvalidSignature
+    );
+
+    let mut truncated = current_snapshot.clone();
+    truncated.entries.pop();
+    truncated.head.entry_count -= 1;
+    assert_eq!(
+        PrincipalRegistryState::restore(signing_seed, truncated, None)
+            .err()
+            .unwrap(),
+        PrincipalRegistryRestoreError::InvalidSignature
+    );
+
+    assert_eq!(
+        PrincipalRegistryState::restore([0x72; 32], current_snapshot, None)
+            .err()
+            .unwrap(),
+        PrincipalRegistryRestoreError::InvalidSignature
+    );
+    assert_eq!(
+        PrincipalRegistryState::restore(signing_seed, old_snapshot, Some(&current_head))
+            .err()
+            .unwrap(),
+        PrincipalRegistryRestoreError::RollbackDetected
+    );
 }
