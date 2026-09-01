@@ -16,6 +16,7 @@ mod profile_publication_service;
 mod profile_publication_store;
 mod registry_evidence_service;
 mod relay_list_cache_store;
+mod relay_list_discovery_service;
 
 pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
@@ -62,4 +63,8 @@ pub use registry_evidence_service::RegistryEvidenceService;
 pub use relay_list_cache_store::{
     NIP65_RELAY_LIST_CACHE_RECORD_NAME, SealedRelayListCache, SealedRelayListCacheError,
     SealedRelayListCacheLookup, SealedRelayListCacheState,
+};
+pub use relay_list_discovery_service::{
+    SealedRelayListDiscoveryResult, SealedRelayListDiscoveryService,
+    SealedRelayListDiscoveryServiceError,
 };
