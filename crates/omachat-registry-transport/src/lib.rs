@@ -7,6 +7,7 @@
 
 mod evidence;
 mod principal_client;
+mod principal_evidence;
 mod principal_protocol;
 mod principal_service;
 mod websocket;
@@ -14,6 +15,10 @@ mod websocket_server;
 
 pub use evidence::{RegistryEvidenceClient, RegistryEvidenceError, RegistryEvidenceResolution};
 pub use principal_client::{PrincipalRegistryClient, PrincipalRegistryClientError};
+pub use principal_evidence::{
+    PrincipalRegistryEvidenceClient, PrincipalRegistryEvidenceError,
+    PrincipalRegistryEvidenceResolution,
+};
 pub use principal_protocol::{
     MAX_PRINCIPAL_REGISTRY_MESSAGE_BYTES, PRINCIPAL_REGISTRY_TRANSPORT_VERSION,
     PrincipalRegistryClaim, PrincipalRegistryOperation, PrincipalRegistryProtocolError,
