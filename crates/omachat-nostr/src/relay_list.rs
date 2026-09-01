@@ -105,7 +105,14 @@ fn canonical_endpoint(
         return Err(RelayListPublicationError::InvalidEndpoint);
     }
     let parsed = Url::parse(endpoint).map_err(|_| RelayListPublicationError::InvalidEndpoint)?;
-    if parsed.scheme() != "wss"
+    let secure = parsed.scheme() == "wss";
+    let numeric_loopback = parsed.scheme() == "ws"
+        && match parsed.host() {
+            Some(url::Host::Ipv4(address)) => address.is_loopback(),
+            Some(url::Host::Ipv6(address)) => address.is_loopback(),
+            _ => false,
+        };
+    if (!secure && !numeric_loopback)
         || parsed.host_str().is_none()
         || parsed.port_or_known_default().is_none()
         || !parsed.username().is_empty()
