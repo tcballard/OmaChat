@@ -10,6 +10,7 @@ mod dm_relay_cache_store;
 mod ipc_server;
 mod nostr_service;
 mod profile_cache_store;
+mod registry_evidence_service;
 
 pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
@@ -32,3 +33,4 @@ pub use profile_cache_store::{
     PROFILE_CACHE_RECORD_NAME, SealedProfileCache, SealedProfileCacheError,
     SealedProfileCacheLookup, SealedProfileCacheState,
 };
+pub use registry_evidence_service::RegistryEvidenceService;

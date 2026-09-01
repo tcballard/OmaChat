@@ -1546,6 +1546,7 @@ dependencies = [
  "omachat-crypto",
  "omachat-nostr",
  "omachat-proto",
+ "omachat-registry",
  "omachat-registry-transport",
  "omachat-store",
  "serde",

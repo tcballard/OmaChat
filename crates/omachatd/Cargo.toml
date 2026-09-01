@@ -13,6 +13,7 @@ hex = "=0.4.3"
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
 omachat-nostr = { path = "../omachat-nostr", version = "=0.0.1" }
 omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
+omachat-registry = { path = "../omachat-registry", version = "=0.0.1" }
 omachat-registry-transport = { path = "../omachat-registry-transport", version = "=0.0.1" }
 omachat-store = { path = "../omachat-store", version = "=0.0.1" }
 serde = { version = "=1.0.229", features = ["derive"] }
