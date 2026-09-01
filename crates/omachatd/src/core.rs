@@ -208,6 +208,7 @@ struct CoreInner {
     nostr: Mutex<Option<NostrHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
     profile_publication: Mutex<Option<crate::ProfilePublicationCoordinator>>,
+    relay_list_publication: Mutex<Option<crate::RelayListPublicationRuntime>>,
     registry: Option<RegistryEvidenceBoundary>,
     registry_claim_transaction: tokio::sync::Mutex<()>,
     mailbox: Mutex<PrivateMailbox>,
@@ -338,6 +339,24 @@ impl DaemonCore {
         } else {
             None
         };
+        let relay_list_publication =
+            if let Some(publication_config) = &config.relay_list_publication {
+                let nostr = identity
+                    .device_nostr_identity()
+                    .map_err(CoreError::Identity)?;
+                let auth_signer = RelayAuthSigner::from_secret_key(*nostr.private_key())
+                    .map_err(|_| CoreError::Nostr)?;
+                Some(
+                    crate::RelayListPublicationRuntime::spawn(
+                        auth_signer,
+                        publication_config,
+                        Default::default(),
+                    )
+                    .map_err(|_| CoreError::Nostr)?,
+                )
+            } else {
+                None
+            };
         Ok(Self {
             inner: Arc::new(CoreInner {
                 store,
@@ -351,6 +370,7 @@ impl DaemonCore {
                 nostr: Mutex::new(None),
                 dm_inbox: Mutex::new(None),
                 profile_publication: Mutex::new(profile_publication),
+                relay_list_publication: Mutex::new(relay_list_publication),
                 registry,
                 registry_claim_transaction: tokio::sync::Mutex::new(()),
                 mailbox: Mutex::new(mailbox),
@@ -393,6 +413,7 @@ impl DaemonCore {
         if self.inner.panic.begin_process_shutdown() {
             self.inner.panic.wait_for_terminal().await;
         }
+        let _ = self.shutdown_relay_list_publication().await;
         let profile_publication = self
             .inner
             .profile_publication
@@ -402,6 +423,19 @@ impl DaemonCore {
         if let Some(coordinator) = profile_publication {
             let _ = coordinator.shutdown().await;
         }
+    }
+
+    async fn shutdown_relay_list_publication(&self) -> Result<(), CoreError> {
+        let runtime = self
+            .inner
+            .relay_list_publication
+            .lock()
+            .expect("relay-list publication mutex poisoned")
+            .take();
+        if let Some(runtime) = runtime {
+            runtime.shutdown().await.map_err(|_| CoreError::Nostr)?;
+        }
+        Ok(())
     }
 
     pub fn attach_nostr(&self, handle: NostrHandle) -> Result<(), CoreError> {
@@ -1265,6 +1299,7 @@ impl DaemonCore {
             current.relays != replacement.relays
                 || current.dm_relays != replacement.dm_relays
                 || current.profile_publication != replacement.profile_publication
+                || current.relay_list_publication != replacement.relay_list_publication
                 || current.registry != replacement.registry
         };
         if relay_change_requires_restart {
@@ -2376,6 +2411,8 @@ impl DaemonCore {
     }
 
     async fn perform_panic_cleanup(&self) -> Result<serde_json::Value, CoreError> {
+        self.shutdown_relay_list_publication().await?;
+
         let profile_publication = self
             .inner
             .profile_publication
@@ -2472,6 +2509,112 @@ impl DaemonCore {
                 "delivery": delivery,
             }),
         });
+    }
+}
+
+#[cfg(test)]
+mod relay_list_publication_lifecycle_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn configured_daemon(relay_url: &str) -> DaemonConfig {
+        let mut config = DaemonConfig {
+            storage_provider: crate::StorageProviderConfig::File,
+            ..DaemonConfig::default()
+        };
+        config.relay_list_publication = Some(
+            serde_json::from_value(serde_json::json!({
+                "required_acknowledgements": 1,
+                "relays": [{
+                    "url": relay_url,
+                    "read": true,
+                    "write": true
+                }]
+            }))
+            .expect("valid relay-list publication config"),
+        );
+        config
+    }
+
+    #[tokio::test]
+    async fn process_shutdown_takes_and_joins_the_configured_runtime() {
+        let temporary = tempdir().expect("temporary directory");
+        let core = DaemonCore::open(
+            temporary.path().join("state"),
+            configured_daemon("ws://127.0.0.1:19470"),
+            EventHub::default(),
+        )
+        .await
+        .expect("open configured core");
+        assert!(
+            core.inner
+                .relay_list_publication
+                .lock()
+                .expect("relay-list publication mutex")
+                .is_some()
+        );
+
+        core.prepare_for_shutdown().await;
+
+        assert!(
+            core.inner
+                .relay_list_publication
+                .lock()
+                .expect("relay-list publication mutex")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn panic_erasure_quiesces_relay_list_publication_before_completion() {
+        let temporary = tempdir().expect("temporary directory");
+        let state = temporary.path().join("state");
+        let core = DaemonCore::open(
+            &state,
+            configured_daemon("ws://127.0.0.1:19471"),
+            EventHub::default(),
+        )
+        .await
+        .expect("open configured core");
+
+        core.panic_erase("ERASE")
+            .await
+            .expect("panic erasure completes");
+
+        assert!(
+            core.inner
+                .relay_list_publication
+                .lock()
+                .expect("relay-list publication mutex")
+                .is_none()
+        );
+        assert!(!state.exists(), "sealed state is erased after quiescence");
+    }
+
+    #[tokio::test]
+    async fn relay_list_publication_policy_changes_require_restart() {
+        let temporary = tempdir().expect("temporary directory");
+        let core = DaemonCore::open(
+            temporary.path().join("state"),
+            configured_daemon("ws://127.0.0.1:19472"),
+            EventHub::default(),
+        )
+        .await
+        .expect("open configured core");
+
+        assert!(matches!(
+            core.apply_reload(configured_daemon("ws://127.0.0.1:19473")),
+            Err(CoreError::RestartRequired)
+        ));
+        assert!(
+            core.inner
+                .relay_list_publication
+                .lock()
+                .expect("relay-list publication mutex")
+                .is_some(),
+            "rejected reload preserves the active runtime"
+        );
+        core.prepare_for_shutdown().await;
     }
 }
 
