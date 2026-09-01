@@ -1,8 +1,8 @@
 use omachat_nostr::{
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
     nip29::{
-        GROUP_MESSAGE_KIND, GroupEventError, GroupUserAction, GroupUserEvent, group_message,
-        join_request, leave_request,
+        GROUP_MESSAGE_KIND, GROUP_METADATA_KIND, GroupEventError, GroupMetadata, GroupUserAction,
+        GroupUserEvent, group_message, join_request, leave_request,
     },
 };
 
@@ -172,4 +172,150 @@ fn relay_origin_never_substitutes_for_a_valid_signature() {
         GroupUserEvent::verify(event, NOW, &limits),
         Err(GroupEventError::Event(_))
     ));
+}
+
+#[test]
+fn relay_signed_metadata_exposes_discord_class_room_properties() {
+    let limits = EventLimits::default();
+    let relay_pubkey = pubkey(&OWNER_SECRET);
+    let event = UnsignedEvent::new(
+        relay_pubkey.clone(),
+        NOW,
+        GROUP_METADATA_KIND,
+        vec![
+            vec!["d".to_owned(), "omarchy".to_owned()],
+            vec!["name".to_owned(), "Omarchy".to_owned()],
+            vec!["about".to_owned(), "Community room".to_owned()],
+            vec!["private".to_owned()],
+            vec!["restricted".to_owned()],
+            vec!["livekit".to_owned()],
+            vec!["supported_kinds".to_owned(), "9".to_owned(), "11".to_owned()],
+            vec!["parent".to_owned(), "linux".to_owned()],
+            vec!["child".to_owned(), "install-help".to_owned()],
+            vec!["child".to_owned(), "showcase".to_owned()],
+        ],
+        String::new(),
+        &limits,
+    )
+    .expect("metadata event");
+    let metadata = GroupMetadata::verify(
+        sign(event, &OWNER_SECRET),
+        &relay_pubkey,
+        NOW,
+        &limits,
+    )
+    .expect("relay-authenticated metadata");
+
+    assert_eq!(metadata.group_id(), "omarchy");
+    assert_eq!(metadata.name(), Some("Omarchy"));
+    assert_eq!(metadata.about(), Some("Community room"));
+    assert!(metadata.is_private());
+    assert!(metadata.is_restricted());
+    assert!(!metadata.is_hidden());
+    assert!(metadata.supports_livekit());
+    assert_eq!(metadata.supported_kinds(), Some([9, 11].as_slice()));
+    assert_eq!(metadata.parent(), Some("linux"));
+    assert_eq!(metadata.children(), ["install-help", "showcase"]);
+}
+
+#[test]
+fn metadata_requires_the_expected_relay_key() {
+    let limits = EventLimits::default();
+    let event = UnsignedEvent::new(
+        pubkey(&AGENT_SECRET),
+        NOW,
+        GROUP_METADATA_KIND,
+        vec![vec!["d".to_owned(), "room".to_owned()]],
+        String::new(),
+        &limits,
+    )
+    .expect("metadata event");
+
+    assert!(matches!(
+        GroupMetadata::verify(
+            sign(event, &AGENT_SECRET),
+            &pubkey(&OWNER_SECRET),
+            NOW,
+            &limits,
+        ),
+        Err(GroupEventError::RelayAuthorMismatch)
+    ));
+}
+
+#[test]
+fn absent_and_empty_supported_kinds_remain_distinct() {
+    let limits = EventLimits::default();
+    let relay_pubkey = pubkey(&OWNER_SECRET);
+    let metadata = |tags| {
+        let event = UnsignedEvent::new(
+            relay_pubkey.clone(),
+            NOW,
+            GROUP_METADATA_KIND,
+            tags,
+            String::new(),
+            &limits,
+        )
+        .expect("metadata event");
+        GroupMetadata::verify(
+            sign(event, &OWNER_SECRET),
+            &relay_pubkey,
+            NOW,
+            &limits,
+        )
+        .expect("metadata verifies")
+    };
+
+    assert_eq!(
+        metadata(vec![vec!["d".to_owned(), "all-kinds".to_owned()]])
+            .supported_kinds(),
+        None
+    );
+    assert_eq!(
+        metadata(vec![
+            vec!["d".to_owned(), "av-only".to_owned()],
+            vec!["livekit".to_owned()],
+            vec!["supported_kinds".to_owned()],
+        ])
+        .supported_kinds(),
+        Some([].as_slice())
+    );
+}
+
+#[test]
+fn ambiguous_metadata_tags_fail_closed() {
+    let limits = EventLimits::default();
+    let relay_pubkey = pubkey(&OWNER_SECRET);
+    for tags in [
+        vec![
+            vec!["d".to_owned(), "one".to_owned()],
+            vec!["d".to_owned(), "two".to_owned()],
+        ],
+        vec![
+            vec!["d".to_owned(), "room".to_owned()],
+            vec!["private".to_owned(), "false".to_owned()],
+        ],
+        vec![
+            vec!["d".to_owned(), "room".to_owned()],
+            vec!["supported_kinds".to_owned(), "nine".to_owned()],
+        ],
+    ] {
+        let event = UnsignedEvent::new(
+            relay_pubkey.clone(),
+            NOW,
+            GROUP_METADATA_KIND,
+            tags,
+            String::new(),
+            &limits,
+        )
+        .expect("bounded metadata");
+        assert!(
+            GroupMetadata::verify(
+                sign(event, &OWNER_SECRET),
+                &relay_pubkey,
+                NOW,
+                &limits,
+            )
+            .is_err()
+        );
+    }
 }
