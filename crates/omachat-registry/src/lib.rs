@@ -18,6 +18,7 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 mod agent_claim;
 pub mod principal_proof;
+pub mod proof_bearing_claim;
 
 pub use agent_claim::{
     AgentHandleClaim, AgentHandleClaimError, AgentHandleClaimSnapshot, AgentRegistrySubject,
