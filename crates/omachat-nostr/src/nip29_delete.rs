@@ -17,6 +17,7 @@ use crate::{
     event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent},
     nip29::{GroupRoster, GroupRosterKind, GroupUserEvent},
 };
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, error::Error, fmt};
 
 pub const DELETE_EVENT_KIND: u32 = 9005;
@@ -144,7 +145,8 @@ pub fn delete_event_request(
 }
 
 /// Why an accepted deletion was authorized under the room's policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DeletionAuthority {
     /// Every target is a verified room event signed by the requester.
     TargetAuthor,
@@ -370,10 +372,67 @@ impl GroupDeletionState {
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
+
+    /// Persisted form: the deletion records, which are the evidence.
+    #[must_use]
+    pub fn snapshot(&self) -> GroupDeletionSnapshot {
+        GroupDeletionSnapshot {
+            relay_pubkey: self.relay_pubkey.clone(),
+            group_id: self.group_id.clone(),
+            records: self.records.values().cloned().collect(),
+        }
+    }
+
+    /// Rebuild state from a snapshot, refusing malformed or duplicate records.
+    pub fn restore(snapshot: GroupDeletionSnapshot) -> Result<Self, DeletionStateError> {
+        let mut state = Self::new(snapshot.relay_pubkey, snapshot.group_id)?;
+        for record in snapshot.records {
+            if validate_event_id(&record.event_id).is_err()
+                || validate_event_id(&record.requester_pubkey).is_err()
+                || validate_event_id(&record.source_event_id).is_err()
+                || record.event_id == record.source_event_id
+            {
+                return Err(DeletionStateError::InvalidRecord);
+            }
+            if state
+                .records
+                .insert(record.event_id.clone(), record)
+                .is_some()
+            {
+                return Err(DeletionStateError::InvalidRecord);
+            }
+        }
+        Ok(state)
+    }
+}
+
+/// Serializable deletion state for one relay group.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GroupDeletionSnapshot {
+    relay_pubkey: String,
+    group_id: String,
+    records: Vec<DeletionRecord>,
+}
+
+impl GroupDeletionSnapshot {
+    #[must_use]
+    pub fn relay_pubkey(&self) -> &str {
+        &self.relay_pubkey
+    }
+
+    #[must_use]
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    #[must_use]
+    pub fn records(&self) -> &[DeletionRecord] {
+        &self.records
+    }
 }
 
 /// Provenance for one deleted event. The deleted event itself is untouched.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DeletionRecord {
     event_id: String,
     requester_pubkey: String,
@@ -614,6 +673,7 @@ pub enum DeletionStateError {
     EmptyGroupId,
     RelayMismatch,
     GroupMismatch,
+    InvalidRecord,
 }
 
 impl fmt::Display for DeletionStateError {
@@ -628,6 +688,9 @@ impl fmt::Display for DeletionStateError {
             }
             Self::GroupMismatch => {
                 formatter.write_str("accepted deletion belongs to another group")
+            }
+            Self::InvalidRecord => {
+                formatter.write_str("persisted deletion record is malformed or duplicated")
             }
         }
     }

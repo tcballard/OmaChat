@@ -187,6 +187,20 @@ impl AcceptedMetadataEdit {
         })
     }
 
+    /// Rebuild an accepted edit from sealed evidence. Crate-private so that
+    /// only persistence restore, never a caller, can bypass roster checks.
+    pub(crate) fn from_evidence(
+        edit: GroupMetadataEdit,
+        relay_pubkey: String,
+        roles: Vec<String>,
+    ) -> Self {
+        Self {
+            edit,
+            relay_pubkey,
+            roles,
+        }
+    }
+
     #[must_use]
     pub fn edit(&self) -> &GroupMetadataEdit {
         &self.edit
@@ -216,6 +230,13 @@ pub struct RelayMetadataState {
 struct InputKey {
     created_at: u64,
     event_id: String,
+}
+
+/// One accepted input in canonical fold order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MetadataInput<'a> {
+    Snapshot(&'a GroupMetadata),
+    Edit(&'a AcceptedMetadataEdit),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -460,6 +481,14 @@ impl RelayMetadataState {
     #[must_use]
     pub fn input_count(&self) -> usize {
         self.inputs.len()
+    }
+
+    /// Every accepted input in canonical fold order, for persistence.
+    pub fn inputs(&self) -> impl Iterator<Item = MetadataInput<'_>> {
+        self.inputs.values().map(|input| match input {
+            AcceptedInput::Snapshot(snapshot) => MetadataInput::Snapshot(snapshot),
+            AcceptedInput::Edit(edit) => MetadataInput::Edit(edit),
+        })
     }
 }
 

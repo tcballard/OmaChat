@@ -31,6 +31,7 @@ use crate::{
     event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent},
     nip29::{GroupMetadata, GroupRoster, GroupRosterKind},
 };
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, error::Error, fmt};
 
 pub const CREATE_GROUP_KIND: u32 = 9007;
@@ -195,7 +196,8 @@ fn build(
 }
 
 /// Why an accepted lifecycle action was authorized under the room's policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum LifecycleAuthority {
     /// The relay published kind `39000` metadata for the created group.
     RelayMetadata,
@@ -265,6 +267,20 @@ impl AcceptedLifecycleAction {
             relay_pubkey: relay_pubkey.to_owned(),
             authority: LifecycleAuthority::Administrator { roles },
         })
+    }
+
+    /// Rebuild an accepted action from sealed evidence. Crate-private so that
+    /// only persistence restore, never a caller, can bypass the checks.
+    pub(crate) fn from_evidence(
+        request: GroupLifecycleRequest,
+        relay_pubkey: String,
+        authority: LifecycleAuthority,
+    ) -> Self {
+        Self {
+            request,
+            relay_pubkey,
+            authority,
+        }
     }
 
     #[must_use]
@@ -448,6 +464,11 @@ impl RelayLifecycleState {
     #[must_use]
     pub fn input_count(&self) -> usize {
         self.inputs.len()
+    }
+
+    /// Every accepted action in canonical fold order, for persistence.
+    pub fn inputs(&self) -> impl Iterator<Item = &AcceptedLifecycleAction> {
+        self.inputs.values()
     }
 }
 

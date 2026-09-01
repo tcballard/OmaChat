@@ -13,6 +13,7 @@
 //! replacement is rolled back to the last filters every relay accepted.
 
 use crate::{nip11::RelayInformation, pool::RelayPool, relay::RelayError};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -65,7 +66,7 @@ impl RoomCoordinate {
 }
 
 /// One relay URL bound to the public key its NIP-11 document declared.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RelayIdentityBinding {
     url: String,
     relay_pubkey: String,
@@ -227,6 +228,32 @@ impl TrustedRelayIdentities {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.bindings.is_empty()
+    }
+
+    /// Every binding in URL order, for persistence.
+    pub fn bindings(&self) -> impl Iterator<Item = &RelayIdentityBinding> {
+        self.bindings.values()
+    }
+
+    /// Rebuild trusted bindings, refusing malformed or duplicate entries.
+    pub fn restore(bindings: Vec<RelayIdentityBinding>) -> Result<Self, RoomIdentityError> {
+        let mut trusted = Self::new();
+        for binding in bindings {
+            if normalize_relay_url(&binding.url)? != binding.url
+                || !is_lowercase_hex(&binding.relay_pubkey, 64)
+                || binding.last_verified_at < binding.first_verified_at
+            {
+                return Err(RoomIdentityError::InvalidRelayIdentity);
+            }
+            if trusted
+                .bindings
+                .insert(binding.url.clone(), binding)
+                .is_some()
+            {
+                return Err(RoomIdentityError::InvalidRelayIdentity);
+            }
+        }
+        Ok(trusted)
     }
 }
 

@@ -27,6 +27,7 @@ pub mod nip29_metadata;
 pub mod nip29_pins;
 pub mod nip29_relay;
 pub mod nip29_roles;
+pub mod nip29_room_state;
 pub mod nip29_state;
 pub mod pool;
 pub mod profile_cache;

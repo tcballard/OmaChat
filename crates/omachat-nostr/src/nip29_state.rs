@@ -1,6 +1,7 @@
 //! Deterministic membership state for one authoritative NIP-29 relay group.
 
 use crate::nip29::{GroupMembershipAction, MembershipAction};
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, error::Error, fmt};
 
 /// Membership state is scoped by both relay identity and group ID.
@@ -94,9 +95,68 @@ impl GroupMembershipState {
     pub fn is_member(&self, pubkey: &str) -> bool {
         self.record(pubkey).is_some_and(MembershipRecord::is_member)
     }
+
+    /// Persisted form: the reduced records, which already carry the
+    /// moderator, source event, and timestamp that produced them.
+    #[must_use]
+    pub fn snapshot(&self) -> GroupMembershipSnapshot {
+        GroupMembershipSnapshot {
+            relay_pubkey: self.relay_pubkey.clone(),
+            group_id: self.group_id.clone(),
+            records: self.records.values().cloned().collect(),
+        }
+    }
+
+    /// Rebuild state from a snapshot, refusing malformed or duplicate records.
+    pub fn restore(snapshot: GroupMembershipSnapshot) -> Result<Self, MembershipStateError> {
+        let mut state = Self::new(snapshot.relay_pubkey, snapshot.group_id)?;
+        for record in snapshot.records {
+            if validate_pubkey(&record.pubkey).is_err()
+                || validate_pubkey(&record.moderator_pubkey).is_err()
+                || validate_pubkey(&record.source_event_id).is_err()
+                || record.roles.iter().any(String::is_empty)
+                || (!record.member && !record.roles.is_empty())
+            {
+                return Err(MembershipStateError::InvalidRecord);
+            }
+            if state
+                .records
+                .insert(record.pubkey.clone(), record)
+                .is_some()
+            {
+                return Err(MembershipStateError::InvalidRecord);
+            }
+        }
+        Ok(state)
+    }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+/// Serializable membership state for one relay group.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GroupMembershipSnapshot {
+    relay_pubkey: String,
+    group_id: String,
+    records: Vec<MembershipRecord>,
+}
+
+impl GroupMembershipSnapshot {
+    #[must_use]
+    pub fn relay_pubkey(&self) -> &str {
+        &self.relay_pubkey
+    }
+
+    #[must_use]
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    #[must_use]
+    pub fn records(&self) -> &[MembershipRecord] {
+        &self.records
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MembershipRecord {
     pubkey: String,
     member: bool,
@@ -166,6 +226,7 @@ pub enum MembershipStateError {
     EmptyGroupId,
     RelayMismatch,
     GroupMismatch,
+    InvalidRecord,
 }
 
 impl fmt::Display for MembershipStateError {
@@ -180,6 +241,9 @@ impl fmt::Display for MembershipStateError {
             }
             Self::GroupMismatch => {
                 formatter.write_str("membership action belongs to another group")
+            }
+            Self::InvalidRecord => {
+                formatter.write_str("persisted membership record is malformed or duplicated")
             }
         }
     }
