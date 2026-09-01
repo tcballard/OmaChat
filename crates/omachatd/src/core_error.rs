@@ -20,6 +20,11 @@ pub enum CoreError {
             omachat_registry_transport::RegistryWebSocketError,
         >,
     ),
+    PrincipalRegistryEvidence(
+        omachat_registry_transport::PrincipalRegistryEvidenceError<
+            omachat_registry_transport::RegistryWebSocketError,
+        >,
+    ),
     RegistryCache(omachat_store::RegistryCacheError),
     PrincipalRegistryCache(omachat_store::PrincipalRegistryCacheError),
     RegistryClaim(omachat_registry::RegistryError),
@@ -84,6 +89,7 @@ impl CoreError {
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
             | Self::RegistryEvidence(_)
+            | Self::PrincipalRegistryEvidence(_)
             | Self::RegistryCache(_)
             | Self::PrincipalRegistryCache(_)
             | Self::RegistryClaim(_)
@@ -118,6 +124,12 @@ impl fmt::Display for CoreError {
             Self::ProfileDiscovery(error) => write!(formatter, "profile discovery failed: {error}"),
             Self::RegistryEvidence(error) => {
                 write!(formatter, "registry evidence resolution failed: {error}")
+            }
+            Self::PrincipalRegistryEvidence(error) => {
+                write!(
+                    formatter,
+                    "principal registry evidence resolution failed: {error}"
+                )
             }
             Self::RegistryCache(error) => write!(formatter, "registry cache failed: {error}"),
             Self::PrincipalRegistryCache(error) => {
@@ -186,6 +198,7 @@ impl Error for CoreError {
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
+            Self::PrincipalRegistryEvidence(error) => Some(error),
             Self::RegistryCache(error) => Some(error),
             Self::PrincipalRegistryCache(error) => Some(error),
             Self::RegistryClaim(error) => Some(error),

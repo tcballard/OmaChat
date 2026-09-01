@@ -1094,18 +1094,37 @@ impl DaemonCore {
                     .inner
                     .registry
                     .as_ref()
-                    .ok_or(CoreError::RegistryUnconfigured)?
-                    .root_claim_v2()?;
-                let resolution = registry
-                    .resolve_handle(&self.inner.store, &handle, unix_time()?)
-                    .await
-                    .map_err(CoreError::RegistryEvidence)?;
-                let source = if resolution.is_online() {
-                    "online"
-                } else {
-                    "offline"
-                };
-                Ok(registry_lookup_value(&handle, source, resolution.lookup()))
+                    .ok_or(CoreError::RegistryUnconfigured)?;
+                match registry {
+                    RegistryEvidenceBoundary::RootClaimV2(registry) => {
+                        let resolution = registry
+                            .resolve_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::RegistryEvidence)?;
+                        let source = if resolution.is_online() {
+                            "online"
+                        } else {
+                            "offline"
+                        };
+                        Ok(registry_lookup_value(&handle, source, resolution.lookup()))
+                    }
+                    RegistryEvidenceBoundary::PrincipalProofV1(registry) => {
+                        let resolution = registry
+                            .resolve_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::PrincipalRegistryEvidence)?;
+                        let source = if resolution.is_online() {
+                            "online"
+                        } else {
+                            "offline"
+                        };
+                        Ok(principal_registry_lookup_value(
+                            &handle,
+                            source,
+                            resolution.lookup(),
+                        ))
+                    }
+                }
             }
             Command::ShowRegistryHandle { handle } => {
                 let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
@@ -1113,13 +1132,27 @@ impl DaemonCore {
                     .inner
                     .registry
                     .as_ref()
-                    .ok_or(CoreError::RegistryUnconfigured)?
-                    .root_claim_v2()?;
-                let lookup = registry
-                    .cached_handle(&self.inner.store, &handle, unix_time()?)
-                    .await
-                    .map_err(CoreError::RegistryEvidence)?;
-                Ok(registry_lookup_value(&handle, "cache-only", &lookup))
+                    .ok_or(CoreError::RegistryUnconfigured)?;
+                match registry {
+                    RegistryEvidenceBoundary::RootClaimV2(registry) => {
+                        let lookup = registry
+                            .cached_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::RegistryEvidence)?;
+                        Ok(registry_lookup_value(&handle, "cache-only", &lookup))
+                    }
+                    RegistryEvidenceBoundary::PrincipalProofV1(registry) => {
+                        let lookup = registry
+                            .cached_handle(&self.inner.store, &handle, unix_time()?)
+                            .await
+                            .map_err(CoreError::PrincipalRegistryEvidence)?;
+                        Ok(principal_registry_lookup_value(
+                            &handle,
+                            "cache-only",
+                            &lookup,
+                        ))
+                    }
+                }
             }
             Command::ClaimRegistryHandle {
                 handle,
@@ -2047,6 +2080,59 @@ fn registry_claim_value(handle: &GlobalHandle, result: &RegistryClaimResult) -> 
         .expect("registry evidence output is an object")
         .insert("claim_status".into(), claim_status.into());
     value
+}
+
+fn principal_registry_lookup_value(
+    handle: &GlobalHandle,
+    source: &str,
+    lookup: &PrincipalRegistryCacheLookup,
+) -> serde_json::Value {
+    let (evidence_status, cached) = match lookup {
+        PrincipalRegistryCacheLookup::Missing => ("missing", None),
+        PrincipalRegistryCacheLookup::Fresh(cached) => ("fresh", Some(cached)),
+        PrincipalRegistryCacheLookup::OfflineStale(cached) => ("offline-stale", Some(cached)),
+        PrincipalRegistryCacheLookup::UnusableClockRollback(cached) => {
+            ("unusable-clock-rollback", Some(cached))
+        }
+    };
+    let Some(cached) = cached else {
+        return serde_json::json!({
+            "handle": handle.as_str(),
+            "source": source,
+            "evidence_protocol": "principal-proof-v1",
+            "evidence_status": evidence_status,
+            "receipt_verified": false,
+            "principal_receipt_verified": false,
+            "nostr_key_control_verified": false,
+            "usable_current_evidence": false,
+        });
+    };
+    let claim_receipt = &cached.evidence.claim_receipt;
+    let principal_receipt = &cached.evidence.principal_receipt;
+    serde_json::json!({
+        "handle": handle.as_str(),
+        "source": source,
+        "evidence_protocol": "principal-proof-v1",
+        "evidence_status": evidence_status,
+        "receipt_verified": true,
+        "principal_receipt_verified": true,
+        "usable_current_evidence": matches!(lookup, PrincipalRegistryCacheLookup::Fresh(_)),
+        "verified_at": cached.verified_at,
+        "account_id": claim_receipt.account_id.as_str(),
+        "account_revision": claim_receipt.account_revision,
+        "registry_sequence": claim_receipt.sequence,
+        "accepted_at": claim_receipt.accepted_at,
+        "principal_type": "device",
+        "nostr_public_key": hex::encode(principal_receipt.nostr_public_key),
+        "nostr_public_key_provenance": "principal-proof-verified",
+        "nostr_key_control_verified": true,
+        "account_root_authorisation_verified": true,
+        "receipt_chains_verified": true,
+        "claim_hash": hex::encode(claim_receipt.claim_hash),
+        "receipt_hash": hex::encode(claim_receipt.receipt_hash()),
+        "principal_proof_hash": hex::encode(principal_receipt.principal_proof_hash),
+        "principal_receipt_hash": hex::encode(principal_receipt.receipt_hash()),
+    })
 }
 
 fn random_bytes<const N: usize>() -> Result<[u8; N], CoreError> {

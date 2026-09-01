@@ -1,5 +1,5 @@
 use ed25519_dalek::SigningKey;
-use omachat_proto::ipc::{Command, ErrorCode, Request, ResponseOutcome, VERSION};
+use omachat_proto::ipc::{Command, Request, ResponseOutcome, VERSION};
 use omachatd::{
     DaemonConfig, DaemonCore, EventHub, RegistryClientConfig, RegistryProtocol, RequestHandler,
     StorageProviderConfig,
@@ -48,7 +48,7 @@ async fn principal_protocol_opens_its_own_boundary_and_reports_truthful_status()
     assert_eq!(status["registry_protocol"], "principal-proof-v1");
     assert_eq!(status["account"]["registry_state"], "local-only");
 
-    let ResponseOutcome::Error { error } = request(
+    let ResponseOutcome::Ok { result: missing } = request(
         &core,
         Command::ShowRegistryHandle {
             handle: "alice".into(),
@@ -56,10 +56,11 @@ async fn principal_protocol_opens_its_own_boundary_and_reports_truthful_status()
     )
     .await
     else {
-        panic!("root-only command crossed the protocol boundary");
+        panic!("principal cache lookup failed");
     };
-    assert_eq!(error.code, ErrorCode::Unavailable);
-    assert!(error.message.contains("configured registry protocol"));
+    assert_eq!(missing["evidence_protocol"], "principal-proof-v1");
+    assert_eq!(missing["evidence_status"], "missing");
+    assert_eq!(missing["nostr_key_control_verified"], false);
 }
 
 #[tokio::test]
