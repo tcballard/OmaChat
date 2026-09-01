@@ -25,5 +25,6 @@ pub mod profile_discovery;
 pub mod profile_metadata;
 pub mod profile_verification;
 pub mod relay;
+pub mod relay_list;
 pub mod rendezvous;
 mod replaceable_discovery;
