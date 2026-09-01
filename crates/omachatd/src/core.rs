@@ -1958,6 +1958,8 @@ fn registry_lookup_value(
         "nostr_public_key": hex::encode(
             cached.record.claim.binding().device_keys.nostr_public_key,
         ),
+        "nostr_public_key_provenance": "account-root-asserted",
+        "nostr_key_control_verified": false,
         "claim_hash": hex::encode(receipt.claim_hash),
         "receipt_hash": hex::encode(receipt.receipt_hash()),
     })

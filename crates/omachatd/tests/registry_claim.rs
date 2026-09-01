@@ -109,6 +109,7 @@ async fn pending_claim_replays_after_restart_and_clears_after_durable_receipt() 
         assert_eq!(result["claim_status"], "accepted");
         assert_eq!(result["receipt_verified"], true);
         assert_eq!(result["usable_current_evidence"], true);
+        assert_eq!(result["nostr_key_control_verified"], false);
         let status = core
             .handle(Request {
                 version: VERSION,

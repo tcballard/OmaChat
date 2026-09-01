@@ -119,6 +119,11 @@ async fn verified_handle_resolution_is_explicitly_online_then_offline() {
         assert_eq!(online["receipt_verified"], true);
         assert_eq!(online["usable_current_evidence"], true);
         assert_eq!(online["registry_sequence"], 1);
+        assert_eq!(
+            online["nostr_public_key_provenance"],
+            "account-root-asserted"
+        );
+        assert_eq!(online["nostr_key_control_verified"], false);
 
         shutdown_tx.send(()).expect("stop registry");
         sleep(Duration::from_millis(100)).await;

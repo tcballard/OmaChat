@@ -134,9 +134,12 @@ impl VerifiedRegistryCache {
             })
     }
 
-    /// Resolve only a currently cached account binding for this Nostr key.
-    /// Historical device keys remain audit evidence but are not presented as the
-    /// account's current participant key after a newer binding is observed.
+    /// Resolve only a currently cached account-root assertion for this Nostr
+    /// key. V1 handle claims do not include a Schnorr proof of private-key
+    /// control, so callers must not present this association as a verified
+    /// Nostr principal binding. Historical device keys remain audit evidence
+    /// but are not presented as the account's current asserted key after a
+    /// newer binding is observed.
     #[must_use]
     pub fn lookup_nostr_public_key(
         &self,
