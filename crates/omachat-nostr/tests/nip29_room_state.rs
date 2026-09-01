@@ -326,10 +326,10 @@ fn tampered_or_foreign_snapshots_fail_closed() {
     other_relay["relay_pubkey"] = Value::from(pubkey(&OTHER_RELAY_SECRET));
     // Per-group evidence is scoped to the original relay, so the re-labelled
     // snapshot is refused before any relay-signed event is even checked.
-    assert!(matches!(
+    assert_eq!(
         restore(&other_relay).err(),
-        Some(RoomStateError::InvalidSnapshot(_))
-    ));
+        Some(RoomStateError::RelayMismatch)
+    );
 
     let mut tampered = json.clone();
     tampered["lifecycle_inputs"][0]["event"]["content"] = Value::from("edited");
