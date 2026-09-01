@@ -20,6 +20,7 @@ pub mod gift_wrap;
 pub mod inbox;
 pub mod mailbox;
 pub mod nip29;
+pub mod nip29_roles;
 pub mod nip29_state;
 pub mod pool;
 pub mod profile_cache;
