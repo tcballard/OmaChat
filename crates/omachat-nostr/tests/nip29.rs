@@ -1,9 +1,9 @@
 use omachat_nostr::{
     event::{EventLimits, SignedEvent, UnsignedEvent, xonly_public_key},
     nip29::{
-        GROUP_MESSAGE_KIND, GROUP_METADATA_KIND, GroupEventError, GroupMetadata, GroupRoster,
-        GroupRosterKind, GroupUserAction, GroupUserEvent, group_message, join_request,
-        leave_request,
+        GROUP_MESSAGE_KIND, GROUP_METADATA_KIND, GroupEventError, GroupMembershipAction,
+        GroupMetadata, GroupRoster, GroupRosterKind, GroupUserAction, GroupUserEvent,
+        MembershipAction, group_message, join_request, leave_request,
     },
 };
 
@@ -419,4 +419,105 @@ fn forged_ambiguous_and_malformed_rosters_fail_closed() {
         GroupRoster::verify(sign(forged, &AGENT_SECRET), &relay_pubkey, NOW, &limits,),
         Err(GroupEventError::RelayAuthorMismatch)
     ));
+}
+
+#[test]
+fn membership_actions_preserve_moderator_and_target_principals() {
+    let limits = EventLimits::default();
+    let moderator_pubkey = pubkey(&OWNER_SECRET);
+    let agent_pubkey = pubkey(&AGENT_SECRET);
+    let event = UnsignedEvent::new(
+        moderator_pubkey.clone(),
+        NOW,
+        9000,
+        vec![
+            vec!["h".to_owned(), "omarchy".to_owned()],
+            vec![
+                "p".to_owned(),
+                agent_pubkey.clone(),
+                "moderator".to_owned(),
+                "agent".to_owned(),
+            ],
+            vec!["previous".to_owned(), "eb96c864".to_owned()],
+        ],
+        "grant room roles".to_owned(),
+        &limits,
+    )
+    .expect("membership action");
+    let action = GroupMembershipAction::verify(sign(event, &OWNER_SECRET), NOW, &limits)
+        .expect("authenticated action");
+
+    assert_eq!(action.author(), moderator_pubkey);
+    assert_eq!(action.group_id(), "omarchy");
+    assert_eq!(action.previous(), ["eb96c864"]);
+    assert_eq!(
+        action.action(),
+        &MembershipAction::Put {
+            pubkey: agent_pubkey,
+            roles: vec!["moderator".to_owned(), "agent".to_owned()],
+        }
+    );
+}
+
+#[test]
+fn valid_signature_does_not_turn_membership_action_into_authority() {
+    let limits = EventLimits::default();
+    let attacker_pubkey = pubkey(&AGENT_SECRET);
+    let event = UnsignedEvent::new(
+        attacker_pubkey.clone(),
+        NOW,
+        9001,
+        vec![
+            vec!["h".to_owned(), "omarchy".to_owned()],
+            vec!["p".to_owned(), pubkey(&OWNER_SECRET)],
+        ],
+        "attempt removal".to_owned(),
+        &limits,
+    )
+    .expect("signed action");
+    let action = GroupMembershipAction::verify(sign(event, &AGENT_SECRET), NOW, &limits)
+        .expect("signature is authentic");
+
+    assert_eq!(action.author(), attacker_pubkey);
+    assert!(matches!(action.action(), MembershipAction::Remove { .. }));
+    // This type makes no claim that the relay accepted the request or that its
+    // author holds a role capable of removing a member.
+}
+
+#[test]
+fn malformed_membership_targets_fail_closed() {
+    let limits = EventLimits::default();
+    for (kind, tags) in [
+        (9000, vec![vec!["h".to_owned(), "room".to_owned()]]),
+        (
+            9000,
+            vec![
+                vec!["h".to_owned(), "room".to_owned()],
+                vec!["p".to_owned(), pubkey(&AGENT_SECRET)],
+                vec!["p".to_owned(), pubkey(&OWNER_SECRET)],
+            ],
+        ),
+        (
+            9001,
+            vec![
+                vec!["h".to_owned(), "room".to_owned()],
+                vec![
+                    "p".to_owned(),
+                    pubkey(&AGENT_SECRET),
+                    "role-not-allowed".to_owned(),
+                ],
+            ],
+        ),
+    ] {
+        let event = UnsignedEvent::new(
+            pubkey(&OWNER_SECRET),
+            NOW,
+            kind,
+            tags,
+            String::new(),
+            &limits,
+        )
+        .expect("bounded action");
+        assert!(GroupMembershipAction::verify(sign(event, &OWNER_SECRET), NOW, &limits).is_err());
+    }
 }

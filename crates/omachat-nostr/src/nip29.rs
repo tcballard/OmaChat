@@ -4,11 +4,112 @@ use crate::event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent};
 use std::{error::Error, fmt};
 
 pub const GROUP_MESSAGE_KIND: u32 = 9;
+pub const PUT_USER_KIND: u32 = 9000;
+pub const REMOVE_USER_KIND: u32 = 9001;
 pub const JOIN_REQUEST_KIND: u32 = 9021;
 pub const LEAVE_REQUEST_KIND: u32 = 9022;
 pub const GROUP_METADATA_KIND: u32 = 39000;
 pub const GROUP_ADMINS_KIND: u32 = 39001;
 pub const GROUP_MEMBERS_KIND: u32 = 39002;
+
+/// A signed NIP-29 membership request whose room authorization is not implied.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupMembershipAction {
+    event: SignedEvent,
+    group_id: String,
+    action: MembershipAction,
+    previous: Vec<String>,
+}
+
+impl GroupMembershipAction {
+    /// Authenticate an action without claiming its author is an authorized admin.
+    pub fn verify(
+        event: SignedEvent,
+        now: u64,
+        limits: &EventLimits,
+    ) -> Result<Self, GroupEventError> {
+        event.verify(now, limits).map_err(GroupEventError::Event)?;
+        let group_id = unique_pair_tag(&event.tags, "h", GroupEventError::MissingGroupId)?;
+        if group_id.is_empty() {
+            return Err(GroupEventError::EmptyGroupId);
+        }
+        let previous = timeline_references(&event.tags)?;
+        let mut principal_tags = event
+            .tags
+            .iter()
+            .filter(|tag| tag.first().is_some_and(|part| part == "p"));
+        let principal = principal_tags
+            .next()
+            .ok_or(GroupEventError::ExpectedOnePrincipal)?;
+        if principal_tags.next().is_some() {
+            return Err(GroupEventError::ExpectedOnePrincipal);
+        }
+        if principal.len() < 2 {
+            return Err(GroupEventError::MalformedTag("p"));
+        }
+        validate_pubkey(&principal[1])?;
+        let roles = principal.iter().skip(2).cloned().collect::<Vec<_>>();
+
+        let action = match event.kind {
+            PUT_USER_KIND => {
+                if roles.iter().any(String::is_empty) {
+                    return Err(GroupEventError::EmptyRole);
+                }
+                MembershipAction::Put {
+                    pubkey: principal[1].clone(),
+                    roles,
+                }
+            }
+            REMOVE_USER_KIND => {
+                if !roles.is_empty() {
+                    return Err(GroupEventError::RolesOnRemoval);
+                }
+                MembershipAction::Remove {
+                    pubkey: principal[1].clone(),
+                }
+            }
+            kind => return Err(GroupEventError::UnsupportedKind(kind)),
+        };
+
+        Ok(Self {
+            event,
+            group_id,
+            action,
+            previous,
+        })
+    }
+
+    #[must_use]
+    pub fn event(&self) -> &SignedEvent {
+        &self.event
+    }
+
+    #[must_use]
+    pub fn author(&self) -> &str {
+        &self.event.pubkey
+    }
+
+    #[must_use]
+    pub fn group_id(&self) -> &str {
+        &self.group_id
+    }
+
+    #[must_use]
+    pub fn action(&self) -> &MembershipAction {
+        &self.action
+    }
+
+    #[must_use]
+    pub fn previous(&self) -> &[String] {
+        &self.previous
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MembershipAction {
+    Put { pubkey: String, roles: Vec<String> },
+    Remove { pubkey: String },
+}
 
 /// A principal listed in relay-authenticated NIP-29 group state.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -597,6 +698,8 @@ pub enum GroupEventError {
     InvalidPrincipalPublicKey,
     DuplicatePrincipal,
     EmptyRole,
+    ExpectedOnePrincipal,
+    RolesOnRemoval,
     TagFieldTooLarge { bytes: usize, maximum: usize },
 }
 
@@ -627,6 +730,12 @@ impl fmt::Display for GroupEventError {
             }
             Self::DuplicatePrincipal => formatter.write_str("duplicate NIP-29 group principal"),
             Self::EmptyRole => formatter.write_str("NIP-29 group role must not be empty"),
+            Self::ExpectedOnePrincipal => {
+                formatter.write_str("NIP-29 membership action must target exactly one principal")
+            }
+            Self::RolesOnRemoval => {
+                formatter.write_str("NIP-29 remove-user action must not carry roles")
+            }
             Self::TagFieldTooLarge { bytes, maximum } => write!(
                 formatter,
                 "NIP-29 tag field is {bytes} bytes; maximum is {maximum}"
