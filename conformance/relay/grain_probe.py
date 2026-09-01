@@ -427,18 +427,53 @@ def assert_participant_metadata(url: str, state) -> None:
     client = authenticate(url, PARTICIPANT_SECRET)
     try:
         expectations = (
-            (0, "profile", state["profile_event_id"]),
-            (10002, "nip65", state["relay_list_event_id"]),
-            (10050, "nip17-inbox", state["dm_relay_list_event_id"]),
+            (
+                0,
+                "profile",
+                state["profile_event_id"],
+                {
+                    state["replaced_profile_event_id"],
+                    state["profile_event_id"],
+                },
+            ),
+            (
+                10002,
+                "nip65",
+                state["relay_list_event_id"],
+                {state["relay_list_event_id"]},
+            ),
+            (
+                10050,
+                "nip17-inbox",
+                state["dm_relay_list_event_id"],
+                {state["dm_relay_list_event_id"]},
+            ),
         )
-        for kind, label, expected_id in expectations:
+        for kind, label, expected_id, allowed_ids in expectations:
             events = query_author_kind(
                 client, participant, kind, f"participant-{label}"
             )
             ids = [event["id"] for event in events]
-            if ids != [expected_id]:
+            if len(ids) != len(set(ids)):
                 raise AssertionError(
-                    f"participant {label} query returned unexpected IDs: {ids!r}"
+                    f"participant {label} query returned duplicate IDs: {ids!r}"
+                )
+            unexpected_ids = set(ids) - allowed_ids
+            if expected_id not in ids or unexpected_ids:
+                raise AssertionError(
+                    "participant "
+                    f"{label} query returned unexpected IDs: {ids!r}"
+                )
+            newest_created_at = max(event["created_at"] for event in events)
+            newest_ids = {
+                event["id"]
+                for event in events
+                if event["created_at"] == newest_created_at
+            }
+            if newest_ids != {expected_id}:
+                raise AssertionError(
+                    "participant "
+                    f"{label} query did not resolve to {expected_id}: {ids!r}"
                 )
     finally:
         client.close()
@@ -543,6 +578,7 @@ def seed(url: str, state_path: Path) -> None:
         "wrapper_pubkey": event["pubkey"],
         "authenticated_sender": public_key(SENDER_SECRET),
         "participant": participant,
+        "replaced_profile_event_id": old_profile["id"],
         "profile_event_id": profile["id"],
         "relay_list_event_id": relay_list["id"],
         "dm_relay_list_event_id": dm_relay_list["id"],
