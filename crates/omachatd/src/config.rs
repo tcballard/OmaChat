@@ -258,9 +258,9 @@ impl DaemonConfig {
     }
 
     pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        let mut geochat_relays = HashSet::with_capacity(self.relays.len());
         for relay in &self.relays {
-            let url = url::Url::parse(relay).map_err(|_| CoreError::InvalidConfig)?;
-            if !matches!(url.scheme(), "ws" | "wss") {
+            if !geochat_relays.insert(canonical_publication_url(relay)?) {
                 return Err(CoreError::InvalidConfig);
             }
         }
@@ -269,14 +269,7 @@ impl DaemonConfig {
         }
         let mut private_relays = HashSet::with_capacity(self.dm_relays.len());
         for relay in &self.dm_relays {
-            let url = url::Url::parse(relay).map_err(|_| CoreError::InvalidConfig)?;
-            if !matches!(url.scheme(), "ws" | "wss")
-                || url.host_str().is_none()
-                || !url.username().is_empty()
-                || url.password().is_some()
-                || url.fragment().is_some()
-                || !private_relays.insert(url.to_string())
-            {
+            if !private_relays.insert(canonical_publication_url(relay)?) {
                 return Err(CoreError::InvalidConfig);
             }
         }
