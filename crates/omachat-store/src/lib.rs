@@ -13,6 +13,7 @@ mod registry;
 mod registry_cache;
 mod registry_claim_intent;
 mod room_state;
+mod room_state_anchor;
 mod sealed;
 mod trust;
 
@@ -45,6 +46,7 @@ pub use room_state::{
     ROOM_STATE_RECORD_VERSION, RoomStateAnchorError, RoomStateGenerationAnchor, RoomStateLoad,
     RoomStateVault, RoomStateVaultError,
 };
+pub use room_state_anchor::{FileGenerationAnchor, ROOM_STATE_ANCHOR_VERSION};
 pub use sealed::{
     MasterKey, ProviderKind, RequestedProvider, SealedStore, StoreError, StoreStatus,
 };
