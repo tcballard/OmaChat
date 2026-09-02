@@ -32,6 +32,10 @@ enum Command {
         Vec<Value>,
         oneshot::Sender<Vec<Result<(), omachat_nostr::relay::RelayError>>>,
     ),
+    CloseSubscription(
+        String,
+        oneshot::Sender<Vec<Result<(), omachat_nostr::relay::RelayError>>>,
+    ),
 }
 
 #[derive(Clone)]
@@ -58,6 +62,20 @@ impl NostrHandle {
         id: String,
         filters: Vec<Value>,
     ) -> Result<(), NostrServiceError> {
+        let results = self.subscribe_results(id, filters).await?;
+        if results.iter().any(Result::is_ok) {
+            Ok(())
+        } else {
+            Err(NostrServiceError::Subscription)
+        }
+    }
+
+    /// Replace a subscription and return every relay's verdict, in pool order.
+    pub async fn subscribe_results(
+        &self,
+        id: String,
+        filters: Vec<Value>,
+    ) -> Result<Vec<Result<(), omachat_nostr::relay::RelayError>>, NostrServiceError> {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(NostrServiceError::Stopped);
         }
@@ -66,12 +84,23 @@ impl NostrHandle {
             .send(Command::Subscribe(id, filters, sender))
             .await
             .map_err(|_| NostrServiceError::Stopped)?;
-        let results = receiver.await.map_err(|_| NostrServiceError::Stopped)?;
-        if results.iter().any(Result::is_ok) {
-            Ok(())
-        } else {
-            Err(NostrServiceError::Subscription)
+        receiver.await.map_err(|_| NostrServiceError::Stopped)
+    }
+
+    /// Close a subscription and return every relay's verdict, in pool order.
+    pub async fn close_subscription_results(
+        &self,
+        id: String,
+    ) -> Result<Vec<Result<(), omachat_nostr::relay::RelayError>>, NostrServiceError> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(NostrServiceError::Stopped);
         }
+        let (sender, receiver) = oneshot::channel();
+        self.commands
+            .send(Command::CloseSubscription(id, sender))
+            .await
+            .map_err(|_| NostrServiceError::Stopped)?;
+        receiver.await.map_err(|_| NostrServiceError::Stopped)
     }
 
     /// Stop accepting work, cancel the active relay operation, discard queued
@@ -102,10 +131,19 @@ impl NostrService {
         urls: &[String],
         inbound: mpsc::Sender<PoolNotification>,
     ) -> Result<Self, RelayPoolError> {
+        Self::spawn_with_route(urls, RelayRoute::Direct, inbound)
+    }
+
+    /// Spawn a pool whose every relay is dialed over the given route.
+    pub fn spawn_with_route(
+        urls: &[String],
+        route: RelayRoute,
+        inbound: mpsc::Sender<PoolNotification>,
+    ) -> Result<Self, RelayPoolError> {
         let configs = urls
             .iter()
             .cloned()
-            .map(|url| RelayConfig::new(url, RelayRoute::Direct))
+            .map(|url| RelayConfig::new(url, route.clone()))
             .collect();
         let pool = RelayPool::spawn(configs, RelayPoolConfig::default())?;
         let (sender, receiver) = mpsc::channel(COMMAND_CAPACITY);
@@ -238,6 +276,16 @@ async fn run_command(
                 biased;
                 _ = wait_for_stop(stop) => true,
                 result = pool.subscribe(id, filters) => {
+                    let _ = response.send(result);
+                    false
+                }
+            }
+        }
+        Command::CloseSubscription(id, response) => {
+            tokio::select! {
+                biased;
+                _ = wait_for_stop(stop) => true,
+                result = pool.close_subscription(id) => {
                     let _ = response.send(result);
                     false
                 }

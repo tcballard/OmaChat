@@ -33,7 +33,7 @@ async fn main() -> ExitCode {
     };
     let mut model = UiModel {
         connected: true,
-        status: "connected — /join /leave /who /block /send /panic /detach".into(),
+        status: "connected — /join /leave /who /block /send /join-room /leave-room /rooms /panic /detach".into(),
         ..UiModel::default()
     };
     let _terminal = TerminalGuard::enter();

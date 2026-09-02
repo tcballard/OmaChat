@@ -21,6 +21,7 @@ mod relay_list_nostr_publisher;
 mod relay_list_publication_coordinator;
 mod relay_list_publication_runtime;
 mod relay_list_publication_store;
+mod room_service;
 
 pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
@@ -28,7 +29,8 @@ pub use agent_lifecycle_store::{
 };
 pub use config::{
     DaemonConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
-    RelayListPublicationConfig, RelayListPublicationRelayConfig, StorageProviderConfig,
+    RelayListPublicationConfig, RelayListPublicationRelayConfig, RoomsConfig,
+    StorageProviderConfig,
 };
 pub use core::{
     DaemonCore, PanicState, RegistryClaimEvidence, RegistryClaimResult, RegistryClaimStatus,
@@ -88,4 +90,9 @@ pub use relay_list_publication_store::{
     PendingRelayListPublication, RELAY_LIST_PUBLICATION_INTENT_RECORD_NAME,
     RelayListPublicationIntentError, RelayListPublicationIntentState,
     RelayListPublicationIntentStore, RelayListPublicationMutation, RelayListPublicationProgress,
+};
+pub use room_service::{
+    EventPublisher, ROOM_CONVERSATION_PREFIX, RelayHandle, RoomError, RoomService,
+    RoomServiceError, RoomServiceOptions, RoomsHandle, parse_room_conversation,
+    room_conversation_id,
 };

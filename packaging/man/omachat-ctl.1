@@ -25,7 +25,21 @@ Join a public geohash conversation.
 Leave a public geohash conversation.
 .TP
 .B send CONVERSATION TEXT
-Queue a public or private message.
+Queue a public or private message. A room conversation is addressed as
+\fBroom:\fIRELAY_PUBKEY\fB:\fIGROUP\fR, as reported by \fBrooms\fR.
+.TP
+.B join-room RELAY GROUP [--invite CODE]
+Subscribe to a NIP-29 room on a configured room relay and send a join request.
+The relay's policy, not the daemon, decides membership; the response reports
+whether the relay accepted the request.
+.TP
+.B leave-room RELAY GROUP
+Send a leave request and unsubscribe from the room.
+.TP
+.B rooms [--json]
+Describe every configured room relay: its verified signing identity, how that
+identity was obtained, connection state, and the joined rooms with their
+relay-published metadata.
 .TP
 .B panic --confirm ERASE
 Cryptographically erase local state and stop the daemon.

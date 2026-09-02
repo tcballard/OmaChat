@@ -103,6 +103,33 @@ fn requests_preserve_the_flat_wire_format() {
             r#"{"version":1,"id":"request","method":"block","params":{"public_key":"pubkey"}}"#,
         ),
         (
+            Command::JoinRoom {
+                relay: "wss://rooms.example".into(),
+                group_id: "omarchy".into(),
+                invite_code: None,
+            },
+            r#"{"version":1,"id":"request","method":"join-room","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
+        ),
+        (
+            Command::JoinRoom {
+                relay: "wss://rooms.example".into(),
+                group_id: "omarchy".into(),
+                invite_code: Some("welcome".into()),
+            },
+            r#"{"version":1,"id":"request","method":"join-room","params":{"relay":"wss://rooms.example","group_id":"omarchy","invite_code":"welcome"}}"#,
+        ),
+        (
+            Command::LeaveRoom {
+                relay: "wss://rooms.example".into(),
+                group_id: "omarchy".into(),
+            },
+            r#"{"version":1,"id":"request","method":"leave-room","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
+        ),
+        (
+            Command::ListRooms,
+            r#"{"version":1,"id":"request","method":"list-rooms"}"#,
+        ),
+        (
             Command::Panic {
                 confirmation: "confirm".into(),
             },

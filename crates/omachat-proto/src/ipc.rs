@@ -67,6 +67,22 @@ pub enum Command {
     Block {
         public_key: String,
     },
+    /// Join a NIP-29 room on a configured room relay. The daemon subscribes
+    /// to the room and sends a kind 9021 join request; relay policy decides
+    /// membership.
+    JoinRoom {
+        relay: String,
+        group_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        invite_code: Option<String>,
+    },
+    /// Leave a NIP-29 room: send a kind 9022 leave request and unsubscribe.
+    LeaveRoom {
+        relay: String,
+        group_id: String,
+    },
+    /// Describe every configured room relay and its joined rooms.
+    ListRooms,
     Panic {
         confirmation: String,
     },
@@ -196,6 +212,20 @@ enum StrictRequestWire {
         id: String,
         params: PublicKeyParams,
     },
+    JoinRoom {
+        version: u16,
+        id: String,
+        params: RoomJoinParams,
+    },
+    LeaveRoom {
+        version: u16,
+        id: String,
+        params: RoomParams,
+    },
+    ListRooms {
+        version: u16,
+        id: String,
+    },
     Panic {
         version: u16,
         id: String,
@@ -257,6 +287,22 @@ struct ConfirmationParams {
 #[serde(deny_unknown_fields)]
 struct SubscribeParams {
     topics: Vec<Topic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoomJoinParams {
+    relay: String,
+    group_id: String,
+    #[serde(default)]
+    invite_code: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoomParams {
+    relay: String,
+    group_id: String,
 }
 
 impl From<StrictRequestWire> for Request {
@@ -362,6 +408,30 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: PublicKeyParams { public_key },
             } => (version, id, Command::Block { public_key }),
+            StrictRequestWire::JoinRoom {
+                version,
+                id,
+                params:
+                    RoomJoinParams {
+                        relay,
+                        group_id,
+                        invite_code,
+                    },
+            } => (
+                version,
+                id,
+                Command::JoinRoom {
+                    relay,
+                    group_id,
+                    invite_code,
+                },
+            ),
+            StrictRequestWire::LeaveRoom {
+                version,
+                id,
+                params: RoomParams { relay, group_id },
+            } => (version, id, Command::LeaveRoom { relay, group_id }),
+            StrictRequestWire::ListRooms { version, id } => (version, id, Command::ListRooms),
             StrictRequestWire::Panic {
                 version,
                 id,

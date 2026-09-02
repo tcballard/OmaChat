@@ -143,6 +143,29 @@ impl TrustedRelayIdentities {
         let presented = information
             .self_pubkey()
             .ok_or_else(|| RoomIdentityError::MissingRelayIdentity { url: url.clone() })?;
+        self.observe_presented(
+            relay_url,
+            presented,
+            information.software(),
+            information.version(),
+            now,
+        )
+    }
+
+    /// Bind or confirm a relay URL against an explicitly chosen presented key.
+    ///
+    /// Callers that select the key by their own policy (for example falling
+    /// back to NIP-11 `pubkey` for a relay that advertises NIP-29 without a
+    /// `self` field) use this directly; the conflict rules are identical.
+    pub fn observe_presented(
+        &mut self,
+        relay_url: &str,
+        presented: &str,
+        software: Option<&str>,
+        version: Option<&str>,
+        now: u64,
+    ) -> Result<RelayIdentityObservation, RoomIdentityError> {
+        let url = normalize_relay_url(relay_url)?;
         if !is_lowercase_hex(presented, 64) {
             return Err(RoomIdentityError::InvalidRelayIdentity);
         }
@@ -155,16 +178,16 @@ impl TrustedRelayIdentities {
                         relay_pubkey: presented.to_owned(),
                         first_verified_at: now,
                         last_verified_at: now,
-                        software: information.software().map(str::to_owned),
-                        version: information.version().map(str::to_owned),
+                        software: software.map(str::to_owned),
+                        version: version.map(str::to_owned),
                     },
                 );
                 Ok(RelayIdentityObservation::Bound)
             }
             Some(binding) if binding.relay_pubkey == presented => {
                 binding.last_verified_at = binding.last_verified_at.max(now);
-                binding.software = information.software().map(str::to_owned);
-                binding.version = information.version().map(str::to_owned);
+                binding.software = software.map(str::to_owned);
+                binding.version = version.map(str::to_owned);
                 Ok(RelayIdentityObservation::Confirmed)
             }
             Some(binding) => Err(RoomIdentityError::IdentityConflict(Box::new(
@@ -176,8 +199,8 @@ impl TrustedRelayIdentities {
                     last_verified_at: binding.last_verified_at,
                     observed_at: now,
                     trusted_software: binding.software.clone(),
-                    presented_software: information.software().map(str::to_owned),
-                    presented_version: information.version().map(str::to_owned),
+                    presented_software: software.map(str::to_owned),
+                    presented_version: version.map(str::to_owned),
                 },
             ))),
         }
