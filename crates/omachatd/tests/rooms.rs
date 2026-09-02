@@ -319,15 +319,21 @@ async fn rooms_join_receive_send_persist_and_restore() {
     // and a kind 9021 join request signed by the daemon's device identity.
     wait_until(|| !log.events.lock().expect("lock").is_empty()).await;
     let requests = log.requests.lock().expect("lock").clone();
-    let filters = &requests[0];
-    assert_eq!(filters[0], "REQ");
-    let state_filter = filters
-        .as_array()
-        .expect("frame")
+    assert!(requests.iter().all(|frame| frame[0] == "REQ"));
+    // Events and relay state are separate subscriptions; relay29 refuses a
+    // REQ that mixes metadata kinds with others.
+    let state_filter = requests
         .iter()
-        .skip(2)
+        .flat_map(|frame| frame.as_array().expect("frame").iter().skip(2))
         .find(|filter| filter["authors"].is_array())
+        .cloned()
         .expect("state filter");
+    assert!(
+        requests
+            .iter()
+            .flat_map(|frame| frame.as_array().expect("frame").iter().skip(2))
+            .all(|filter| filter["authors"].is_array() || filter["#h"].is_array())
+    );
     assert_eq!(state_filter["authors"], json!([relay]));
     assert_eq!(state_filter["#d"], json!(["omarchy"]));
     let join_request = log.events.lock().expect("lock")[0].clone();

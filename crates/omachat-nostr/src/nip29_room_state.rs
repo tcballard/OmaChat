@@ -342,12 +342,20 @@ fn replace_if_newer<T: Clone>(
     candidate: &T,
     event: impl Fn(&T) -> &SignedEvent,
 ) -> bool {
+    // Relay-authored state (rosters, roles, pins) is streamed by one
+    // authoritative relay connection, which sends its current snapshot last.
+    // On an equal timestamp the later-observed event therefore wins: reference
+    // relays (relay29) content-address their replaceable state, so a roster
+    // that returns to an earlier value carries that earlier value's id, and
+    // NIP-01's lowest-id tie-break would keep a roster the relay no longer
+    // serves. This is last-write-wins over a trusted transport, not the
+    // cross-relay replaceable-event rule. Persisted snapshots hold only the
+    // latest event, so restore never reintroduces a tie.
     let newer = match slot.as_ref() {
         None => true,
         Some(current) => {
             let (current, incoming) = (event(current), event(candidate));
-            incoming.created_at > current.created_at
-                || (incoming.created_at == current.created_at && incoming.id < current.id)
+            incoming.created_at >= current.created_at && incoming.id != current.id
         }
     };
     if newer {

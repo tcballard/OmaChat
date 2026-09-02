@@ -7,9 +7,10 @@ use omachat_nostr::{
     },
     nip29::{GroupUserEvent, group_message},
     nip29_relay::{
-        ROOM_SUBSCRIPTION_ID, RelayIdentityObservation, RoomCoordinate, RoomIdentityError,
-        RoomSubscriptionError, RoomSubscriptionSink, RoomSubscriptionSync, RoomSubscriptions,
-        TrustedRelayIdentities, normalize_relay_url, room_subscription_filters,
+        ROOM_PIN_SUBSCRIPTION_ID, ROOM_STATE_SUBSCRIPTION_ID, ROOM_SUBSCRIPTION_ID,
+        RelayIdentityObservation, RoomCoordinate, RoomIdentityError, RoomSubscriptionError,
+        RoomSubscriptionSink, RoomSubscriptionSync, RoomSubscriptions, TrustedRelayIdentities,
+        normalize_relay_url, room_subscription_filters,
     },
     pool::{RelayPool, RelayPoolConfig},
     relay::{RelayConfig, RelayError, RelayNotification, RelayRoute},
@@ -362,7 +363,7 @@ fn subscription_filters_bind_state_kinds_to_the_relay_key() {
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
     let filters = room_subscription_filters(&relay, &rooms, Some(NOW));
-    assert_eq!(filters.len(), 2);
+    assert_eq!(filters.len(), 3);
     assert_eq!(filters[0]["#h"], json!(["linux", "omarchy"]));
     assert_eq!(filters[0]["since"], json!(NOW));
     assert!(
@@ -374,11 +375,11 @@ fn subscription_filters_bind_state_kinds_to_the_relay_key() {
     );
     assert_eq!(filters[1]["authors"], json!([relay]));
     assert_eq!(filters[1]["#d"], json!(["linux", "omarchy"]));
-    assert_eq!(
-        filters[1]["kinds"],
-        json!([39000, 39001, 39002, 39003, 39005])
-    );
+    assert_eq!(filters[1]["kinds"], json!([39000, 39001, 39002, 39003]));
     assert!(filters[1].get("since").is_none());
+    assert_eq!(filters[2]["kinds"], json!([39005]));
+    assert_eq!(filters[2]["authors"], json!([relay]));
+    assert_eq!(filters[2]["#d"], json!(["linux", "omarchy"]));
 }
 
 #[derive(Default)]
@@ -484,17 +485,42 @@ async fn join_and_leave_refresh_the_room_subscription() {
         .iter()
         .map(|(id, _)| id.as_str())
         .collect::<BTreeSet<_>>();
-    assert_eq!(ids, BTreeSet::from([ROOM_SUBSCRIPTION_ID]));
-    assert_eq!(sink.calls.len(), 4);
+    // Events, relay state, and pins are three subscriptions, issued together.
     assert_eq!(
-        sink.calls[1].1.as_ref().expect("filters")[0]["#h"],
+        ids,
+        BTreeSet::from([
+            ROOM_SUBSCRIPTION_ID,
+            ROOM_STATE_SUBSCRIPTION_ID,
+            ROOM_PIN_SUBSCRIPTION_ID
+        ])
+    );
+    assert_eq!(sink.calls.len(), 12);
+    for triple in sink.calls.chunks(3) {
+        assert_eq!(triple[0].0, ROOM_SUBSCRIPTION_ID);
+        assert_eq!(triple[1].0, ROOM_STATE_SUBSCRIPTION_ID);
+        assert_eq!(triple[2].0, ROOM_PIN_SUBSCRIPTION_ID);
+    }
+    assert_eq!(
+        sink.calls[3].1.as_ref().expect("filters")[0]["#h"],
         json!(["linux", "omarchy"])
     );
     assert_eq!(
-        sink.calls[2].1.as_ref().expect("filters")[0]["#h"],
+        sink.calls[4].1.as_ref().expect("filters")[0]["#d"],
+        json!(["linux", "omarchy"])
+    );
+    assert_eq!(
+        sink.calls[4].1.as_ref().expect("filters")[0]["authors"],
+        json!([relay])
+    );
+    assert_eq!(
+        sink.calls[5].1.as_ref().expect("filters")[0]["kinds"],
+        json!([39005])
+    );
+    assert_eq!(
+        sink.calls[6].1.as_ref().expect("filters")[0]["#h"],
         json!(["linux"])
     );
-    assert!(sink.calls[3].1.is_none());
+    assert!(sink.calls[9..].iter().all(|(_, filters)| filters.is_none()));
     assert!(rooms.applied_rooms().is_empty());
 }
 
@@ -518,14 +544,19 @@ async fn rejected_replacement_rolls_back_to_the_accepted_room_set() {
         &BTreeSet::from(["omarchy".to_owned()])
     );
     assert_eq!(rooms.applied_rooms(), rooms.desired_rooms());
-    // The rejected replacement and the restoring re-subscribe were both issued.
-    assert_eq!(sink.calls.len(), 3);
+    // The rejected replacement and the restoring re-subscribe were both
+    // issued, each as events, state, and pin subscriptions.
+    assert_eq!(sink.calls.len(), 9);
     assert_eq!(
-        sink.calls[1].1.as_ref().expect("filters")[0]["#h"],
+        sink.calls[3].1.as_ref().expect("filters")[0]["#h"],
         json!(["forbidden", "omarchy"])
     );
     assert_eq!(
-        sink.calls[2].1.as_ref().expect("filters")[0]["#h"],
+        sink.calls[6].1.as_ref().expect("filters")[0]["#h"],
+        json!(["omarchy"])
+    );
+    assert_eq!(
+        sink.calls[7].1.as_ref().expect("filters")[0]["#d"],
         json!(["omarchy"])
     );
     assert_eq!(
@@ -549,7 +580,12 @@ async fn rejected_replacement_rolls_back_to_the_accepted_room_set() {
     fresh.join("omarchy").expect("join");
     assert!(fresh.sync(&mut fresh_sink).await.is_err());
     assert!(fresh.desired_rooms().is_empty());
-    assert!(fresh_sink.calls[1].1.is_none());
+    assert_eq!(fresh_sink.calls.len(), 6);
+    assert!(
+        fresh_sink.calls[3..]
+            .iter()
+            .all(|(_, filters)| filters.is_none())
+    );
 }
 
 fn relay_config(address: std::net::SocketAddr) -> RelayConfig {
@@ -614,20 +650,28 @@ fn room_event(secret: &[u8; 32], group: &str, content: &str) -> SignedEvent {
     .expect("signed")
 }
 
-/// Accepts twice: the first session is dropped after the REQ arrives, the
-/// second session records the replayed REQ.
-async fn reconnecting_relay(listener: TcpListener) -> (Value, Value) {
+/// Accepts twice: the first session is dropped after both REQs arrive, the
+/// second session records the replayed REQs.
+async fn reconnecting_relay(listener: TcpListener) -> (Vec<Value>, Vec<Value>) {
     let (stream, _) = listener.accept().await.expect("accept");
     let mut socket = accept_async(stream).await.expect("handshake");
-    let first = next_json(&mut socket).await;
+    let mut first = Vec::new();
+    for _ in 0..3 {
+        first.push(next_json(&mut socket).await);
+    }
     drop(socket);
     let (stream, _) = listener.accept().await.expect("accept again");
     let mut socket = accept_async(stream).await.expect("handshake again");
-    let second = next_json(&mut socket).await;
-    socket
-        .send(Message::Text(json!(["EOSE", second[1]]).to_string().into()))
-        .await
-        .expect("eose");
+    let mut second = Vec::new();
+    for _ in 0..3 {
+        second.push(next_json(&mut socket).await);
+    }
+    for frame in &second {
+        socket
+            .send(Message::Text(json!(["EOSE", frame[1]]).to_string().into()))
+            .await
+            .expect("eose");
+    }
     finish_on_close(socket).await;
     (first, second)
 }
@@ -657,7 +701,14 @@ async fn reconnect_restores_every_room_subscription() {
                 .expect("notification")
                 .notification
             {
-                assert_eq!(subscription_id, ROOM_SUBSCRIPTION_ID);
+                assert!(
+                    [
+                        ROOM_SUBSCRIPTION_ID,
+                        ROOM_STATE_SUBSCRIPTION_ID,
+                        ROOM_PIN_SUBSCRIPTION_ID
+                    ]
+                    .contains(&subscription_id.as_str())
+                );
                 break;
             }
         }
@@ -669,11 +720,34 @@ async fn reconnect_restores_every_room_subscription() {
         outcome.expect("shutdown");
     }
     let (first, second) = server.await.expect("server");
-    assert_eq!(first[0], "REQ");
-    assert_eq!(first[1], ROOM_SUBSCRIPTION_ID);
-    assert_eq!(second, first, "replayed subscription must be identical");
-    assert_eq!(first[2]["#h"], json!(["linux", "omarchy"]));
-    assert_eq!(first[3]["authors"], json!([pubkey(&RELAY_SECRET)]));
+    let by_id = |frames: &[Value]| {
+        frames
+            .iter()
+            .map(|frame| {
+                assert_eq!(frame[0], "REQ");
+                (frame[1].as_str().expect("id").to_owned(), frame.clone())
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let first = by_id(&first);
+    let second = by_id(&second);
+    assert_eq!(second, first, "replayed subscriptions must be identical");
+    assert_eq!(
+        first.keys().cloned().collect::<Vec<_>>(),
+        vec![
+            ROOM_SUBSCRIPTION_ID.to_owned(),
+            ROOM_PIN_SUBSCRIPTION_ID.to_owned(),
+            ROOM_STATE_SUBSCRIPTION_ID.to_owned()
+        ]
+    );
+    assert_eq!(
+        first[ROOM_SUBSCRIPTION_ID][2]["#h"],
+        json!(["linux", "omarchy"])
+    );
+    assert_eq!(
+        first[ROOM_STATE_SUBSCRIPTION_ID][2]["authors"],
+        json!([pubkey(&RELAY_SECRET)])
+    );
 }
 
 async fn delivering_relay(
@@ -683,8 +757,11 @@ async fn delivering_relay(
 ) {
     let (stream, _) = listener.accept().await.expect("accept");
     let mut socket = accept_async(stream).await.expect("handshake");
-    let request = next_json(&mut socket).await;
-    assert_eq!(request[0], "REQ");
+    // Events, state, and pins arrive as three REQs before anything is served.
+    for _ in 0..3 {
+        let request = next_json(&mut socket).await;
+        assert_eq!(request[0], "REQ");
+    }
     for event in events {
         socket
             .send(Message::Text(
