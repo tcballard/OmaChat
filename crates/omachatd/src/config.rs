@@ -181,6 +181,46 @@ impl RelayListPublicationConfig {
     }
 }
 
+/// NIP-29 room relays. Each relay is bound to the signing identity its NIP-11
+/// document declares and reduced independently; a URL change with the same
+/// verified key is the same relay, the same group ID under another key is a
+/// different room.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct RoomsConfig {
+    /// Room relay URLs: `wss://` or numeric-loopback `ws://`, no credentials,
+    /// query, or fragment.
+    pub relays: Vec<String>,
+    /// Directory for room-state generation anchors. It must lie outside the
+    /// daemon state directory; when omitted the daemon uses a sibling of the
+    /// state directory named `<state>-anchors`.
+    pub anchor_directory: Option<std::path::PathBuf>,
+}
+
+impl RoomsConfig {
+    pub fn canonical_relays(&self) -> Result<Vec<String>, CoreError> {
+        let mut relays = self
+            .relays
+            .iter()
+            .map(|relay| canonical_publication_url(relay))
+            .collect::<Result<Vec<_>, CoreError>>()?;
+        relays.sort_unstable();
+        relays.dedup();
+        Ok(relays)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        if self.relays.len() > 16 {
+            return Err(CoreError::InvalidConfig);
+        }
+        let canonical = self.canonical_relays()?;
+        if canonical.len() != self.relays.len() {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DaemonConfig {
@@ -204,6 +244,9 @@ pub struct DaemonConfig {
     /// Public geohash-chat nickname. This is deliberately independent from
     /// the persistent global account profile.
     pub nickname: Option<String>,
+    /// Optional NIP-29 room relays. Omission means no rooms; the geochat and
+    /// private-message relay sets are never reused for rooms.
+    pub rooms: Option<RoomsConfig>,
 }
 
 impl DaemonConfig {
@@ -254,6 +297,9 @@ impl DaemonConfig {
         }
         if let Some(registry) = &self.registry {
             registry.validate()?;
+        }
+        if let Some(rooms) = &self.rooms {
+            rooms.validate()?;
         }
         if self
             .nickname

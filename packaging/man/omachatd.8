@@ -4,7 +4,7 @@ omachatd \- per-user OmaChat daemon
 .SH SYNOPSIS
 .B omachatd
 [\fB--config\fR \fIPATH\fR] [\fB--state\fR \fIPATH\fR]
-[\fB--socket\fR \fIPATH\fR] [\fB--file-key\fR]
+[\fB--socket\fR \fIPATH\fR] [\fB--anchors\fR \fIPATH\fR] [\fB--file-key\fR]
 .SH DESCRIPTION
 Owns identities, sealed state, the Nostr transport, and the versioned IPC
 socket.
@@ -24,6 +24,17 @@ Each ws or wss relay must authenticate the persisted device Nostr principal
 with NIP-42 before receiving its recipient-only kind-1059 subscription. An
 empty array disables this inbox. Relay changes require a daemon restart. A
 configured relay provides reachability and is not treated as protocol authority.
+.SH ROOMS
+The optional rooms JSON object enables standard NIP-29 rooms: rooms.relays lists
+room relays and rooms.anchor_directory optionally places the room-state
+generation anchors. Each relay is bound to the signing identity its NIP-11
+document declares, and rooms are addressed as room:RELAY_PUBKEY:GROUP so the
+same group ID under another relay key is a different room. Membership is the
+relay's policy decision; the daemon only subscribes and sends join, leave, and
+message events signed by the device Nostr identity. Room state is sealed per
+relay identity and its generation is anchored outside the state directory
+(--anchors, default <state>-anchors) so a state directory restored from backup
+is refused instead of silently rewound. Relay changes require a daemon restart.
 .SH STORAGE
 Secret Service is preferred. --file-key selects a 0600 master key in the
 0700 state directory. A missing selected key is fatal; it is never silently

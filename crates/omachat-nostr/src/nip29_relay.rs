@@ -23,7 +23,17 @@ use std::{
 };
 use url::Url;
 
+/// Subscription carrying user and moderation events (`h`-tagged kinds).
 pub const ROOM_SUBSCRIPTION_ID: &str = "omachat-nip29-rooms";
+/// Subscription carrying relay-authored group state (`39000`-`39003`).
+///
+/// Room events, group state, and pin lists are deliberately three
+/// subscriptions: relay29, the reference NIP-29 implementation, refuses a
+/// `REQ` that mixes the metadata kinds it knows (`39000`-`39003`) with any
+/// other kind, and it counts `39005` pin lists as "other".
+pub const ROOM_STATE_SUBSCRIPTION_ID: &str = "omachat-nip29-rooms-state";
+/// Subscription carrying relay-authored pin lists (`39005`).
+pub const ROOM_PIN_SUBSCRIPTION_ID: &str = "omachat-nip29-rooms-pins";
 
 /// User and moderation kinds carried with an `h` tag.
 pub const ROOM_EVENT_KINDS: [u32; 11] = [
@@ -31,7 +41,9 @@ pub const ROOM_EVENT_KINDS: [u32; 11] = [
 ];
 
 /// Relay-authored addressable state kinds carried with a `d` tag.
-pub const ROOM_STATE_KINDS: [u32; 5] = [39000, 39001, 39002, 39003, 39005];
+pub const ROOM_STATE_KINDS: [u32; 4] = [39000, 39001, 39002, 39003];
+/// Relay-authored pin list kind, subscribed separately (see above).
+pub const ROOM_PIN_KINDS: [u32; 1] = [39005];
 
 /// Relay-key-bound room coordinate.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -143,6 +155,29 @@ impl TrustedRelayIdentities {
         let presented = information
             .self_pubkey()
             .ok_or_else(|| RoomIdentityError::MissingRelayIdentity { url: url.clone() })?;
+        self.observe_presented(
+            relay_url,
+            presented,
+            information.software(),
+            information.version(),
+            now,
+        )
+    }
+
+    /// Bind or confirm a relay URL against an explicitly chosen presented key.
+    ///
+    /// Callers that select the key by their own policy (for example falling
+    /// back to NIP-11 `pubkey` for a relay that advertises NIP-29 without a
+    /// `self` field) use this directly; the conflict rules are identical.
+    pub fn observe_presented(
+        &mut self,
+        relay_url: &str,
+        presented: &str,
+        software: Option<&str>,
+        version: Option<&str>,
+        now: u64,
+    ) -> Result<RelayIdentityObservation, RoomIdentityError> {
+        let url = normalize_relay_url(relay_url)?;
         if !is_lowercase_hex(presented, 64) {
             return Err(RoomIdentityError::InvalidRelayIdentity);
         }
@@ -155,16 +190,16 @@ impl TrustedRelayIdentities {
                         relay_pubkey: presented.to_owned(),
                         first_verified_at: now,
                         last_verified_at: now,
-                        software: information.software().map(str::to_owned),
-                        version: information.version().map(str::to_owned),
+                        software: software.map(str::to_owned),
+                        version: version.map(str::to_owned),
                     },
                 );
                 Ok(RelayIdentityObservation::Bound)
             }
             Some(binding) if binding.relay_pubkey == presented => {
                 binding.last_verified_at = binding.last_verified_at.max(now);
-                binding.software = information.software().map(str::to_owned);
-                binding.version = information.version().map(str::to_owned);
+                binding.software = software.map(str::to_owned);
+                binding.version = version.map(str::to_owned);
                 Ok(RelayIdentityObservation::Confirmed)
             }
             Some(binding) => Err(RoomIdentityError::IdentityConflict(Box::new(
@@ -176,8 +211,8 @@ impl TrustedRelayIdentities {
                     last_verified_at: binding.last_verified_at,
                     observed_at: now,
                     trusted_software: binding.software.clone(),
-                    presented_software: information.software().map(str::to_owned),
-                    presented_version: information.version().map(str::to_owned),
+                    presented_software: software.map(str::to_owned),
+                    presented_version: version.map(str::to_owned),
                 },
             ))),
         }
@@ -304,16 +339,9 @@ pub fn normalize_relay_url(relay_url: &str) -> Result<String, RoomIdentityError>
     Ok(text)
 }
 
-/// Filters covering the configured rooms on one verified relay.
-///
-/// Relay-authored state kinds are restricted to the verified relay key, so a
-/// forged `39xxx` event from another author is never requested.
+/// Event filters for the configured rooms: user and moderation kinds by `h`.
 #[must_use]
-pub fn room_subscription_filters(
-    relay_pubkey: &str,
-    group_ids: &BTreeSet<String>,
-    since: Option<u64>,
-) -> Vec<Value> {
+pub fn room_event_filters(group_ids: &BTreeSet<String>, since: Option<u64>) -> Vec<Value> {
     if group_ids.is_empty() {
         return Vec::new();
     }
@@ -325,12 +353,54 @@ pub fn room_subscription_filters(
     if let Some(since) = since {
         events["since"] = json!(since);
     }
-    let state = json!({
+    vec![events]
+}
+
+/// State filters for the configured rooms on one verified relay.
+///
+/// Relay-authored state kinds are restricted to the verified relay key, so a
+/// forged `39xxx` event from another author is never requested.
+#[must_use]
+pub fn room_state_filters(relay_pubkey: &str, group_ids: &BTreeSet<String>) -> Vec<Value> {
+    if group_ids.is_empty() {
+        return Vec::new();
+    }
+    let groups = group_ids.iter().cloned().collect::<Vec<_>>();
+    vec![json!({
         "kinds": ROOM_STATE_KINDS,
         "authors": [relay_pubkey],
         "#d": groups,
-    });
-    vec![events, state]
+    })]
+}
+
+/// Pin list filters for the configured rooms, restricted to the relay key.
+#[must_use]
+pub fn room_pin_filters(relay_pubkey: &str, group_ids: &BTreeSet<String>) -> Vec<Value> {
+    if group_ids.is_empty() {
+        return Vec::new();
+    }
+    let groups = group_ids.iter().cloned().collect::<Vec<_>>();
+    vec![json!({
+        "kinds": ROOM_PIN_KINDS,
+        "authors": [relay_pubkey],
+        "#d": groups,
+    })]
+}
+
+/// Every filter set: events, then state, then pins. Send them as three
+/// subscriptions ([`ROOM_SUBSCRIPTION_ID`], [`ROOM_STATE_SUBSCRIPTION_ID`],
+/// [`ROOM_PIN_SUBSCRIPTION_ID`]); relays refuse a single `REQ` that mixes
+/// metadata kinds with others.
+#[must_use]
+pub fn room_subscription_filters(
+    relay_pubkey: &str,
+    group_ids: &BTreeSet<String>,
+    since: Option<u64>,
+) -> Vec<Value> {
+    let mut filters = room_event_filters(group_ids, since);
+    filters.extend(room_state_filters(relay_pubkey, group_ids));
+    filters.extend(room_pin_filters(relay_pubkey, group_ids));
+    filters
 }
 
 /// Where room subscriptions are sent. [`RelayPool`] is the production sink.
@@ -369,6 +439,8 @@ impl RoomSubscriptionSink for RelayPool {
 pub struct RoomSubscriptions {
     relay_pubkey: String,
     subscription_id: String,
+    state_subscription_id: String,
+    pin_subscription_id: String,
     since: Option<u64>,
     desired: BTreeSet<String>,
     applied: BTreeSet<String>,
@@ -382,6 +454,8 @@ impl RoomSubscriptions {
         Ok(Self {
             relay_pubkey,
             subscription_id: ROOM_SUBSCRIPTION_ID.to_owned(),
+            state_subscription_id: ROOM_STATE_SUBSCRIPTION_ID.to_owned(),
+            pin_subscription_id: ROOM_PIN_SUBSCRIPTION_ID.to_owned(),
             since,
             desired: BTreeSet::new(),
             applied: BTreeSet::new(),
@@ -406,9 +480,22 @@ impl RoomSubscriptions {
         &self.relay_pubkey
     }
 
+    /// Subscription ID carrying room events.
     #[must_use]
     pub fn subscription_id(&self) -> &str {
         &self.subscription_id
+    }
+
+    /// Subscription ID carrying relay-authored room state.
+    #[must_use]
+    pub fn state_subscription_id(&self) -> &str {
+        &self.state_subscription_id
+    }
+
+    /// Subscription ID carrying relay-authored pin lists.
+    #[must_use]
+    pub fn pin_subscription_id(&self) -> &str {
+        &self.pin_subscription_id
     }
 
     #[must_use]
@@ -427,6 +514,61 @@ impl RoomSubscriptions {
         room_subscription_filters(&self.relay_pubkey, &self.desired, self.since)
     }
 
+    #[must_use]
+    pub fn desired_event_filters(&self) -> Vec<Value> {
+        room_event_filters(&self.desired, self.since)
+    }
+
+    #[must_use]
+    pub fn desired_state_filters(&self) -> Vec<Value> {
+        room_state_filters(&self.relay_pubkey, &self.desired)
+    }
+
+    /// Apply one room set as the three subscriptions and merge rejections by
+    /// relay index.
+    async fn apply<S: RoomSubscriptionSink>(
+        &self,
+        sink: &mut S,
+        rooms: &BTreeSet<String>,
+    ) -> Vec<(usize, RelayError)> {
+        let results = if rooms.is_empty() {
+            vec![
+                sink.close_subscription(self.subscription_id.clone()).await,
+                sink.close_subscription(self.state_subscription_id.clone())
+                    .await,
+                sink.close_subscription(self.pin_subscription_id.clone())
+                    .await,
+            ]
+        } else {
+            vec![
+                sink.subscribe(
+                    self.subscription_id.clone(),
+                    room_event_filters(rooms, self.since),
+                )
+                .await,
+                sink.subscribe(
+                    self.state_subscription_id.clone(),
+                    room_state_filters(&self.relay_pubkey, rooms),
+                )
+                .await,
+                sink.subscribe(
+                    self.pin_subscription_id.clone(),
+                    room_pin_filters(&self.relay_pubkey, rooms),
+                )
+                .await,
+            ]
+        };
+        let mut rejections: Vec<(usize, RelayError)> = Vec::new();
+        for outcome in &results {
+            for rejection in collect_rejections(outcome) {
+                if !rejections.iter().any(|(index, _)| *index == rejection.0) {
+                    rejections.push(rejection);
+                }
+            }
+        }
+        rejections
+    }
+
     /// Make the sink match the desired room set.
     ///
     /// If any relay rejects the replacement, the desired set is reverted to
@@ -439,13 +581,8 @@ impl RoomSubscriptions {
         if self.desired == self.applied {
             return Ok(RoomSubscriptionSync::Unchanged);
         }
-        let results = if self.desired.is_empty() {
-            sink.close_subscription(self.subscription_id.clone()).await
-        } else {
-            sink.subscribe(self.subscription_id.clone(), self.desired_filters())
-                .await
-        };
-        let rejections = collect_rejections(&results);
+        let desired = self.desired.clone();
+        let rejections = self.apply(sink, &desired).await;
         if rejections.is_empty() {
             self.applied = self.desired.clone();
             return Ok(if self.applied.is_empty() {
@@ -458,13 +595,8 @@ impl RoomSubscriptions {
         }
 
         self.desired = self.applied.clone();
-        let restore = if self.applied.is_empty() {
-            sink.close_subscription(self.subscription_id.clone()).await
-        } else {
-            sink.subscribe(self.subscription_id.clone(), self.desired_filters())
-                .await
-        };
-        let restore_failures = collect_rejections(&restore);
+        let applied = self.applied.clone();
+        let restore_failures = self.apply(sink, &applied).await;
         if restore_failures.is_empty() {
             Err(RoomSubscriptionError::Rejected { rejections })
         } else {

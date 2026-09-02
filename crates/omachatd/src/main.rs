@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(options) => options,
         Err(error) => {
             eprintln!(
-                "{error}\nusage: omachatd [--config PATH] [--state PATH] [--socket PATH] [--file-key]"
+                "{error}\nusage: omachatd [--config PATH] [--state PATH] [--socket PATH] [--anchors PATH] [--file-key]"
             );
             return ExitCode::from(2);
         }
@@ -42,6 +42,7 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     }
     let events = EventHub::default();
     let core = DaemonCore::open(&options.state, config, events.clone()).await?;
+    let rooms = core.start_rooms(&options.state, options.anchor_directory())?;
     let (inbound_sender, mut inbound_receiver) = tokio::sync::mpsc::channel(256);
     let relays = core.relay_urls();
     let nostr = if relays.is_empty() {
@@ -117,6 +118,9 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     });
     let server_result = server.run(shutdown_rx).await;
     core.prepare_for_shutdown().await;
+    if let Some(service) = rooms {
+        service.shutdown().await;
+    }
     if let Some(service) = dm_inbox {
         let _ = service.shutdown().await;
     }
@@ -137,10 +141,25 @@ struct Options {
     config: Option<PathBuf>,
     state: PathBuf,
     socket: PathBuf,
+    anchors: Option<PathBuf>,
     file_key: bool,
 }
 
 impl Options {
+    /// Room-state anchors live beside, never inside, the sealed state
+    /// directory so restoring that directory from backup cannot rewind them.
+    fn anchor_directory(&self) -> PathBuf {
+        if let Some(anchors) = &self.anchors {
+            return anchors.clone();
+        }
+        let mut name = self.state.file_name().map_or_else(
+            || std::ffi::OsString::from("omachat"),
+            std::ffi::OsStr::to_os_string,
+        );
+        name.push("-anchors");
+        self.state.with_file_name(name)
+    }
+
     fn parse(arguments: &[std::ffi::OsString]) -> Result<Self, String> {
         let state = env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
@@ -155,12 +174,13 @@ impl Options {
             config: None,
             state,
             socket,
+            anchors: None,
             file_key: false,
         };
         let mut index = 0;
         while index < arguments.len() {
             match arguments[index].to_str() {
-                Some("--config" | "--state" | "--socket") => {
+                Some("--config" | "--state" | "--socket" | "--anchors") => {
                     let flag = arguments[index].to_string_lossy().into_owned();
                     let value = arguments
                         .get(index + 1)
@@ -169,6 +189,7 @@ impl Options {
                         "--config" => options.config = Some(PathBuf::from(value)),
                         "--state" => options.state = PathBuf::from(value),
                         "--socket" => options.socket = PathBuf::from(value),
+                        "--anchors" => options.anchors = Some(PathBuf::from(value)),
                         _ => unreachable!(),
                     }
                     index += 2;

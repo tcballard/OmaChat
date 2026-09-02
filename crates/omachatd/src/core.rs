@@ -196,6 +196,9 @@ impl RegistryEvidenceBoundary {
     }
 }
 
+/// How far back a room subscription asks for messages on first sync.
+const ROOM_HISTORY_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
+
 struct CoreInner {
     store: Arc<SealedStore>,
     identity: Mutex<Option<IdentitySecrets>>,
@@ -206,6 +209,7 @@ struct CoreInner {
     outbox_drain: tokio::sync::Mutex<()>,
     panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
+    rooms: Mutex<Option<crate::RoomsHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
     profile_publication: Mutex<Option<crate::ProfilePublicationCoordinator>>,
     relay_list_publication: tokio::sync::Mutex<Option<crate::RelayListPublicationRuntime>>,
@@ -251,6 +255,7 @@ struct DaemonStatus<'a> {
     joined_geohashes: Vec<String>,
     relay_count: usize,
     dm_relay_count: usize,
+    room_relay_count: usize,
     profile_publication_state: &'static str,
     profile_publication_acknowledged_relays: usize,
     profile_publication_required_acknowledgements: usize,
@@ -371,6 +376,7 @@ impl DaemonCore {
                 outbox_drain: tokio::sync::Mutex::new(()),
                 panic: PanicLifecycle::default(),
                 nostr: Mutex::new(None),
+                rooms: Mutex::new(None),
                 dm_inbox: Mutex::new(None),
                 profile_publication: Mutex::new(profile_publication),
                 relay_list_publication: tokio::sync::Mutex::new(relay_list_publication),
@@ -1355,6 +1361,7 @@ impl DaemonCore {
                 || current.profile_publication != replacement.profile_publication
                 || current.relay_list_publication != replacement.relay_list_publication
                 || current.registry != replacement.registry
+                || current.rooms != replacement.rooms
         };
         if relay_change_requires_restart {
             return Err(CoreError::RestartRequired);
@@ -1697,6 +1704,13 @@ impl DaemonCore {
             }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
+            Command::JoinRoom {
+                relay,
+                group_id,
+                invite_code,
+            } => self.join_room(&relay, group_id, invite_code).await,
+            Command::LeaveRoom { relay, group_id } => self.leave_room(&relay, group_id).await,
+            Command::ListRooms => self.list_rooms().await,
             Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),
             Command::Panic { .. } | Command::Hello { .. } => Err(CoreError::InvalidCommand),
         }
@@ -1819,6 +1833,7 @@ impl DaemonCore {
             joined_geohashes: state.joined.iter().cloned().collect(),
             relay_count: config.relays.len(),
             dm_relay_count: config.dm_relays.len(),
+            room_relay_count: config.rooms.as_ref().map_or(0, |rooms| rooms.relays.len()),
             profile_publication_state,
             profile_publication_acknowledged_relays,
             profile_publication_required_acknowledgements,
@@ -1964,6 +1979,11 @@ impl DaemonCore {
             return Err(CoreError::InvalidMessage);
         }
         let now = unix_time()?;
+        if let Some((relay_pubkey, group_id)) = crate::parse_room_conversation(conversation) {
+            return self
+                .send_room_message(relay_pubkey, group_id, text, now)
+                .await;
+        }
         if let Ok(geohash) = Geohash::parse(conversation.trim_start_matches('#')) {
             if !self
                 .inner
@@ -2594,6 +2614,211 @@ impl DaemonCore {
                 payload,
             });
         }
+    }
+
+    /// Start the NIP-29 room runtime when room relays are configured.
+    ///
+    /// The generation anchor defaults to `default_anchor_directory`, which the
+    /// caller places outside the sealed state directory.
+    pub fn start_rooms(
+        &self,
+        state_directory: &Path,
+        default_anchor_directory: std::path::PathBuf,
+    ) -> Result<Option<crate::RoomService>, CoreError> {
+        let rooms = self
+            .inner
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .rooms
+            .clone();
+        let Some(rooms) = rooms else {
+            return Ok(None);
+        };
+        let relays = rooms.canonical_relays()?;
+        if relays.is_empty() {
+            return Ok(None);
+        }
+        let store_context = {
+            let identity = self.identity()?;
+            identity
+                .as_ref()
+                .expect("checked identity")
+                .device_nostr_identity()
+                .map_err(CoreError::Identity)?
+                .public_key_hex()
+        };
+        let publisher_core = self.clone();
+        let publisher: crate::EventPublisher = Arc::new(move |topic, payload| {
+            publisher_core.publish_topic_event(topic, payload);
+        });
+        let service = crate::RoomService::spawn(
+            crate::RoomServiceOptions {
+                relays,
+                route: omachat_nostr::relay::RelayRoute::Direct,
+                anchor_directory: rooms
+                    .anchor_directory
+                    .clone()
+                    .unwrap_or(default_anchor_directory),
+                state_directory: state_directory.to_owned(),
+                store_context,
+                history_window_seconds: ROOM_HISTORY_WINDOW_SECONDS,
+            },
+            Arc::clone(&self.inner.store),
+            publisher,
+        )
+        .map_err(CoreError::RoomService)?;
+        *self
+            .inner
+            .rooms
+            .lock()
+            .expect("rooms handle mutex poisoned") = Some(service.handle());
+        Ok(Some(service))
+    }
+
+    fn publish_topic_event(&self, topic: omachat_proto::ipc::Topic, payload: serde_json::Value) {
+        self.inner.events.publish(Event {
+            version: VERSION,
+            sequence: self.inner.sequence.fetch_add(1, Ordering::Relaxed),
+            topic,
+            payload,
+        });
+    }
+
+    fn rooms_handle(&self) -> Result<crate::RoomsHandle, CoreError> {
+        self.inner
+            .rooms
+            .lock()
+            .expect("rooms handle mutex poisoned")
+            .clone()
+            .ok_or(CoreError::RoomsUnconfigured)
+    }
+
+    /// Sign a room event with the device Nostr identity. The secret never
+    /// leaves this scope.
+    fn sign_room_event(
+        &self,
+        build: impl FnOnce(String) -> Result<omachat_nostr::event::UnsignedEvent, CoreError>,
+    ) -> Result<SignedEvent, CoreError> {
+        let auxiliary = random_bytes()?;
+        let identity_guard = self.identity()?;
+        let nostr = identity_guard
+            .as_ref()
+            .expect("checked identity")
+            .device_nostr_identity()
+            .map_err(CoreError::Identity)?;
+        build(nostr.public_key_hex())?
+            .sign_with_aux(nostr.private_key(), &auxiliary, &EventLimits::default())
+            .map_err(|_| CoreError::Nostr)
+    }
+
+    async fn join_room(
+        &self,
+        relay: &str,
+        group_id: String,
+        invite_code: Option<String>,
+    ) -> Result<serde_json::Value, CoreError> {
+        if group_id.is_empty() || group_id.len() > 128 {
+            return Err(CoreError::Room(crate::RoomError::InvalidGroup));
+        }
+        let relay = self
+            .rooms_handle()?
+            .relay(relay)
+            .cloned()
+            .ok_or(CoreError::RoomRelayUnknown)?;
+        let now = unix_time()?;
+        let request = self.sign_room_event(|pubkey| {
+            omachat_nostr::nip29::join_request(
+                pubkey,
+                now,
+                &group_id,
+                String::new(),
+                invite_code.as_deref(),
+                &[],
+                &EventLimits::default(),
+            )
+            .map_err(|_| CoreError::Room(crate::RoomError::InvalidGroup))
+        })?;
+        let result = relay
+            .join(group_id, request)
+            .await
+            .map_err(CoreError::Room)?;
+        self.publish_status_event();
+        Ok(result)
+    }
+
+    async fn leave_room(
+        &self,
+        relay: &str,
+        group_id: String,
+    ) -> Result<serde_json::Value, CoreError> {
+        if group_id.is_empty() || group_id.len() > 128 {
+            return Err(CoreError::Room(crate::RoomError::InvalidGroup));
+        }
+        let relay = self
+            .rooms_handle()?
+            .relay(relay)
+            .cloned()
+            .ok_or(CoreError::RoomRelayUnknown)?;
+        let now = unix_time()?;
+        let request = self.sign_room_event(|pubkey| {
+            omachat_nostr::nip29::leave_request(
+                pubkey,
+                now,
+                &group_id,
+                String::new(),
+                &[],
+                &EventLimits::default(),
+            )
+            .map_err(|_| CoreError::Room(crate::RoomError::InvalidGroup))
+        })?;
+        let result = relay
+            .leave(group_id, request)
+            .await
+            .map_err(CoreError::Room)?;
+        self.publish_status_event();
+        Ok(result)
+    }
+
+    async fn list_rooms(&self) -> Result<serde_json::Value, CoreError> {
+        let rooms = self.rooms_handle()?;
+        Ok(serde_json::json!({ "relays": rooms.describe_all().await }))
+    }
+
+    async fn send_room_message(
+        &self,
+        relay_pubkey: &str,
+        group_id: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<serde_json::Value, CoreError> {
+        let relay = self
+            .rooms_handle()?
+            .relay_for_identity(relay_pubkey)
+            .cloned()
+            .ok_or(CoreError::RoomRelayUnknown)?;
+        let event = self.sign_room_event(|pubkey| {
+            omachat_nostr::nip29::group_message(
+                pubkey,
+                now,
+                group_id,
+                text.to_owned(),
+                &[],
+                &EventLimits::default(),
+            )
+            .map_err(|_| CoreError::InvalidMessage)
+        })?;
+        let result = relay
+            .publish(group_id.to_owned(), event.clone())
+            .await
+            .map_err(CoreError::Room)?;
+        self.publish_message_event(
+            &event.id,
+            &crate::room_conversation_id(relay_pubkey, group_id),
+            text,
+            "stored",
+        );
+        Ok(result)
     }
 
     fn publish_message_event(&self, id: &str, conversation: &str, text: &str, delivery: &str) {

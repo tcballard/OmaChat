@@ -266,7 +266,7 @@ The interoperability target is:
 | General relay discovery | NIP-65 kind 10002 | Signature-verified, bounded discovery implemented |
 | Private inbox discovery | NIP-17 kind 10050 | Signature-verified, bounded discovery implemented |
 | Interoperable private messages | NIP-17 + NIP-44 + NIP-59 | Standard codec and hermetic two-relay NIP-42 delivery probe implemented alongside the proprietary envelope; external relay and cross-application probes remain |
-| Relay-local rooms | NIP-29 | Not implemented in OmaChat |
+| Relay-local rooms | NIP-29 | Implemented: verified relay identity, sealed room state, daemon join/leave/send; membership remains relay policy |
 | Owner-to-agent provenance | No adopted general standard | OmaChat object proposed; Buzz NIP-OA adapter is later work |
 
 Room membership is a policy decision made by the room's authoritative relay,
@@ -292,7 +292,7 @@ owner attestation. NIP-OA preserves the agent's event pubkey as author.
 | Identity | Structurally compatible: both use the agent Nostr pubkey | Same external key imported without regeneration and signatures verified |
 | Relay authentication | Not compatible yet | OmaChat NIP-42 client authenticates to a Buzz relay and handles restricted outcomes |
 | Direct messages | Not compatible yet | Standard NIP-17/44/59 vectors plus a concrete cross-relay or Buzz probe |
-| Rooms/channels | Not compatible yet | NIP-29 event support and explicit Buzz membership/admission |
+| Rooms/channels | Standard NIP-29 rooms on a configured room relay | Explicit Buzz membership/admission semantics beyond relay policy |
 | Owner/delegation | Semantics align, credentials do not | Explicit adapter and vectors, or a documented decision not to map them |
 
 Buzz NIP-OA uses a BIP-340 Nostr owner key and a reusable event `auth` tag.

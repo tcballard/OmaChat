@@ -209,6 +209,26 @@ pub fn parse_input(
                 conversation: conversation.into(),
                 text: text.into(),
             })),
+            (Some("join-room"), Some(relay), Some(rest)) => {
+                let mut parts = rest.split_whitespace();
+                let group_id = parts.next().ok_or("join-room needs RELAY GROUP [CODE]")?;
+                let invite_code = parts.next().map(str::to_owned);
+                if parts.next().is_some() {
+                    return Err("join-room needs RELAY GROUP [CODE]".into());
+                }
+                Ok(Some(Command::JoinRoom {
+                    relay: relay.into(),
+                    group_id: group_id.into(),
+                    invite_code,
+                }))
+            }
+            (Some("leave-room"), Some(relay), Some(group_id)) if !group_id.contains(' ') => {
+                Ok(Some(Command::LeaveRoom {
+                    relay: relay.into(),
+                    group_id: group_id.into(),
+                }))
+            }
+            (Some("rooms"), None, None) => Ok(Some(Command::ListRooms)),
             (Some("quit" | "detach"), None, None) => Ok(None),
             _ => Err("unknown or incomplete command".into()),
         };
@@ -218,4 +238,45 @@ pub fn parse_input(
         conversation: conversation.into(),
         text: input.into(),
     }))
+}
+
+#[cfg(test)]
+mod room_command_tests {
+    use super::*;
+
+    #[test]
+    fn room_slash_commands_parse() {
+        assert_eq!(
+            parse_input("/join-room wss://r.example omarchy", None),
+            Ok(Some(Command::JoinRoom {
+                relay: "wss://r.example".into(),
+                group_id: "omarchy".into(),
+                invite_code: None,
+            }))
+        );
+        assert_eq!(
+            parse_input("/join-room wss://r.example omarchy welcome", None),
+            Ok(Some(Command::JoinRoom {
+                relay: "wss://r.example".into(),
+                group_id: "omarchy".into(),
+                invite_code: Some("welcome".into()),
+            }))
+        );
+        assert!(parse_input("/join-room wss://r.example omarchy a b", None).is_err());
+        assert_eq!(
+            parse_input("/leave-room wss://r.example omarchy", None),
+            Ok(Some(Command::LeaveRoom {
+                relay: "wss://r.example".into(),
+                group_id: "omarchy".into(),
+            }))
+        );
+        assert_eq!(parse_input("/rooms", None), Ok(Some(Command::ListRooms)));
+        assert_eq!(
+            parse_input("hello", Some("room:aa:omarchy")),
+            Ok(Some(Command::Send {
+                conversation: "room:aa:omarchy".into(),
+                text: "hello".into(),
+            }))
+        );
+    }
 }

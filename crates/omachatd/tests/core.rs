@@ -122,6 +122,7 @@ async fn invalid_reload_keeps_the_prior_configuration_active() {
             account_display_name: None,
             registry: None,
             nickname: None,
+            rooms: None,
         },
         EventHub::default(),
     )
@@ -276,6 +277,7 @@ async fn global_account_handle_is_not_reused_as_a_geohash_nickname() {
             joined_geohashes: vec!["gcpvj".into()],
             account_handle: Some("tom".into()),
             nickname: None,
+            rooms: None,
             ..DaemonConfig::default()
         },
         EventHub::default(),

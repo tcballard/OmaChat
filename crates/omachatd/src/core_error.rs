@@ -61,6 +61,10 @@ pub enum CoreError {
     PanicErase,
     Panicked,
     RestartRequired,
+    Room(crate::RoomError),
+    RoomService(crate::RoomServiceError),
+    RoomsUnconfigured,
+    RoomRelayUnknown,
 }
 impl CoreError {
     pub(crate) fn code(&self) -> ErrorCode {
@@ -84,6 +88,13 @@ impl CoreError {
                 | omachat_store::PrincipalRegistryClaimIntentError::PendingMissing,
             ) => ErrorCode::Conflict,
             Self::RestartRequired => ErrorCode::Conflict,
+            Self::Room(crate::RoomError::NotJoined) | Self::RoomRelayUnknown => ErrorCode::NotFound,
+            Self::Room(crate::RoomError::Unavailable { .. } | crate::RoomError::Stopped)
+            | Self::RoomsUnconfigured => ErrorCode::Unavailable,
+            Self::Room(crate::RoomError::InvalidGroup | crate::RoomError::InvalidEvent) => {
+                ErrorCode::InvalidRequest
+            }
+            Self::Room(_) | Self::RoomService(_) => ErrorCode::Internal,
             Self::Panicked
             | Self::ProfilePublicationUnconfigured
             | Self::RelayListPublicationUnconfigured
@@ -131,6 +142,11 @@ impl fmt::Display for CoreError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => write!(formatter, "daemon I/O failed: {error}"),
+            Self::Room(error) => write!(formatter, "room operation failed: {error}"),
+            Self::RoomService(error) => write!(formatter, "room service failed: {error}"),
+            Self::RoomsUnconfigured => formatter.write_str("no NIP-29 room relays are configured"),
+            Self::RoomRelayUnknown => formatter
+                .write_str("room relay is not configured or its identity is not yet verified"),
             Self::Store(error) => write!(formatter, "sealed store failed: {error}"),
             Self::IdentityStore(error) => write!(formatter, "identity store failed: {error}"),
             Self::AccountVault(error) => write!(formatter, "account store failed: {error}"),

@@ -1,5 +1,7 @@
 complete -c omachat-ctl -l socket -r -d 'Daemon socket path'
-complete -c omachat-ctl -n '__fish_use_subcommand' -a 'status fingerprint join leave send panic'
+complete -c omachat-ctl -n '__fish_use_subcommand' -a 'status fingerprint join leave send join-room leave-room rooms panic'
 complete -c omachat-ctl -n '__fish_seen_subcommand_from status' -l json -d 'Emit compact JSON'
 complete -c omachat-ctl -n '__fish_seen_subcommand_from fingerprint' -l qr -d 'Render ANSI QR code'
 complete -c omachat-ctl -n '__fish_seen_subcommand_from panic' -l confirm -a ERASE -d 'Confirm destructive erase'
+complete -c omachat-ctl -n '__fish_seen_subcommand_from rooms' -l json -d 'Emit compact JSON'
+complete -c omachat-ctl -n '__fish_seen_subcommand_from join-room' -l invite -r -d 'Invite code'

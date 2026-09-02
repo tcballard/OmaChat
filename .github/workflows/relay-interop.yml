@@ -27,3 +27,25 @@ jobs:
 
       - name: Probe authenticated private inbox persistence
         run: ./scripts/test-grain-relay.sh
+
+  relay29-nip29:
+    name: relay29 NIP-29 black-box contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Go for the pinned relay29 harness
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version-file: conformance/relay/relay29/go.mod
+          cache-dependency-path: conformance/relay/relay29/go.sum
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: 1.98.0
+
+      - name: Drive a NIP-29 group through relay29 and replay the capture through the room reducers
+        run: ./scripts/test-nip29-relay.sh

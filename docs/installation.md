@@ -49,6 +49,28 @@ kind-14 messages and publish their persistent kind-1059 gift wraps through the
 same authenticated relay set. The sealed outbox records the delivery profile so
 restart retries never infer protocol semantics from encrypted payloads.
 
+`rooms` is an opt-in object for standard NIP-29 rooms:
+
+```json
+"rooms": { "relays": ["wss://rooms.example"], "anchor_directory": null }
+```
+
+`rooms.relays` lists room relays (`wss://`, or numeric-loopback `ws://` for
+local testing). Each relay is bound to the signing identity its NIP-11
+document declares (`self`, or `pubkey` when the relay advertises NIP-29
+without a `self` field), and rooms are addressed as
+`room:RELAY_PUBKEY:GROUP`, so a URL change with the same key is the same relay
+and the same group ID under another key is a different room. Membership is the
+relay's policy decision: `join-room` subscribes and sends a kind 9021 request,
+and the relay's verdict is reported, never assumed. Room state is sealed per
+relay identity and guarded by a generation anchor that must live outside the
+daemon state directory; `rooms.anchor_directory` (or `omachatd --anchors`)
+overrides the default sibling directory `<state>-anchors`. Restoring the state
+directory from backup without the anchors is detected and refused rather than
+silently rewinding rooms. Relay changes require a daemon restart. The default
+OmaChat bootstrap relay does not implement NIP-29; configure a NIP-29 relay
+explicitly.
+
 ## Storage provider
 
 Automatic mode prefers Secret Service and otherwise chooses file mode on first
