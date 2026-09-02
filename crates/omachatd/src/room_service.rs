@@ -380,31 +380,20 @@ struct RelayActor {
 enum IdentitySource {
     /// NIP-11 `self`: the relay's declared signing identity.
     SelfKey,
-    /// NIP-11 `pubkey` on a relay that advertises NIP-29 but no `self`.
-    /// Existing NIP-29 relays sign group state with this key; the `self`
-    /// field postdates them. Recorded so the choice stays visible.
-    PubkeyNip29Fallback,
 }
 
 impl IdentitySource {
     const fn label(self) -> &'static str {
         match self {
             Self::SelfKey => "self",
-            Self::PubkeyNip29Fallback => "pubkey-nip29-fallback",
         }
     }
 }
 
 fn select_identity(information: &RelayInformation) -> Option<(String, IdentitySource)> {
-    if let Some(key) = information.self_pubkey() {
-        return Some((key.to_owned(), IdentitySource::SelfKey));
-    }
-    if information.supports_nip(29)
-        && let Some(key) = information.pubkey()
-    {
-        return Some((key.to_owned(), IdentitySource::PubkeyNip29Fallback));
-    }
-    None
+    information
+        .self_pubkey()
+        .map(|key| (key.to_owned(), IdentitySource::SelfKey))
 }
 
 impl RelayActor {

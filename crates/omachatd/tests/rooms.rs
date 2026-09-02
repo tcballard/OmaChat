@@ -449,7 +449,7 @@ async fn rooms_join_receive_send_persist_and_restore() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn relay_without_self_key_falls_back_to_pubkey_only_when_it_advertises_nip29() {
+async fn relay_without_self_key_stays_unavailable_even_when_it_advertises_nip29() {
     let temporary = tempdir().expect("tempdir");
     let state = temporary.path().join("state");
     let anchors = temporary.path().join("anchors");
@@ -496,7 +496,8 @@ async fn relay_without_self_key_falls_back_to_pubkey_only_when_it_advertises_nip
     service.shutdown().await;
     drop(core);
 
-    // NIP-29 advertised with only `pubkey`: bound, and the source is visible.
+    // Advertising NIP-29 does not turn the administrative contact `pubkey`
+    // into the relay signing identity required by NIP-29.
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let url = format!("ws://{}", listener.local_addr().expect("address"));
     tokio::spawn(fake_relay(
@@ -512,11 +513,28 @@ async fn relay_without_self_key_falls_back_to_pubkey_only_when_it_advertises_nip
         .start_rooms(&state, anchors)
         .expect("rooms start")
         .expect("configured");
-    assert_eq!(wait_for_identity(&core).await, relay);
-    let listed = request(&core, Command::ListRooms).await.expect("list");
-    assert_eq!(
-        listed["relays"][0]["identity_source"],
-        "pubkey-nip29-fallback"
-    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let listed = request(&core, Command::ListRooms).await.expect("list");
+            if listed["relays"][0]["status"] == "no-relay-identity" {
+                assert!(listed["relays"][0]["relay_pubkey"].is_null());
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("status in time");
+    let refused = request(
+        &core,
+        Command::JoinRoom {
+            relay: url,
+            group_id: "omarchy".into(),
+            invite_code: None,
+        },
+    )
+    .await
+    .expect_err("join must be refused without NIP-11 self");
+    assert!(refused.contains("Unavailable"), "{refused}");
     service.shutdown().await;
 }

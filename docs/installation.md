@@ -57,8 +57,8 @@ restart retries never infer protocol semantics from encrypted payloads.
 
 `rooms.relays` lists room relays (`wss://`, or numeric-loopback `ws://` for
 local testing). Each relay is bound to the signing identity its NIP-11
-document declares (`self`, or `pubkey` when the relay advertises NIP-29
-without a `self` field), and rooms are addressed as
+document declares in `self`; the administrative contact `pubkey` is never
+treated as a relay identity. Rooms are addressed as
 `room:RELAY_PUBKEY:GROUP`, so a URL change with the same key is the same relay
 and the same group ID under another key is a different room. Membership is the
 relay's policy decision: `join-room` subscribes and sends a kind 9021 request,
