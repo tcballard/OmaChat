@@ -62,7 +62,7 @@ async fn daemon_discovers_and_seals_recipient_metadata_across_restart() {
         .unwrap();
     assert_eq!(
         reopened
-            .remember_dm_relay_list(&metadata, &recipient, now)
+            .remember_dm_relay_list(&metadata, &recipient, unix_now())
             .unwrap(),
         CacheMutation::Unchanged
     );

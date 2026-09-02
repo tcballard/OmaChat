@@ -2,7 +2,10 @@ use futures_util::{SinkExt, StreamExt};
 use omachat_nostr::{
     auth::{NIP42_AUTH_KIND, RelayAuthSigner},
     event::{EventLimits, UnsignedEvent, xonly_public_key},
-    relay::{RelayConfig, RelayConnection, RelayError, RelayNotification, RelayRoute},
+    relay::{
+        RelayAuthenticationPolicy, RelayConfig, RelayConnection, RelayError, RelayNotification,
+        RelayRoute,
+    },
 };
 use serde_json::{Value, json};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -193,6 +196,43 @@ async fn surfaces_auth_required_publish_rejection() {
         connection.publish(event()).await.unwrap_err(),
         RelayError::PublishRejected("auth-required: sign in".into())
     );
+    connection.shutdown().await.unwrap();
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn opportunistic_authentication_publishes_without_a_challenge() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let expected_event = event();
+    let expected_event_id = expected_event.id.clone();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let publish = next_json(&mut socket).await;
+        assert_eq!(publish[0], "EVENT");
+        assert_eq!(publish[1]["id"], expected_event_id);
+        socket
+            .send(Message::Text(
+                json!(["OK", expected_event_id, true, "stored"])
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        while let Some(Ok(message)) = socket.next().await {
+            if matches!(message, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+
+    let mut relay_config = config(address);
+    relay_config.auth = Some(RelayAuthSigner::from_secret_key([0x30; 32]).unwrap());
+    relay_config.authentication_policy = RelayAuthenticationPolicy::AuthenticateWhenChallenged;
+    let connection = RelayConnection::spawn(relay_config).unwrap();
+    let acknowledgement = connection.publish(expected_event).await.unwrap();
+    assert_eq!(acknowledgement.message, "stored");
     connection.shutdown().await.unwrap();
     server.await.unwrap();
 }

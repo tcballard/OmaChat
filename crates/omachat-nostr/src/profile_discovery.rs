@@ -7,15 +7,17 @@ use crate::{
     profile_verification::{
         ProfileVerificationError, VerifiedNostrProfile, verify_profile_metadata,
     },
-    relay::RelayConfig,
+    relay::{RelayAuthenticationPolicy, RelayConfig},
     replaceable_discovery::{ReplaceableDiscoveryConfig, discover_replaceable_event},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileDiscoveryConfig {
     pub authentication_timeout: Duration,
+    pub authentication_policy: RelayAuthenticationPolicy,
+    pub challenge_settle_timeout: Duration,
     pub query_timeout: Duration,
-    pub minimum_authenticated_relays: usize,
+    pub minimum_ready_relays: usize,
     pub subscription_id: String,
 }
 
@@ -23,8 +25,10 @@ impl Default for ProfileDiscoveryConfig {
     fn default() -> Self {
         Self {
             authentication_timeout: Duration::from_secs(10),
+            authentication_policy: RelayAuthenticationPolicy::AuthenticateWhenChallenged,
+            challenge_settle_timeout: Duration::from_millis(100),
             query_timeout: Duration::from_secs(10),
-            minimum_authenticated_relays: 1,
+            minimum_ready_relays: 1,
             subscription_id: "omachat-profile-discovery".into(),
         }
     }
@@ -48,8 +52,10 @@ pub async fn discover_profile_metadata(
 ) -> Result<ProfileDiscoveryResult, ProfileDiscoveryError> {
     let transport_config = ReplaceableDiscoveryConfig {
         authentication_timeout: config.authentication_timeout,
+        authentication_policy: config.authentication_policy,
+        challenge_settle_timeout: config.challenge_settle_timeout,
         query_timeout: config.query_timeout,
-        minimum_authenticated_relays: config.minimum_authenticated_relays,
+        minimum_ready_relays: config.minimum_ready_relays,
         subscription_id: config.subscription_id.clone(),
     };
     let discovered = discover_replaceable_event(

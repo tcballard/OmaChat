@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | discover-dm-relays PUBLIC_KEY | discover-nip65-relays PUBLIC_KEY | show-nip65-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-device-profile [--json] | publish-nip65-relays [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -51,6 +51,8 @@ async fn run(mut arguments: Vec<std::ffi::OsString>) -> Result<(), CliError> {
                     "{}",
                     serde_json::to_string(&result).expect("JSON value serializes")
                 );
+            } else if output_mode == OutputMode::Nip65Publication {
+                println!("{}", format_nip65_publication(&result)?);
             } else if output_mode == OutputMode::Qr {
                 let fingerprint = result.as_str().ok_or_else(|| {
                     CliError::Usage("daemon returned a non-text fingerprint".into())
@@ -83,6 +85,7 @@ async fn run(mut arguments: Vec<std::ffi::OsString>) -> Result<(), CliError> {
 enum OutputMode {
     Human,
     Json,
+    Nip65Publication,
     Qr,
 }
 
@@ -125,6 +128,18 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["discover-nip65-relays", public_key] => Ok((
+            Command::DiscoverNip65Relays {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["show-nip65-relays", public_key] => Ok((
+            Command::ShowNip65Relays {
+                public_key: (*public_key).into(),
+            },
+            OutputMode::Human,
+        )),
         ["discover-profile", public_key] => Ok((
             Command::DiscoverProfile {
                 public_key: (*public_key).into(),
@@ -137,6 +152,12 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
             },
             OutputMode::Human,
         )),
+        ["publish-device-profile"] => Ok((Command::PublishProfile, OutputMode::Human)),
+        ["publish-device-profile", "--json"] => Ok((Command::PublishProfile, OutputMode::Json)),
+        ["publish-profile"] => Ok((Command::PublishProfile, OutputMode::Human)),
+        ["publish-profile", "--json"] => Ok((Command::PublishProfile, OutputMode::Json)),
+        ["publish-nip65-relays"] => Ok((Command::PublishNip65Relays, OutputMode::Nip65Publication)),
+        ["publish-nip65-relays", "--json"] => Ok((Command::PublishNip65Relays, OutputMode::Json)),
         ["resolve-handle", handle] => Ok((
             Command::ResolveRegistryHandle {
                 handle: (*handle).into(),
@@ -183,6 +204,73 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
         )),
         _ => Err(CliError::Usage("invalid command".into())),
     }
+}
+
+fn format_nip65_publication(result: &serde_json::Value) -> Result<String, CliError> {
+    let text = |field: &str| {
+        result
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                CliError::Usage(format!(
+                    "daemon returned invalid NIP-65 publication field {field}"
+                ))
+            })
+    };
+    let relays = |field: &str| {
+        result
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .and_then(|values| {
+                values
+                    .iter()
+                    .map(serde_json::Value::as_str)
+                    .collect::<Option<Vec<_>>>()
+            })
+            .ok_or_else(|| {
+                CliError::Usage(format!(
+                    "daemon returned invalid NIP-65 publication field {field}"
+                ))
+            })
+    };
+    let required = result
+        .get("required_acknowledgements")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            CliError::Usage(
+                "daemon returned invalid NIP-65 publication field required_acknowledgements".into(),
+            )
+        })?;
+    if result
+        .get("identity_verified_by_relay_list")
+        .and_then(serde_json::Value::as_bool)
+        != Some(false)
+    {
+        return Err(CliError::Usage(
+            "daemon returned an unsafe NIP-65 identity-authority claim".into(),
+        ));
+    }
+    let acknowledged = relays("acknowledged_relays")?;
+    let rejected = relays("rejected_relays")?;
+    let failed = relays("failed_relays")?;
+    let mut lines = vec![
+        format!(
+            "NIP-65 publication: {} ({})",
+            text("publication_status")?,
+            text("publication_source")?
+        ),
+        format!("event: {}", text("event_id")?),
+        format!("author: {}", text("public_key")?),
+        format!("acknowledged: {}/{required}", acknowledged.len()),
+    ];
+    if !rejected.is_empty() {
+        lines.push(format!("rejected: {}", rejected.join(", ")));
+    }
+    if !failed.is_empty() {
+        lines.push(format!("failed: {}", failed.join(", ")));
+    }
+    lines.push("identity authority: no (NIP-65 is reachability metadata)".into());
+    Ok(lines.join("\n"))
 }
 
 fn default_socket() -> Result<PathBuf, CliError> {
@@ -239,6 +327,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_nip65_discovery_and_offline_lookup() {
+        let public_key = "44".repeat(32);
+        let discover = [
+            std::ffi::OsString::from("discover-nip65-relays"),
+            std::ffi::OsString::from(&public_key),
+        ];
+        let show = [
+            std::ffi::OsString::from("show-nip65-relays"),
+            std::ffi::OsString::from(&public_key),
+        ];
+        let (discover_command, discover_mode) = match parse_command(&discover) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("NIP-65 discovery command did not parse"),
+        };
+        let (show_command, show_mode) = match parse_command(&show) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("NIP-65 lookup command did not parse"),
+        };
+        assert_eq!(
+            discover_command,
+            Command::DiscoverNip65Relays {
+                public_key: public_key.clone(),
+            }
+        );
+        assert_eq!(show_command, Command::ShowNip65Relays { public_key });
+        assert!(discover_mode == OutputMode::Human);
+        assert!(show_mode == OutputMode::Human);
+    }
+
+    #[test]
     fn parses_offline_profile_lookup() {
         let arguments = [
             std::ffi::OsString::from("show-profile"),
@@ -255,6 +373,76 @@ mod tests {
                 public_key: "33".repeat(32),
             }
         );
+    }
+
+    #[test]
+    fn parses_profile_publication_with_explicit_output_modes() {
+        let human = [std::ffi::OsString::from("publish-device-profile")];
+        let json = [
+            std::ffi::OsString::from("publish-device-profile"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (human_command, human_mode) = match parse_command(&human) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("human publication did not parse"),
+        };
+        let (json_command, json_mode) = match parse_command(&json) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("JSON publication did not parse"),
+        };
+        assert_eq!(human_command, Command::PublishProfile);
+        assert_eq!(json_command, Command::PublishProfile);
+        assert!(human_mode == OutputMode::Human);
+        assert!(json_mode == OutputMode::Json);
+    }
+
+    #[test]
+    fn parses_relay_list_publication_with_explicit_output_modes() {
+        let human = [std::ffi::OsString::from("publish-nip65-relays")];
+        let json = [
+            std::ffi::OsString::from("publish-nip65-relays"),
+            std::ffi::OsString::from("--json"),
+        ];
+        let (human_command, human_mode) = match parse_command(&human) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("human publication did not parse"),
+        };
+        let (json_command, json_mode) = match parse_command(&json) {
+            Ok(parsed) => parsed,
+            Err(_) => panic!("JSON publication did not parse"),
+        };
+        assert_eq!(human_command, Command::PublishNip65Relays);
+        assert_eq!(json_command, Command::PublishNip65Relays);
+        assert!(human_mode == OutputMode::Nip65Publication);
+        assert!(json_mode == OutputMode::Json);
+    }
+
+    #[test]
+    fn renders_relay_list_publication_without_claiming_identity_authority() {
+        let result = serde_json::json!({
+            "event_id": "event-id",
+            "public_key": "public-key",
+            "publication_status": "pending",
+            "publication_source": "sealed-replay",
+            "attempted_relays": ["wss://relay.one/"],
+            "acknowledged_relays": ["wss://relay.one/"],
+            "rejected_relays": ["wss://relay.two/"],
+            "failed_relays": [],
+            "required_acknowledgements": 2,
+            "identity_verified_by_relay_list": false
+        });
+        let rendered = match format_nip65_publication(&result) {
+            Ok(rendered) => rendered,
+            Err(_) => panic!("publication did not render"),
+        };
+        assert_eq!(
+            rendered,
+            "NIP-65 publication: pending (sealed-replay)\nevent: event-id\nauthor: public-key\nacknowledged: 1/2\nrejected: wss://relay.two/\nidentity authority: no (NIP-65 is reachability metadata)"
+        );
+
+        let mut unsafe_result = result;
+        unsafe_result["identity_verified_by_relay_list"] = true.into();
+        assert!(format_nip65_publication(&unsafe_result).is_err());
     }
 
     #[test]

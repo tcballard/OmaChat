@@ -3,7 +3,7 @@
 
 The probe intentionally uses only Python's standard library. It does not test
 NIP-44 encryption; the Rust conformance suite owns that boundary. It tests the
-relay-visible contract around a correctly signed kind 1059 envelope.
+relay-visible contract around signed profile, relay-list, and kind 1059 events.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ SENDER_SECRET = 0x11
 RECIPIENT_SECRET = 0x22
 STRANGER_SECRET = 0x33
 WRAPPER_SECRET = 0x44
+PARTICIPANT_SECRET = 0x55
 
 
 def tagged_hash(tag: str, data: bytes) -> bytes:
@@ -153,6 +154,35 @@ def sign_event(secret: int, kind: int, tags, content: str, created_at=None):
         "content": content,
         "sig": schnorr_sign(event_id, secret).hex(),
     }
+
+
+def verify_event(event) -> None:
+    required = {"id", "pubkey", "created_at", "kind", "tags", "content", "sig"}
+    if not isinstance(event, dict) or set(event) != required:
+        raise AssertionError(f"relay returned a noncanonical event shape: {event!r}")
+    try:
+        public = bytes.fromhex(event["pubkey"])
+        signature = bytes.fromhex(event["sig"])
+        claimed_id = bytes.fromhex(event["id"])
+    except (TypeError, ValueError) as error:
+        raise AssertionError("relay returned malformed event hex") from error
+    canonical = json.dumps(
+        [
+            0,
+            event["pubkey"],
+            event["created_at"],
+            event["kind"],
+            event["tags"],
+            event["content"],
+        ],
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    calculated_id = hashlib.sha256(canonical).digest()
+    if claimed_id != calculated_id:
+        raise AssertionError("relay returned an event with a mismatched ID")
+    if not schnorr_verify(calculated_id, public, signature):
+        raise AssertionError("relay returned an event with an invalid signature")
 
 
 class WebSocket:
@@ -320,24 +350,37 @@ def expect_publish(client: WebSocket, event, accepted: bool, reason_prefix: str 
         raise AssertionError(f"unexpected publish reason: {response!r}")
 
 
-def query(client: WebSocket, recipient: str, subscription: str):
-    client.send_json(
-        [
-            "REQ",
-            subscription,
-            {"kinds": [1059], "#p": [recipient], "limit": 10},
-        ]
-    )
+def query_filter(client: WebSocket, event_filter, subscription: str):
+    client.send_json(["REQ", subscription, event_filter])
     events = []
     for _ in range(32):
         message = client.recv_json()
         if message[0] == "EVENT" and message[1] == subscription:
+            verify_event(message[2])
             events.append(message[2])
         elif message[0] == "EOSE" and message[1] == subscription:
             return events
         elif message[0] == "CLOSED" and message[1] == subscription:
             raise AssertionError(f"relay closed authenticated query: {message!r}")
     raise AssertionError("authenticated query did not reach EOSE")
+
+
+def query(client: WebSocket, recipient: str, subscription: str):
+    return query_filter(
+        client,
+        {"kinds": [1059], "#p": [recipient], "limit": 10},
+        subscription,
+    )
+
+
+def query_author_kind(
+    client: WebSocket, author: str, kind: int, subscription: str
+):
+    return query_filter(
+        client,
+        {"kinds": [kind], "authors": [author], "limit": 10},
+        subscription,
+    )
 
 
 def count(client: WebSocket, recipient: str, subscription: str) -> int:
@@ -377,14 +420,114 @@ def assert_recipient_only(url: str, event_id: str) -> None:
         stranger_client.close()
 
 
+def assert_participant_metadata(url: str, state) -> None:
+    participant = public_key(PARTICIPANT_SECRET)
+    if state["participant"] != participant:
+        raise AssertionError("persisted probe state participant mismatch")
+    client = authenticate(url, PARTICIPANT_SECRET)
+    try:
+        expectations = (
+            (
+                0,
+                "profile",
+                state["profile_event_id"],
+                {
+                    state["replaced_profile_event_id"],
+                    state["profile_event_id"],
+                },
+            ),
+            (
+                10002,
+                "nip65",
+                state["relay_list_event_id"],
+                {state["relay_list_event_id"]},
+            ),
+            (
+                10050,
+                "nip17-inbox",
+                state["dm_relay_list_event_id"],
+                {state["dm_relay_list_event_id"]},
+            ),
+        )
+        for kind, label, expected_id, allowed_ids in expectations:
+            events = query_author_kind(
+                client, participant, kind, f"participant-{label}"
+            )
+            ids = [event["id"] for event in events]
+            if len(ids) != len(set(ids)):
+                raise AssertionError(
+                    f"participant {label} query returned duplicate IDs: {ids!r}"
+                )
+            unexpected_ids = set(ids) - allowed_ids
+            if expected_id not in ids or unexpected_ids:
+                raise AssertionError(
+                    "participant "
+                    f"{label} query returned unexpected IDs: {ids!r}"
+                )
+            newest_created_at = max(event["created_at"] for event in events)
+            newest_ids = {
+                event["id"]
+                for event in events
+                if event["created_at"] == newest_created_at
+            }
+            if newest_ids != {expected_id}:
+                raise AssertionError(
+                    "participant "
+                    f"{label} query did not resolve to {expected_id}: {ids!r}"
+                )
+    finally:
+        client.close()
+
+
 def seed(url: str, state_path: Path) -> None:
     recipient = public_key(RECIPIENT_SECRET)
+    participant = public_key(PARTICIPANT_SECRET)
+    base_time = int(time.time()) - 30
     event = sign_event(
         WRAPPER_SECRET,
         1059,
         [["p", recipient]],
         "OmaChat Grain relay interoperability probe",
-        int(time.time()) - 30,
+        base_time,
+    )
+    old_profile = sign_event(
+        PARTICIPANT_SECRET,
+        0,
+        [],
+        json.dumps(
+            {"display_name": "Old Relay Probe", "name": "old-relay-probe"},
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        base_time - 2,
+    )
+    profile = sign_event(
+        PARTICIPANT_SECRET,
+        0,
+        [],
+        json.dumps(
+            {"display_name": "Relay Probe", "name": "relay-probe"},
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        base_time - 1,
+    )
+    relay_list = sign_event(
+        PARTICIPANT_SECRET,
+        10002,
+        [
+            ["r", "wss://read.example", "read"],
+            ["r", "wss://write.example", "write"],
+        ],
+        "",
+        base_time,
+    )
+    dm_relay_list = sign_event(
+        PARTICIPANT_SECRET,
+        10050,
+        [["relay", "wss://inbox.example"]],
+        "",
+        base_time,
     )
 
     unauthenticated = WebSocket(url)
@@ -401,6 +544,15 @@ def seed(url: str, state_path: Path) -> None:
         expect_publish(sender, event, True)
     finally:
         sender.close()
+
+    participant_client = authenticate(url, PARTICIPANT_SECRET)
+    try:
+        expect_publish(participant_client, old_profile, True)
+        expect_publish(participant_client, profile, True)
+        expect_publish(participant_client, relay_list, True)
+        expect_publish(participant_client, dm_relay_list, True)
+    finally:
+        participant_client.close()
 
     unauthenticated_reader = WebSocket(url)
     try:
@@ -420,17 +572,20 @@ def seed(url: str, state_path: Path) -> None:
         unauthenticated_reader.close()
 
     assert_recipient_only(url, event["id"])
+    state = {
+        "event_id": event["id"],
+        "recipient": recipient,
+        "wrapper_pubkey": event["pubkey"],
+        "authenticated_sender": public_key(SENDER_SECRET),
+        "participant": participant,
+        "replaced_profile_event_id": old_profile["id"],
+        "profile_event_id": profile["id"],
+        "relay_list_event_id": relay_list["id"],
+        "dm_relay_list_event_id": dm_relay_list["id"],
+    }
+    assert_participant_metadata(url, state)
     state_path.write_text(
-        json.dumps(
-            {
-                "event_id": event["id"],
-                "recipient": recipient,
-                "wrapper_pubkey": event["pubkey"],
-                "authenticated_sender": public_key(SENDER_SECRET),
-            },
-            indent=2,
-            sort_keys=True,
-        )
+        json.dumps(state, indent=2, sort_keys=True)
         + "\n",
         encoding="utf-8",
     )
@@ -442,6 +597,7 @@ def verify(url: str, state_path: Path) -> None:
     if state["recipient"] != public_key(RECIPIENT_SECRET):
         raise AssertionError("persisted probe state recipient mismatch")
     assert_recipient_only(url, state["event_id"])
+    assert_participant_metadata(url, state)
     print(
         json.dumps(
             {"phase": "restart", "event_id": state["event_id"], "ok": True}

@@ -15,6 +15,12 @@ pub enum CoreError {
     DmRelayDiscovery(omachat_nostr::dm_relay_discovery::DmRelayDiscoveryError),
     ProfileCache(crate::profile_cache_store::SealedProfileCacheError),
     ProfileDiscovery(omachat_nostr::profile_discovery::ProfileDiscoveryError),
+    ProfilePublication(crate::ProfilePublicationCoordinatorError),
+    ProfilePublicationUnconfigured,
+    RelayListPublication(crate::RelayListPublicationRuntimeError),
+    RelayListPublicationUnconfigured,
+    RelayListCache(crate::SealedRelayListCacheError),
+    RelayListDiscovery(crate::SealedRelayListDiscoveryServiceError),
     RegistryEvidence(
         omachat_registry_transport::RegistryEvidenceError<
             omachat_registry_transport::RegistryWebSocketError,
@@ -79,6 +85,8 @@ impl CoreError {
             ) => ErrorCode::Conflict,
             Self::RestartRequired => ErrorCode::Conflict,
             Self::Panicked
+            | Self::ProfilePublicationUnconfigured
+            | Self::RelayListPublicationUnconfigured
             | Self::RegistryUnconfigured
             | Self::RegistryProtocolOperationUnavailable
             | Self::RegistryClaimPreflightOffline => ErrorCode::Unavailable,
@@ -95,6 +103,10 @@ impl CoreError {
             | Self::DmRelayDiscovery(_)
             | Self::ProfileCache(_)
             | Self::ProfileDiscovery(_)
+            | Self::ProfilePublication(_)
+            | Self::RelayListPublication(_)
+            | Self::RelayListCache(_)
+            | Self::RelayListDiscovery(_)
             | Self::RegistryEvidence(_)
             | Self::PrincipalRegistryEvidence(_)
             | Self::RegistryCache(_)
@@ -132,6 +144,22 @@ impl fmt::Display for CoreError {
             }
             Self::ProfileCache(error) => write!(formatter, "profile cache failed: {error}"),
             Self::ProfileDiscovery(error) => write!(formatter, "profile discovery failed: {error}"),
+            Self::ProfilePublication(error) => {
+                write!(formatter, "profile publication failed: {error}")
+            }
+            Self::ProfilePublicationUnconfigured => {
+                formatter.write_str("profile publication is not configured")
+            }
+            Self::RelayListPublication(error) => {
+                write!(formatter, "NIP-65 relay-list publication failed: {error}")
+            }
+            Self::RelayListPublicationUnconfigured => {
+                formatter.write_str("NIP-65 relay-list publication is not configured")
+            }
+            Self::RelayListCache(error) => write!(formatter, "NIP-65 relay cache failed: {error}"),
+            Self::RelayListDiscovery(error) => {
+                write!(formatter, "NIP-65 relay discovery failed: {error}")
+            }
             Self::RegistryEvidence(error) => {
                 write!(formatter, "registry evidence resolution failed: {error}")
             }
@@ -219,6 +247,10 @@ impl Error for CoreError {
             Self::DmRelayDiscovery(error) => Some(error),
             Self::ProfileCache(error) => Some(error),
             Self::ProfileDiscovery(error) => Some(error),
+            Self::ProfilePublication(error) => Some(error),
+            Self::RelayListPublication(error) => Some(error),
+            Self::RelayListCache(error) => Some(error),
+            Self::RelayListDiscovery(error) => Some(error),
             Self::RegistryEvidence(error) => Some(error),
             Self::PrincipalRegistryEvidence(error) => Some(error),
             Self::RegistryCache(error) => Some(error),

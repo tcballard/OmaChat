@@ -61,6 +61,9 @@ client:
   user_agent: "grain-client/1.0" # User agent string for relay connections
 
 server:
+  # Grain v0.7.1 requires the :PORT form and therefore listens on every
+  # interface in its network namespace. Production must place this listener
+  # on a private container/network namespace and must never publish port 8181.
   port: :8181
   read_timeout: 60 # Timeout for reading a single WebSocket message from client
   write_timeout: 20 # Timeout for writing a single WebSocket message to client
@@ -153,6 +156,8 @@ rate_limit:
       max_size: 512 # 512B - reactions should be tiny
     - kind: 9735 # Zap receipts (NIP-57)
       max_size: 4096 # 4KB - small structured payload + LN proof
+    - kind: 10002 # NIP-65 read/write relay list
+      max_size: 4096
     - kind: 10050 # NIP-17 DM inbox relay list
       max_size: 4096
     - kind: 1059 # NIP-59 persistent gift wrap
@@ -200,6 +205,9 @@ rate_limit:
   #     limit: 1
   #     burst: 3
   kind_limits:
+    - kind: 10002
+      limit: 1
+      burst: 3
     - kind: 10050
       limit: 1
       burst: 3

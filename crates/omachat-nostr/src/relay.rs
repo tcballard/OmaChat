@@ -40,12 +40,24 @@ pub enum RelayRoute {
     Socks5(String),
 }
 
+/// Whether a configured signer must authenticate before commands are allowed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RelayAuthenticationPolicy {
+    /// Preserve the fail-closed default: a configured signer cannot issue
+    /// commands until the relay challenges it and accepts the NIP-42 event.
+    RequireWhenConfigured,
+    /// Permit ordinary relay commands before a challenge. Once challenged,
+    /// commands remain blocked until the relay accepts the NIP-42 event.
+    AuthenticateWhenChallenged,
+}
+
 /// Explicit limits and timers for one relay actor.
 #[derive(Clone, Debug)]
 pub struct RelayConfig {
     pub url: String,
     pub route: RelayRoute,
     pub auth: Option<RelayAuthSigner>,
+    pub authentication_policy: RelayAuthenticationPolicy,
     pub command_capacity: usize,
     pub notification_capacity: usize,
     pub connect_timeout: Duration,
@@ -68,6 +80,7 @@ impl RelayConfig {
             url,
             route,
             auth: None,
+            authentication_policy: RelayAuthenticationPolicy::RequireWhenConfigured,
             command_capacity: 64,
             notification_capacity: 256,
             connect_timeout: Duration::from_secs(20),
@@ -363,7 +376,9 @@ async fn run_actor_loop(
         };
         let _ = health.send(RelayHealth::Connected);
         notify(&notifications, RelayNotification::Connected)?;
-        let mut session_authenticated = config.auth.is_none();
+        let mut session_authenticated = config.auth.is_none()
+            || config.authentication_policy
+                == RelayAuthenticationPolicy::AuthenticateWhenChallenged;
         if session_authenticated {
             replay_subscriptions(&mut socket, &subscriptions, &config).await?;
         }

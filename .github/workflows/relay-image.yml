@@ -1,0 +1,69 @@
+name: Relay candidate image
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/relay-image.yml"
+      - "ops/relay/grain/**"
+      - "scripts/check-grain-deployment.sh"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/relay-image.yml"
+      - "ops/relay/grain/**"
+      - "scripts/check-grain-deployment.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-candidate-image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  grain-container:
+    name: Build pinned Grain candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Validate non-deploying contract
+        run: sh ./scripts/check-grain-deployment.sh
+
+      - name: Build Linux amd64 candidate
+        run: >-
+          docker build
+          --platform linux/amd64
+          --tag omachat/grain-candidate:ci
+          ops/relay/grain
+
+      - name: Verify pinned Grain binary
+        run: |
+          docker run --rm \
+            --entrypoint /usr/local/bin/grain \
+            omachat/grain-candidate:ci \
+            --version | tee "${RUNNER_TEMP}/grain-version.txt"
+          grep -F "Version:    v0.7.1" "${RUNNER_TEMP}/grain-version.txt"
+          grep -F "Git Commit: c0709db" "${RUNNER_TEMP}/grain-version.txt"
+          grep -F "Platform:   linux/amd64" "${RUNNER_TEMP}/grain-version.txt"
+
+      - name: Verify non-root runtime identity
+        run: |
+          runtime_user="$(docker image inspect \
+            --format '{{.Config.User}}' \
+            omachat/grain-candidate:ci)"
+          test "${runtime_user}" = "65532:65532"
+
+      - name: Prove unapproved startup is refused
+        run: |
+          if docker run --rm omachat/grain-candidate:ci \
+            >"${RUNNER_TEMP}/unapproved-start.log" 2>&1; then
+            echo "candidate started without explicit deployment approval" >&2
+            exit 1
+          fi
+          grep -F "OMACHAT_RELAY_DEPLOYMENT_APPROVED" \
+            "${RUNNER_TEMP}/unapproved-start.log"
