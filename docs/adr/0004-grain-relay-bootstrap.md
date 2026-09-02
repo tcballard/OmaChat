@@ -90,6 +90,11 @@ Do not deploy from this ADR. Deployment needs a separate approved change with
 the actual domain, owner key, TLS, monitoring, retention decision, backup and
 restore drill, public policy documents, and target-host evidence.
 
+Grain v0.7.1 only accepts `server.port` in `:PORT` form and therefore binds all
+interfaces in its network namespace. The candidate deployment must place Grain
+on an internal, un-published network and expose only a TLS reverse proxy. A
+host-published plaintext Grain port is a deployment failure.
+
 ## Known gap: authenticated-pubkey abuse accounting
 
 Grain `v0.7.1` rate limits events per connection and connection attempts per IP.

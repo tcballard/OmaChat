@@ -11,6 +11,7 @@ chacha20poly1305 = "=0.10.1"
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+omachat-nostr = { path = "../omachat-nostr", version = "=0.0.1" }
 omachat-registry = { path = "../omachat-registry", version = "=0.0.1" }
 secret-service = { version = "=5.2.0", default-features = false, features = ["rt-tokio-crypto-rust"] }
 serde = { version = "=1.0.229", features = ["derive"] }

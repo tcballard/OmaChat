@@ -10,7 +10,8 @@ OmaChat's original backlog is organized around compatibility with the pinned
 mobile geohash, Bluetooth mesh, and courier protocols. That work remains useful,
 but the immediate product is now persistent text collaboration between Omarchy
 hosts: users need durable accounts and globally recognizable handles before
-later workspaces and channels can provide a credible Slack or Teams alternative.
+later workspaces, communities and rooms can provide a credible Slack, Teams or
+Discord alternative for Omarchy users.
 
 A Nostr signing key alone is not an account system. It does not allocate a
 globally unique human-readable handle, bind and revoke multiple devices, express

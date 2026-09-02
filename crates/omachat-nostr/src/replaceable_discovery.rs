@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     error::Error,
     fmt,
     time::{Duration, Instant},
@@ -12,7 +12,7 @@ use crate::{
     auth::RelayAuthSigner,
     event::SignedEvent,
     pool::{RelayPool, RelayPoolConfig, RelayPoolError},
-    relay::{RelayConfig, RelayError, RelayNotification},
+    relay::{RelayAuthenticationPolicy, RelayConfig, RelayError, RelayNotification},
 };
 
 const MAX_DISCOVERY_RELAYS: usize = 16;
@@ -20,8 +20,10 @@ const MAX_DISCOVERY_RELAYS: usize = 16;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReplaceableDiscoveryConfig {
     pub authentication_timeout: Duration,
+    pub authentication_policy: RelayAuthenticationPolicy,
+    pub challenge_settle_timeout: Duration,
     pub query_timeout: Duration,
-    pub minimum_authenticated_relays: usize,
+    pub minimum_ready_relays: usize,
     pub subscription_id: String,
 }
 
@@ -47,6 +49,7 @@ where
     validate_config(relay_count, author_public_key, config)?;
     for relay in &mut relay_configs {
         relay.auth = Some(auth_signer.clone());
+        relay.authentication_policy = config.authentication_policy;
     }
     let mut pool = RelayPool::spawn(
         relay_configs,
@@ -91,33 +94,7 @@ async fn discover_inner<F>(
 where
     F: FnMut(&SignedEvent) -> bool,
 {
-    let authentication_deadline = Instant::now() + config.authentication_timeout;
-    let mut authenticated = HashSet::new();
-    while authenticated.len() < config.minimum_authenticated_relays {
-        let notification = next_before(pool, authentication_deadline)
-            .await
-            .map_err(|_| ReplaceableDiscoveryError::AuthenticationTimeout)?;
-        match notification.notification {
-            RelayNotification::Authenticated { public_key }
-                if public_key == expected_authentication_key =>
-            {
-                authenticated.insert(notification.relay_index);
-            }
-            RelayNotification::Authenticated { .. } => {
-                return Err(ReplaceableDiscoveryError::UnexpectedAuthenticatedPrincipal);
-            }
-            RelayNotification::AuthenticationRejected {
-                public_key,
-                message,
-            } if public_key == expected_authentication_key => {
-                return Err(ReplaceableDiscoveryError::AuthenticationRejected(message));
-            }
-            RelayNotification::AuthenticationRejected { .. } => {
-                return Err(ReplaceableDiscoveryError::UnexpectedAuthenticatedPrincipal);
-            }
-            _ => {}
-        }
-    }
+    await_relay_readiness(pool, expected_authentication_key, config).await?;
 
     let filters = vec![json!({
         "kinds": [event_kind],
@@ -138,11 +115,17 @@ where
     if subscribed.is_empty() {
         return Err(ReplaceableDiscoveryError::SubscriptionRejected);
     }
+    if subscribed.len() < config.minimum_ready_relays {
+        return Err(ReplaceableDiscoveryError::InsufficientRelaySubscriptions {
+            required: config.minimum_ready_relays,
+            actual: subscribed.len(),
+        });
+    }
 
     let query_deadline = Instant::now() + config.query_timeout;
     let mut completed = HashSet::new();
     let mut best: Option<SignedEvent> = None;
-    while !subscribed.is_subset(&completed) {
+    while completed.len() < config.minimum_ready_relays {
         let notification = next_before(pool, query_deadline)
             .await
             .map_err(|_| ReplaceableDiscoveryError::QueryTimeout)?;
@@ -156,8 +139,8 @@ where
             } if subscription_id == config.subscription_id => {
                 if validate_event(&event)
                     && best.as_ref().is_none_or(|current| {
-                        (event.created_at, event.id.as_str())
-                            > (current.created_at, current.id.as_str())
+                        event.created_at > current.created_at
+                            || (event.created_at == current.created_at && event.id < current.id)
                     })
                 {
                     best = Some(event);
@@ -191,6 +174,132 @@ where
     })
 }
 
+async fn await_relay_readiness(
+    pool: &mut RelayPool,
+    expected_authentication_key: &str,
+    config: &ReplaceableDiscoveryConfig,
+) -> Result<(), ReplaceableDiscoveryError> {
+    match config.authentication_policy {
+        RelayAuthenticationPolicy::RequireWhenConfigured => {
+            await_required_authentication(pool, expected_authentication_key, config).await
+        }
+        RelayAuthenticationPolicy::AuthenticateWhenChallenged => {
+            await_challenge_driven_readiness(pool, expected_authentication_key, config).await
+        }
+    }
+}
+
+async fn await_required_authentication(
+    pool: &mut RelayPool,
+    expected_authentication_key: &str,
+    config: &ReplaceableDiscoveryConfig,
+) -> Result<(), ReplaceableDiscoveryError> {
+    let deadline = Instant::now() + config.authentication_timeout;
+    let mut authenticated = HashSet::new();
+    while authenticated.len() < config.minimum_ready_relays {
+        let notification = next_before(pool, deadline)
+            .await
+            .map_err(|_| ReplaceableDiscoveryError::AuthenticationTimeout)?;
+        match notification.notification {
+            RelayNotification::Authenticated { public_key }
+                if public_key == expected_authentication_key =>
+            {
+                authenticated.insert(notification.relay_index);
+            }
+            RelayNotification::Authenticated { .. } => {
+                return Err(ReplaceableDiscoveryError::UnexpectedAuthenticatedPrincipal);
+            }
+            RelayNotification::AuthenticationRejected {
+                public_key,
+                message,
+            } if public_key == expected_authentication_key => {
+                return Err(ReplaceableDiscoveryError::AuthenticationRejected(message));
+            }
+            RelayNotification::AuthenticationRejected { .. } => {
+                return Err(ReplaceableDiscoveryError::UnexpectedAuthenticatedPrincipal);
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+async fn await_challenge_driven_readiness(
+    pool: &mut RelayPool,
+    expected_authentication_key: &str,
+    config: &ReplaceableDiscoveryConfig,
+) -> Result<(), ReplaceableDiscoveryError> {
+    let authentication_deadline = Instant::now() + config.authentication_timeout;
+    let mut connected_at = HashMap::<usize, Instant>::new();
+    let mut challenged = HashSet::new();
+    let mut authenticated = HashSet::new();
+    loop {
+        let now = Instant::now();
+        let ready = connected_at
+            .iter()
+            .filter(|(relay_index, connected)| {
+                authenticated.contains(*relay_index)
+                    || (!challenged.contains(*relay_index)
+                        && now.saturating_duration_since(**connected)
+                            >= config.challenge_settle_timeout)
+            })
+            .count();
+        if ready >= config.minimum_ready_relays {
+            return Ok(());
+        }
+        if now >= authentication_deadline {
+            return Err(ReplaceableDiscoveryError::AuthenticationTimeout);
+        }
+        let next_settle = connected_at
+            .iter()
+            .filter(|(relay_index, _)| {
+                !challenged.contains(*relay_index) && !authenticated.contains(*relay_index)
+            })
+            .map(|(_, connected)| *connected + config.challenge_settle_timeout)
+            .min()
+            .unwrap_or(authentication_deadline);
+        let wait_deadline = next_settle.min(authentication_deadline);
+        let notification = match next_before(pool, wait_deadline).await {
+            Ok(notification) => notification,
+            Err(()) => continue,
+        };
+        let relay_index = notification.relay_index;
+        match notification.notification {
+            RelayNotification::Connected => {
+                connected_at.insert(relay_index, Instant::now());
+            }
+            RelayNotification::Disconnected => {
+                connected_at.remove(&relay_index);
+                challenged.remove(&relay_index);
+                authenticated.remove(&relay_index);
+            }
+            RelayNotification::AuthChallenge(_) => {
+                challenged.insert(relay_index);
+            }
+            RelayNotification::Authenticated { public_key }
+                if public_key == expected_authentication_key =>
+            {
+                connected_at.entry(relay_index).or_insert_with(Instant::now);
+                challenged.remove(&relay_index);
+                authenticated.insert(relay_index);
+            }
+            RelayNotification::Authenticated { .. } => {
+                return Err(ReplaceableDiscoveryError::UnexpectedAuthenticatedPrincipal);
+            }
+            RelayNotification::AuthenticationRejected {
+                public_key,
+                message,
+            } if public_key == expected_authentication_key => {
+                return Err(ReplaceableDiscoveryError::AuthenticationRejected(message));
+            }
+            RelayNotification::AuthenticationRejected { .. } => {
+                return Err(ReplaceableDiscoveryError::UnexpectedAuthenticatedPrincipal);
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn next_before(
     pool: &mut RelayPool,
     deadline: Instant,
@@ -214,9 +323,10 @@ fn validate_config(
         || relay_count > MAX_DISCOVERY_RELAYS
         || SchnorrVerifyingKey::from_bytes(author_public_key).is_err()
         || config.authentication_timeout.is_zero()
+        || config.challenge_settle_timeout.is_zero()
         || config.query_timeout.is_zero()
-        || config.minimum_authenticated_relays == 0
-        || config.minimum_authenticated_relays > relay_count
+        || config.minimum_ready_relays == 0
+        || config.minimum_ready_relays > relay_count
         || config.subscription_id.is_empty()
         || config.subscription_id.len() > 64
     {
@@ -233,6 +343,10 @@ pub(crate) enum ReplaceableDiscoveryError {
     AuthenticationRejected(String),
     UnexpectedAuthenticatedPrincipal,
     SubscriptionRejected,
+    InsufficientRelaySubscriptions {
+        required: usize,
+        actual: usize,
+    },
     SubscriptionClosed(String),
     QueryTimeout,
     NoValidEvent,
@@ -273,6 +387,10 @@ impl fmt::Display for ReplaceableDiscoveryError {
             Self::SubscriptionRejected => {
                 formatter.write_str("every replaceable-event discovery subscription was rejected")
             }
+            Self::InsufficientRelaySubscriptions { required, actual } => write!(
+                formatter,
+                "replaceable-event discovery requires {required} relay subscriptions, got {actual}"
+            ),
             Self::SubscriptionClosed(message) => {
                 write!(
                     formatter,

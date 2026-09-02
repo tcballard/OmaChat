@@ -22,5 +22,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate private-network deployment candidate
+        run: sh ./scripts/check-grain-deployment.sh
+
       - name: Probe authenticated private inbox persistence
         run: ./scripts/test-grain-relay.sh
