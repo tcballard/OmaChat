@@ -13,8 +13,9 @@ path = "src/main.rs"
 [dependencies]
 omachat-ctl = { path = "../omachat-ctl", version = "=0.0.1" }
 omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
+ratatui = { version = "=0.30.2", default-features = false, features = ["std", "crossterm"] }
 serde_json = "=1.0.151"
-tokio = { version = "=1.53.1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal"] }
+tokio = { version = "=1.53.1", features = ["io-std", "io-util", "macros", "rt-multi-thread", "signal", "sync"] }
 
 [lints]
 workspace = true
