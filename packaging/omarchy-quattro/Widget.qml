@@ -11,12 +11,13 @@ Item {
         id: label
         anchors.centerIn: parent
         text: root.statusText
+        textFormat: Text.PlainText
         color: "#d8dee9"
     }
 
     Process {
         id: statusPoll
-        command: ["timeout", "1s", "omachat-ctl", "status", "--json"]
+        command: ["/usr/bin/timeout", "1s", "/usr/bin/omachat-ctl", "status", "--json"]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {

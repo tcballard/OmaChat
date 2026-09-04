@@ -5,7 +5,17 @@ five seconds, wrapped in a one-second timeout. Daemon absence and malformed
 output render `OC —`; they do not block the shell. The plugin has no install
 hook, privileges, configuration writer, or automatic enablement.
 
-On an Omarchy v4.0.1/Quattro machine, validate before enabling:
+The runtime contract is Omarchy v4.0.1's Quattro plugin API, Quickshell 0.3.1,
+and Qt 6.11.2. Those are the versions supplied by the reviewed Omarchy release;
+standalone or floating Quickshell builds are not claimed compatible. A change
+to any of these versions requires plugin revalidation. The widget requires root-owned
+`/usr/bin/omachat-ctl` and GNU coreutils `/usr/bin/timeout`. It never resolves
+executables through ambient `PATH`. `omachat-ctl` emits one IPC response whose
+protocol line is capped at 64 KiB, bounding the complete-output collector; the
+one-second wrapper remains a separate wall-clock bound.
+
+On an Omarchy v4.0.1/Quattro machine with the packaged OmaChat CLI installed,
+validate before enabling:
 
 ```sh
 omarchy plugin validate ./packaging/omarchy-quattro

@@ -6,7 +6,7 @@ pkgdesc='Tiny encrypted text collaboration for Omarchy'
 arch=('x86_64')
 url='https://github.com/tcballard/OmaChat'
 license=('0BSD')
-depends=('dbus' 'ca-certificates' 'gcc-libs' 'qrencode')
+depends=('dbus' 'ca-certificates' 'coreutils' 'gcc-libs' 'qrencode')
 makedepends=('cargo' 'rust')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 # Release automation must replace this marker with the published archive hash.
