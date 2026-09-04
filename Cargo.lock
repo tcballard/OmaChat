@@ -1558,6 +1558,7 @@ dependencies = [
  "omachat-registry-host",
  "omachat-registry-transport",
  "omachat-store",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

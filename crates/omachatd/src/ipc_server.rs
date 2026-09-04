@@ -125,6 +125,7 @@ impl<H: RequestHandler> IpcServer<H> {
         let mut clients = JoinSet::new();
         let mut terminal_error = None;
         let (client_shutdown_sender, client_shutdown) = watch::channel(false);
+        let daemon_euid = rustix::process::geteuid().as_raw();
         loop {
             if *shutdown.borrow() {
                 break;
@@ -144,6 +145,12 @@ impl<H: RequestHandler> IpcServer<H> {
                             break;
                         }
                     };
+                    match stream.peer_cred() {
+                        Ok(credentials) if peer_permitted(credentials.uid(), daemon_euid) => {}
+                        // Fail closed: a foreign or unreadable peer gets no
+                        // protocol bytes at all, not even an error frame.
+                        Ok(_) | Err(_) => continue,
+                    }
                     let handler = Arc::clone(&self.handler);
                     let events = self.events.clone();
                     let client_shutdown = client_shutdown.clone();
@@ -280,6 +287,15 @@ async fn serve_client<H: RequestHandler>(
     }
 }
 
+/// SO_PEERCRED authorization: only the daemon's own effective uid may speak
+/// the protocol. The uid in `UCred` is fixed by the kernel at connect()
+/// time and cannot be spoofed by the client. The pid is deliberately not
+/// consulted (pid reuse races). This is defense in depth, not a hard
+/// boundary: a same-uid process can ptrace the daemon — see SECURITY.md.
+fn peer_permitted(peer_uid: u32, daemon_euid: u32) -> bool {
+    peer_uid == daemon_euid
+}
+
 fn protocol_error(code: ErrorCode, error: &impl fmt::Display) -> ResponseOutcome {
     ResponseOutcome::Error {
         error: ErrorBody {
@@ -315,5 +331,21 @@ impl Error for ServerError {
             Self::Protocol(error) => Some(error),
             Self::OccupiedPath | Self::AlreadyRunning => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::peer_permitted;
+
+    #[test]
+    fn only_the_daemon_uid_is_permitted() {
+        assert!(peer_permitted(1000, 1000));
+        assert!(!peer_permitted(1001, 1000));
+        // Root is not exempted: a root peer can bypass any socket check
+        // through other means, so accepting it here would only widen the
+        // daemon's accepted-input surface without adding capability.
+        assert!(!peer_permitted(0, 1000));
+        assert!(peer_permitted(0, 0));
     }
 }
