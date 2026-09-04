@@ -209,6 +209,7 @@ struct CoreInner {
     outbox_drain: tokio::sync::Mutex<()>,
     panic: PanicLifecycle,
     nostr: Mutex<Option<NostrHandle>>,
+    geo_relays: Mutex<Option<crate::GeoRelayHandle>>,
     rooms: Mutex<Option<crate::RoomsHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
     profile_publication: Mutex<Option<crate::ProfilePublicationCoordinator>>,
@@ -248,6 +249,7 @@ pub enum RegistryClaimEvidence {
 #[derive(Serialize)]
 struct DaemonStatus<'a> {
     compatibility_profile: &'a str,
+    geo_relays: serde_json::Value,
     storage_provider: ProviderKind,
     fingerprint: &'a str,
     peer_id: &'a str,
@@ -376,6 +378,7 @@ impl DaemonCore {
                 outbox_drain: tokio::sync::Mutex::new(()),
                 panic: PanicLifecycle::default(),
                 nostr: Mutex::new(None),
+                geo_relays: Mutex::new(None),
                 rooms: Mutex::new(None),
                 dm_inbox: Mutex::new(None),
                 profile_publication: Mutex::new(profile_publication),
@@ -1221,7 +1224,74 @@ impl DaemonCore {
             .clone()
     }
 
+    pub fn start_geo_relays(
+        &self,
+        inbound: tokio::sync::mpsc::Sender<PoolNotification>,
+    ) -> Result<Option<crate::GeoRelayService>, CoreError> {
+        self.with_active_transition(|| {
+            let config = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .geo_relays
+                .clone();
+            let Some(config) = config else {
+                return Ok(None);
+            };
+            let cells = self
+                .inner
+                .state
+                .lock()
+                .expect("runtime state mutex poisoned")
+                .joined
+                .clone();
+            let mut attached = self
+                .inner
+                .geo_relays
+                .lock()
+                .expect("geo relay mutex poisoned");
+            if attached.is_some() {
+                return Err(CoreError::InvalidConfig);
+            }
+            let service = crate::GeoRelayService::spawn(config, cells, inbound)?;
+            *attached = Some(service.handle());
+            Ok(Some(service))
+        })
+    }
+
+    fn geo_relay_status(&self) -> serde_json::Value {
+        let config = self
+            .inner
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .geo_relays
+            .clone();
+        let handle = self
+            .inner
+            .geo_relays
+            .lock()
+            .expect("geo relay mutex poisoned")
+            .clone();
+        serde_json::json!({
+            "enabled": config.is_some(),
+            "mode": config.as_ref().map(|c| c.mode),
+            "compatibility_profile": omachat_nostr::georelay::COMPATIBILITY_PROFILE_ID,
+            "swift_snapshot_sha256": omachat_nostr::georelay::SWIFT_SNAPSHOT_SHA256,
+            "android_snapshot_sha256": omachat_nostr::georelay::ANDROID_SNAPSHOT_SHA256,
+            "runtime": handle.map(|h| h.status()),
+        })
+    }
+
     pub fn nostr_filters(&self, now: u64) -> Result<Vec<serde_json::Value>, CoreError> {
+        let pinned_geo = self
+            .inner
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .geo_relays
+            .is_some();
         let state = self
             .inner
             .state
@@ -1230,6 +1300,7 @@ impl DaemonCore {
         let mut filters = state
             .joined
             .iter()
+            .filter(|_| !pinned_geo)
             .map(|value| {
                 let geohash = Geohash::parse(value).expect("stored geohash is validated");
                 subscription_filter(&geohash, now.saturating_sub(6 * 60 * 60), 1_000)
@@ -1357,6 +1428,7 @@ impl DaemonCore {
         let relay_change_requires_restart = {
             let current = self.inner.config.lock().expect("config mutex poisoned");
             current.relays != replacement.relays
+                || current.geo_relays != replacement.geo_relays
                 || current.dm_relays != replacement.dm_relays
                 || current.profile_publication != replacement.profile_publication
                 || current.relay_list_publication != replacement.relay_list_publication
@@ -1391,6 +1463,15 @@ impl DaemonCore {
             )
             .map_err(CoreError::AccountVault)?
         };
+        if let Some(geo) = self
+            .inner
+            .geo_relays
+            .lock()
+            .expect("geo relay mutex poisoned")
+            .clone()
+        {
+            geo.set_cells(joined.clone())?;
+        }
         self.inner
             .state
             .lock()
@@ -1718,6 +1799,7 @@ impl DaemonCore {
     }
 
     fn status_value(&self) -> Result<serde_json::Value, CoreError> {
+        let geo_relays = self.geo_relay_status();
         let identity = self.identity()?;
         let identity = identity.as_ref().expect("checked identity");
         let public = identity.public_identity();
@@ -1827,6 +1909,7 @@ impl DaemonCore {
         };
         to_value(DaemonStatus {
             compatibility_profile: COMPATIBILITY_PROFILE,
+            geo_relays,
             storage_provider: self.inner.store.status().provider,
             fingerprint: &public.fingerprint_hex,
             peer_id: &public.peer_id,
@@ -1916,6 +1999,22 @@ impl DaemonCore {
     }
 
     async fn refresh_nostr_subscription(&self) -> Result<(), CoreError> {
+        let geo = self
+            .inner
+            .geo_relays
+            .lock()
+            .expect("geo relay mutex poisoned")
+            .clone();
+        if let Some(geo) = geo {
+            return geo.set_cells(
+                self.inner
+                    .state
+                    .lock()
+                    .expect("runtime state mutex poisoned")
+                    .joined
+                    .clone(),
+            );
+        }
         let handle = self
             .inner
             .nostr
@@ -2031,7 +2130,27 @@ impl DaemonCore {
                 .lock()
                 .expect("Nostr handle mutex poisoned")
                 .clone();
-            let delivery = if let Some(handle) = handle {
+            let geo = self
+                .inner
+                .geo_relays
+                .lock()
+                .expect("geo relay mutex poisoned")
+                .clone();
+            let pinned_geo = self
+                .inner
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .geo_relays
+                .is_some();
+            let delivery = if let Some(geo) = geo {
+                geo.publish(geohash.as_str(), event.clone())
+                    .await
+                    .map_err(CoreError::RelayPool)?;
+                "stored"
+            } else if pinned_geo {
+                return Err(CoreError::Subscription);
+            } else if let Some(handle) = handle {
                 handle
                     .publish(event.clone())
                     .await
@@ -2531,6 +2650,15 @@ impl DaemonCore {
     }
 
     async fn perform_panic_cleanup(&self) -> Result<serde_json::Value, CoreError> {
+        let geo = self
+            .inner
+            .geo_relays
+            .lock()
+            .expect("geo relay mutex poisoned")
+            .take();
+        if let Some(geo) = geo {
+            geo.quiesce().await;
+        }
         self.shutdown_relay_list_publication().await?;
 
         let profile_publication = self

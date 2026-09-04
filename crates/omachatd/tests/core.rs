@@ -112,6 +112,7 @@ async fn invalid_reload_keeps_the_prior_configuration_active() {
     let core = DaemonCore::open(
         temporary.path().join("state"),
         DaemonConfig {
+            geo_relays: None,
             storage_provider: StorageProviderConfig::File,
             relays: vec!["wss://relay.example".into()],
             dm_relays: Vec::new(),

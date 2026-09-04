@@ -48,6 +48,7 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         options.anchors.is_some(),
     )?;
     let (inbound_sender, mut inbound_receiver) = tokio::sync::mpsc::channel(256);
+    let geo_relays = core.start_geo_relays(inbound_sender.clone())?;
     let relays = core.relay_urls();
     let nostr = if relays.is_empty() {
         None
@@ -122,6 +123,9 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     });
     let server_result = server.run(shutdown_rx).await;
     core.prepare_for_shutdown().await;
+    if let Some(service) = geo_relays {
+        service.shutdown().await;
+    }
     if let Some(service) = rooms {
         service.shutdown().await;
     }
