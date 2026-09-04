@@ -11,7 +11,7 @@ fn decode(line: &str) -> Command {
 
 #[test]
 fn nip65_publication_is_a_strict_parameterless_command() {
-    let command = decode(r#"{"version":1,"id":"publish","method":"publish-nip65-relays"}"#);
+    let command = decode(r#"{"version":2,"id":"publish","method":"publish-nip65-relays"}"#);
     assert_eq!(command, Command::PublishNip65Relays);
 
     let encoded = encode_line(&omachat_proto::ipc::Request {
@@ -22,13 +22,13 @@ fn nip65_publication_is_a_strict_parameterless_command() {
     .expect("encode request");
     assert_eq!(
         std::str::from_utf8(&encoded).expect("UTF-8 request"),
-        "{\"version\":1,\"id\":\"publish\",\"method\":\"publish-nip65-relays\"}\n"
+        "{\"version\":2,\"id\":\"publish\",\"method\":\"publish-nip65-relays\"}\n"
     );
 
     let mut decoder = RequestDecoder::default();
     assert_eq!(
         decoder.push(
-            b"{\"version\":1,\"id\":\"publish\",\"method\":\"publish-nip65-relays\",\"params\":{}}\n"
+            b"{\"version\":2,\"id\":\"publish\",\"method\":\"publish-nip65-relays\",\"params\":{}}\n"
         ),
         Err(IpcError::MalformedJson)
     );

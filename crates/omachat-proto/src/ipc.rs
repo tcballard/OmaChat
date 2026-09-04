@@ -4,7 +4,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 
-pub const VERSION: u16 = 1;
+/// Version 2 changed `Panic` and `ClaimRegistryHandle` incompatibly: their
+/// `confirmation` field is now a daemon-minted single-use token obtained
+/// through `RequestPanicConfirmation` / `RequestRegistryClaimConfirmation`,
+/// not an in-band constant. A version-1 client's destructive flow no longer
+/// works, so negotiation must reject it rather than fail at use time.
+pub const VERSION: u16 = 2;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_CORRELATION_ID_BYTES: usize = 128;
 
@@ -60,6 +65,15 @@ pub enum Command {
     ClaimRegistryHandle {
         handle: String,
         confirmation: String,
+    },
+    /// Mint a single-use, TTL-bounded confirmation token for `Panic`. The
+    /// token itself travels out of band via a 0600 file in the daemon state
+    /// directory; the response carries only the file path and expiry.
+    RequestPanicConfirmation,
+    /// Mint a single-use, TTL-bounded confirmation token for
+    /// `ClaimRegistryHandle` on exactly this handle.
+    RequestRegistryClaimConfirmation {
+        handle: String,
     },
     Who {
         geohash: String,
@@ -206,6 +220,15 @@ enum StrictRequestWire {
         version: u16,
         id: String,
         params: RegistryClaimParams,
+    },
+    RequestPanicConfirmation {
+        version: u16,
+        id: String,
+    },
+    RequestRegistryClaimConfirmation {
+        version: u16,
+        id: String,
+        params: HandleParams,
     },
     Who {
         version: u16,
@@ -407,6 +430,18 @@ impl From<StrictRequestWire> for Request {
                     handle,
                     confirmation,
                 },
+            ),
+            StrictRequestWire::RequestPanicConfirmation { version, id } => {
+                (version, id, Command::RequestPanicConfirmation)
+            }
+            StrictRequestWire::RequestRegistryClaimConfirmation {
+                version,
+                id,
+                params: HandleParams { handle },
+            } => (
+                version,
+                id,
+                Command::RequestRegistryClaimConfirmation { handle },
             ),
             StrictRequestWire::Who {
                 version,

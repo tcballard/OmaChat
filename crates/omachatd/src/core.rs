@@ -220,6 +220,7 @@ struct CoreInner {
     config: Mutex<DaemonConfig>,
     events: EventHub,
     sequence: AtomicU64,
+    confirmations: crate::confirmation::DestructiveConfirmations,
 }
 
 #[derive(Clone)]
@@ -288,6 +289,7 @@ impl DaemonCore {
         events: EventHub,
     ) -> Result<Self, CoreError> {
         config.validate()?;
+        let confirmation_root = state_directory.as_ref().to_owned();
         let store = Arc::new(
             SealedStore::open(&state_directory, config.storage_provider.into())
                 .await
@@ -387,6 +389,9 @@ impl DaemonCore {
                 config: Mutex::new(config),
                 events,
                 sequence: AtomicU64::new(1),
+                confirmations: crate::confirmation::DestructiveConfirmations::new(
+                    &confirmation_root,
+                ),
             }),
         })
     }
@@ -1702,6 +1707,23 @@ impl DaemonCore {
                     .await?;
                 Ok(registry_claim_value(&handle, &result))
             }
+            Command::RequestPanicConfirmation => {
+                let issued = self.inner.confirmations.issue(
+                    crate::confirmation::ConfirmationAction::PanicErase,
+                    unix_time()?,
+                )?;
+                Ok(confirmation_issue_value(&issued))
+            }
+            Command::RequestRegistryClaimConfirmation { handle } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                let issued = self.inner.confirmations.issue(
+                    crate::confirmation::ConfirmationAction::RegistryClaim {
+                        handle: handle.as_str().to_owned(),
+                    },
+                    unix_time()?,
+                )?;
+                Ok(confirmation_issue_value(&issued))
+            }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
             Command::JoinRoom {
@@ -2968,6 +2990,14 @@ fn panic_unavailable() -> ResponseOutcome {
             message: "daemon is shutting down and unavailable".into(),
         },
     }
+}
+
+fn confirmation_issue_value(issued: &crate::confirmation::IssuedConfirmation) -> serde_json::Value {
+    serde_json::json!({
+        "token_path": issued.token_path.display().to_string(),
+        "expires_at": issued.expires_at,
+        "ttl_seconds": crate::confirmation::CONFIRMATION_TTL_SECONDS,
+    })
 }
 
 fn unix_time() -> Result<u64, CoreError> {
