@@ -13,6 +13,12 @@ under a separate OS identity or sandbox that cannot access the account's
 runtime directory. In particular, do not describe the `0600` socket as
 authenticating individual same-user applications.
 
+Room generation anchors occupy a storage domain separate from sealed room
+state and detect accidental restoration of only that state. Neither the file
+nor Secret Service provider is a hardware or remote monotonic witness against
+a malicious process already trusted as the same OS user. Deployments requiring
+that stronger adversary model need an independently controlled witness.
+
 After a package installs the binaries and `omachatd.service`:
 
 ```sh

@@ -9,6 +9,9 @@
 //!
 //! Anchor files hold no secrets. They are written by atomic replacement with
 //! fsync so a crash leaves either the previous or the new generation.
+//! Both anchor providers protect against accidental restoration of only the
+//! sealed state. They are not monotonic witnesses against a process already
+//! trusted as the same OS user: such a process can modify both local domains.
 
 use crate::{RoomStateAnchorError, RoomStateGenerationAnchor};
 use secret_service::{EncryptionType, SecretService};
@@ -16,10 +19,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
+    future::Future,
     io::{Read, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::Mutex,
+    time::Duration,
 };
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -30,6 +35,7 @@ const MAX_CONTEXT_BYTES: usize = 128;
 const SECRET_APPLICATION: &str = "org.omachat.OmaChat";
 const SECRET_PURPOSE: &str = "nip29-room-state-generation";
 const SECRET_CONTENT_TYPE: &str = "application/json";
+const SECRET_SERVICE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize, Serialize)]
 struct AnchorFile {
@@ -183,7 +189,11 @@ impl RoomStateGenerationAnchor for FileGenerationAnchor {
     }
 }
 
-/// Monotonic per-(context, relay) generations stored as Secret Service items.
+/// Per-(context, relay) generations stored in an independent Secret Service
+/// domain, with each operation bounded by a total wall-clock deadline.
+///
+/// Callers must enforce a single writer. This provider detects accidental
+/// sealed-state rollback; it is not a malicious same-user monotonic counter.
 pub struct SecretServiceGenerationAnchor {
     lock: AsyncMutex<()>,
 }
@@ -214,36 +224,39 @@ impl RoomStateGenerationAnchor for SecretServiceGenerationAnchor {
     {
         async move {
             validate_anchor_identity(store_context, relay_pubkey)?;
-            let _guard = self.lock.lock().await;
-            let service = SecretService::connect(EncryptionType::Dh)
-                .await
-                .map_err(|_| secret_error("connect to Secret Service"))?;
-            let collection = service
-                .get_default_collection()
-                .await
-                .map_err(|_| secret_error("open the default collection"))?;
-            if collection
-                .is_locked()
-                .await
-                .map_err(|_| secret_error("inspect the default collection"))?
-            {
-                return Err(secret_error("use a locked default collection"));
-            }
-            let items = collection
-                .search_items(secret_attributes(store_context, relay_pubkey))
-                .await
-                .map_err(|_| secret_error("search generation anchors"))?;
-            if items.len() > 1 {
-                return Err(secret_error("use duplicate generation anchors"));
-            }
-            let Some(item) = items.first() else {
-                return Ok(None);
-            };
-            let bytes = item
-                .get_secret()
-                .await
-                .map_err(|_| secret_error("read generation anchor"))?;
-            decode_anchor(&bytes, store_context, relay_pubkey).map(Some)
+            secret_service_deadline(async {
+                let _guard = self.lock.lock().await;
+                let service = SecretService::connect(EncryptionType::Dh)
+                    .await
+                    .map_err(|_| secret_error("connect to Secret Service"))?;
+                let collection = service
+                    .get_default_collection()
+                    .await
+                    .map_err(|_| secret_error("open the default collection"))?;
+                if collection
+                    .is_locked()
+                    .await
+                    .map_err(|_| secret_error("inspect the default collection"))?
+                {
+                    return Err(secret_error("use a locked default collection"));
+                }
+                let items = collection
+                    .search_items(secret_attributes(store_context, relay_pubkey))
+                    .await
+                    .map_err(|_| secret_error("search generation anchors"))?;
+                if items.len() > 1 {
+                    return Err(secret_error("use duplicate generation anchors"));
+                }
+                let Some(item) = items.first() else {
+                    return Ok(None);
+                };
+                let bytes = item
+                    .get_secret()
+                    .await
+                    .map_err(|_| secret_error("read generation anchor"))?;
+                decode_anchor(&bytes, store_context, relay_pubkey).map(Some)
+            })
+            .await
         }
     }
 
@@ -255,62 +268,80 @@ impl RoomStateGenerationAnchor for SecretServiceGenerationAnchor {
     ) -> impl std::future::Future<Output = Result<(), RoomStateAnchorError>> + Send + 'a {
         async move {
             validate_anchor_identity(store_context, relay_pubkey)?;
-            let _guard = self.lock.lock().await;
-            let service = SecretService::connect(EncryptionType::Dh)
-                .await
-                .map_err(|_| secret_error("connect to Secret Service"))?;
-            let collection = service
-                .get_default_collection()
-                .await
-                .map_err(|_| secret_error("open the default collection"))?;
-            if collection
-                .is_locked()
-                .await
-                .map_err(|_| secret_error("inspect the default collection"))?
-            {
-                return Err(secret_error("use a locked default collection"));
-            }
-            let attributes = secret_attributes(store_context, relay_pubkey);
-            let items = collection
-                .search_items(attributes.clone())
-                .await
-                .map_err(|_| secret_error("search generation anchors"))?;
-            if items.len() > 1 {
-                return Err(secret_error("use duplicate generation anchors"));
-            }
-            let encoded = encode_anchor(store_context, relay_pubkey, generation)?;
-            if let Some(item) = items.first() {
-                let bytes = item
-                    .get_secret()
+            secret_service_deadline(async {
+                let _guard = self.lock.lock().await;
+                let service = SecretService::connect(EncryptionType::Dh)
                     .await
-                    .map_err(|_| secret_error("read generation anchor"))?;
-                let current = decode_anchor(&bytes, store_context, relay_pubkey)?;
-                if current > generation {
-                    return Err(RoomStateAnchorError::new(format!(
-                        "anchored generation {current} cannot be lowered to {generation}"
-                    )));
+                    .map_err(|_| secret_error("connect to Secret Service"))?;
+                let collection = service
+                    .get_default_collection()
+                    .await
+                    .map_err(|_| secret_error("open the default collection"))?;
+                if collection
+                    .is_locked()
+                    .await
+                    .map_err(|_| secret_error("inspect the default collection"))?
+                {
+                    return Err(secret_error("use a locked default collection"));
                 }
-                if current == generation {
-                    return Ok(());
+                let attributes = secret_attributes(store_context, relay_pubkey);
+                let items = collection
+                    .search_items(attributes.clone())
+                    .await
+                    .map_err(|_| secret_error("search generation anchors"))?;
+                if items.len() > 1 {
+                    return Err(secret_error("use duplicate generation anchors"));
                 }
-                item.set_secret(&encoded, SECRET_CONTENT_TYPE)
-                    .await
-                    .map_err(|_| secret_error("update generation anchor"))?;
-            } else {
-                collection
-                    .create_item(
-                        "OmaChat NIP-29 room-state generation",
-                        attributes,
-                        &encoded,
-                        false,
-                        SECRET_CONTENT_TYPE,
-                    )
-                    .await
-                    .map_err(|_| secret_error("create generation anchor"))?;
-            }
-            Ok(())
+                let encoded = encode_anchor(store_context, relay_pubkey, generation)?;
+                if let Some(item) = items.first() {
+                    let bytes = item
+                        .get_secret()
+                        .await
+                        .map_err(|_| secret_error("read generation anchor"))?;
+                    let current = decode_anchor(&bytes, store_context, relay_pubkey)?;
+                    if current > generation {
+                        return Err(RoomStateAnchorError::new(format!(
+                            "anchored generation {current} cannot be lowered to {generation}"
+                        )));
+                    }
+                    if current == generation {
+                        return Ok(());
+                    }
+                    item.set_secret(&encoded, SECRET_CONTENT_TYPE)
+                        .await
+                        .map_err(|_| secret_error("update generation anchor"))?;
+                } else {
+                    collection
+                        .create_item(
+                            "OmaChat NIP-29 room-state generation",
+                            attributes,
+                            &encoded,
+                            false,
+                            SECRET_CONTENT_TYPE,
+                        )
+                        .await
+                        .map_err(|_| secret_error("create generation anchor"))?;
+                }
+                Ok(())
+            })
+            .await
         }
     }
+}
+
+async fn secret_service_deadline<T>(
+    operation: impl Future<Output = Result<T, RoomStateAnchorError>>,
+) -> Result<T, RoomStateAnchorError> {
+    deadline(SECRET_SERVICE_TIMEOUT, operation).await
+}
+
+async fn deadline<T>(
+    duration: Duration,
+    operation: impl Future<Output = Result<T, RoomStateAnchorError>>,
+) -> Result<T, RoomStateAnchorError> {
+    tokio::time::timeout(duration, operation)
+        .await
+        .map_err(|_| secret_error("complete the operation before its deadline"))?
 }
 
 fn secret_attributes<'a>(
@@ -486,5 +517,12 @@ mod tests {
         })
         .expect("encode");
         assert!(decode_anchor(&encoded, CONTEXT, RELAY).is_err());
+    }
+
+    #[tokio::test]
+    async fn secret_service_deadline_rejects_a_stalled_operation() {
+        let stalled = std::future::pending::<Result<(), RoomStateAnchorError>>();
+        let result = deadline(Duration::from_millis(1), stalled).await;
+        assert!(result.is_err());
     }
 }
