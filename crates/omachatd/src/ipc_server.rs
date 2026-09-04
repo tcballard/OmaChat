@@ -6,8 +6,9 @@ use serde_json::to_value;
 use std::{
     error::Error,
     fmt, fs,
+    fs::{File, OpenOptions},
     future::Future,
-    os::unix::fs::{FileTypeExt, PermissionsExt},
+    os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, Mutex},
@@ -72,6 +73,8 @@ impl EventHub {
 pub struct IpcServer<H> {
     listener: UnixListener,
     socket_path: PathBuf,
+    lock_path: PathBuf,
+    _instance_lock: File,
     handler: Arc<H>,
     events: EventHub,
 }
@@ -83,6 +86,21 @@ impl<H: RequestHandler> IpcServer<H> {
         events: EventHub,
     ) -> Result<Self, ServerError> {
         let socket_path = socket_path.as_ref().to_owned();
+        let lock_path = socket_path.with_extension("lock");
+        let instance_lock = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&lock_path)
+            .map_err(ServerError::Io)?;
+        instance_lock.try_lock().map_err(|error| match error {
+            fs::TryLockError::WouldBlock => ServerError::AlreadyRunning,
+            fs::TryLockError::Error(error) => ServerError::Io(error),
+        })?;
+        fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))
+            .map_err(ServerError::Io)?;
         if socket_path.exists() {
             let metadata = fs::symlink_metadata(&socket_path).map_err(ServerError::Io)?;
             if !metadata.file_type().is_socket() {
@@ -96,6 +114,8 @@ impl<H: RequestHandler> IpcServer<H> {
         Ok(Self {
             listener,
             socket_path,
+            lock_path,
+            _instance_lock: instance_lock,
             handler: Arc::new(handler),
             events,
         })
@@ -167,6 +187,7 @@ impl<H: RequestHandler> IpcServer<H> {
 impl<H> Drop for IpcServer<H> {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.socket_path);
+        let _ = fs::remove_file(&self.lock_path);
     }
 }
 
@@ -273,6 +294,7 @@ pub enum ServerError {
     Io(std::io::Error),
     Protocol(IpcError),
     OccupiedPath,
+    AlreadyRunning,
 }
 
 impl fmt::Display for ServerError {
@@ -281,6 +303,7 @@ impl fmt::Display for ServerError {
             Self::Io(error) => write!(formatter, "IPC I/O failed: {error}"),
             Self::Protocol(error) => write!(formatter, "IPC protocol failed: {error}"),
             Self::OccupiedPath => formatter.write_str("IPC path exists and is not a socket"),
+            Self::AlreadyRunning => formatter.write_str("another daemon owns the IPC endpoint"),
         }
     }
 }
@@ -290,7 +313,7 @@ impl Error for ServerError {
         match self {
             Self::Io(error) => Some(error),
             Self::Protocol(error) => Some(error),
-            Self::OccupiedPath => None,
+            Self::OccupiedPath | Self::AlreadyRunning => None,
         }
     }
 }

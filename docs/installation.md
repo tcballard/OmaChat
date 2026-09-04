@@ -5,6 +5,14 @@ inputs for the Omarchy v4.0.1 clean-install gate.
 
 ## User service
 
+OmaChat's local IPC socket is an account-local control boundary, not an
+application sandbox. Socket permissions exclude other Unix users, and the
+daemon refuses a concurrent instance, but processes already running as the
+same account are inside this trust boundary. Run untrusted desktop software
+under a separate OS identity or sandbox that cannot access the account's
+runtime directory. In particular, do not describe the `0600` socket as
+authenticating individual same-user applications.
+
 After a package installs the binaries and `omachatd.service`:
 
 ```sh

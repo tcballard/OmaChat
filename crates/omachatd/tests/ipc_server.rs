@@ -425,3 +425,17 @@ async fn assert_client_eof(reader: &mut BufReader<tokio::net::unix::OwnedReadHal
         .expect("read client EOF");
     assert_eq!(count, 0, "server closed client after flushing response");
 }
+
+#[tokio::test]
+async fn second_server_cannot_replace_a_live_ipc_endpoint() {
+    let temporary = tempdir().expect("temporary directory");
+    let socket = temporary.path().join("omachat.sock");
+    let first = IpcServer::bind(&socket, Handler, EventHub::default()).expect("first bind");
+
+    let second = IpcServer::bind(&socket, Handler, EventHub::default());
+    assert!(matches!(second, Err(ServerError::AlreadyRunning)));
+    assert!(socket.exists(), "the live endpoint remains addressable");
+
+    drop(first);
+    assert!(!socket.exists(), "the owner removes its endpoint on drop");
+}
