@@ -48,6 +48,15 @@ CI additionally runs `cargo-audit` through the RustSec audit action and
 policy. Dependencies must be recorded in `Cargo.lock`; wildcard requirements,
 yanked crates, unknown registries, and unknown Git sources are denied.
 
+`cargo test -p omachat-ctl --test cli_contract --locked` exercises the real
+CLI against a deterministic Unix-socket peer: automatic hello negotiation,
+core-command arguments, stable single-line status JSON, redirected output,
+usage/connection/version/remote errors, malformed/oversized/uncorrelated
+replies, disconnects, and the real five-second timeout at handshake and
+command boundaries. These tests do not substitute for daemon or live-relay
+conformance. They intentionally fail rather than skip if the test environment
+denies Unix-socket creation.
+
 The dependency policy permits 0BSD, Apache-2.0, MIT, Unicode-3.0, ISC, and the
 two- and three-clause BSD licenses. The BSD/ISC additions cover the pinned
 BlueR and Rustls probe stacks; they do not weaken the Android clean-room rule or

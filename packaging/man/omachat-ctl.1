@@ -49,7 +49,10 @@ client-side authorization; relay policy remains authoritative.
 .B panic --confirm ERASE
 Cryptographically erase local state and stop the daemon.
 .SH EXIT STATUS
-0 success; 2 usage; 3 connection; 4 protocol/remote error; 5 timeout.
+0 success; 2 usage; 3 connection, malformed/oversized response, or response-ID
+mismatch; 4 incompatible protocol version or daemon-reported error; 5 timeout.
+Failures write diagnostics to stderr and do not emit successful JSON on stdout.
+The client negotiates the IPC version automatically before sending its command.
 .SH SEE ALSO
 .BR omachat (1),
 .BR omachatd (8)
