@@ -42,6 +42,20 @@ Use `omachat-ctl status`, launch `omachat`, and stop with
 `systemctl --user disable --now omachatd.service`. No install or removal action
 edits Hyprland, Waybar, shell.json, user config, polkit policy, or linger state.
 
+SIGTERM (the normal systemd stop signal) and SIGINT use the same graceful
+shutdown path: stop accepting IPC, drain active requests within the bounded
+IPC deadline, remove the socket, and shut down the owned services. Neither
+signal erases identity or the sealed outbox. Signal handlers are registered
+before the IPC socket becomes available; handler-registration errors fail
+startup rather than leaving a running daemon without its shutdown handlers.
+
+When launched with `--config`, SIGHUP validates and applies supported hot
+changes such as joined geohashes. Malformed/invalid configuration and relay
+policy changes requiring restart are rejected with an error in the journal;
+the prior active configuration stays in effect. The reload task is stopped
+and joined before service teardown. This does not replace the target-host
+login/keyring/linger lifecycle checks in OC-007.
+
 The JSON daemon config may set `account_handle` (for example `"@tom"`) and
 `account_display_name`. Both are sealed into a root-signed local binding and
 survive restart if later omitted from configuration. Until the central registry
