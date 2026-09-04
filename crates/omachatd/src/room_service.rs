@@ -46,8 +46,8 @@ use omachat_nostr::{
 };
 use omachat_proto::ipc::Topic;
 use omachat_store::{
-    FileGenerationAnchor, RoomStateAnchorError, RoomStateVault, RoomStateVaultError, SealedStore,
-    StoreError,
+    FileGenerationAnchor, RoomStateAnchorError, RoomStateGenerationAnchor, RoomStateVault,
+    RoomStateVaultError, SealedStore, SecretServiceGenerationAnchor, StoreError,
 };
 use serde_json::{Value, json};
 use std::{
@@ -138,11 +138,64 @@ pub struct RoomServiceOptions {
     pub route: RelayRoute,
     /// Anchor directory; must lie outside `state_directory`.
     pub anchor_directory: PathBuf,
+    pub anchor_provider: RoomAnchorProvider,
     pub state_directory: PathBuf,
     /// Binds sealed room state to this daemon identity (device Nostr key).
     pub store_context: String,
     /// How far back the room subscription asks for messages.
     pub history_window_seconds: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RoomAnchorProvider {
+    File,
+    SecretService,
+}
+
+enum RoomGenerationAnchor {
+    File(FileGenerationAnchor),
+    SecretService(SecretServiceGenerationAnchor),
+}
+
+// Explicit RPIT preserves the trait's `Send` future guarantee.
+#[allow(clippy::manual_async_fn)]
+impl RoomStateGenerationAnchor for RoomGenerationAnchor {
+    fn load_generation<'a>(
+        &'a self,
+        store_context: &'a str,
+        relay_pubkey: &'a str,
+    ) -> impl Future<Output = Result<Option<u64>, RoomStateAnchorError>> + Send + 'a {
+        async move {
+            match self {
+                Self::File(anchor) => anchor.load_generation(store_context, relay_pubkey).await,
+                Self::SecretService(anchor) => {
+                    anchor.load_generation(store_context, relay_pubkey).await
+                }
+            }
+        }
+    }
+
+    fn store_generation<'a>(
+        &'a self,
+        store_context: &'a str,
+        relay_pubkey: &'a str,
+        generation: u64,
+    ) -> impl Future<Output = Result<(), RoomStateAnchorError>> + Send + 'a {
+        async move {
+            match self {
+                Self::File(anchor) => {
+                    anchor
+                        .store_generation(store_context, relay_pubkey, generation)
+                        .await
+                }
+                Self::SecretService(anchor) => {
+                    anchor
+                        .store_generation(store_context, relay_pubkey, generation)
+                        .await
+                }
+            }
+        }
+    }
 }
 
 enum RoomCommand {
@@ -291,10 +344,15 @@ impl RoomService {
         store: Arc<SealedStore>,
         publisher: EventPublisher,
     ) -> Result<Self, RoomServiceError> {
-        let anchor = Arc::new(
-            FileGenerationAnchor::open(&options.anchor_directory, &options.state_directory)
-                .map_err(RoomServiceError::Anchor)?,
-        );
+        let anchor = Arc::new(match options.anchor_provider {
+            RoomAnchorProvider::File => RoomGenerationAnchor::File(
+                FileGenerationAnchor::open(&options.anchor_directory, &options.state_directory)
+                    .map_err(RoomServiceError::Anchor)?,
+            ),
+            RoomAnchorProvider::SecretService => {
+                RoomGenerationAnchor::SecretService(SecretServiceGenerationAnchor::new())
+            }
+        });
         let (stop, stop_receiver) = watch::channel(false);
         let identity_claims = Arc::new(RelayIdentityClaims::default());
         let mut relays = BTreeMap::new();
@@ -402,7 +460,7 @@ struct RelayActor {
     url: String,
     route: RelayRoute,
     store: Arc<SealedStore>,
-    anchor: Arc<FileGenerationAnchor>,
+    anchor: Arc<RoomGenerationAnchor>,
     store_context: String,
     history_window: u64,
     publisher: EventPublisher,
@@ -474,7 +532,7 @@ impl RelayActor {
             self.serve_terminal(&mut commands, &mut stop).await;
             return;
         };
-        let mut state = match vault.load_or_create(now, &self.limits) {
+        let mut state = match vault.load_or_create(now, &self.limits).await {
             Ok((state, _)) => state,
             Err(error) => {
                 self.status = RelayStatus::StateRefused(error.to_string());
@@ -490,7 +548,7 @@ impl RelayActor {
             now,
         ) {
             Ok(RelayIdentityObservation::Bound) => {
-                if let Err(error) = vault.persist(&state) {
+                if let Err(error) = vault.persist(&state).await {
                     self.status = RelayStatus::StateRefused(error.to_string());
                     self.serve_terminal(&mut commands, &mut stop).await;
                     return;
@@ -680,7 +738,7 @@ impl RelayActor {
         handle: &NostrHandle,
         sink: &mut HandleSink,
         subscriptions: &mut RoomSubscriptions,
-        vault: &mut RoomStateVault<'_>,
+        vault: &mut RoomStateVault<'_, RoomGenerationAnchor>,
         state: &mut RelayRoomState,
         source: IdentitySource,
     ) {
@@ -820,7 +878,7 @@ impl RelayActor {
         notification: PoolNotification,
         sink: &mut HandleSink,
         subscriptions: &mut RoomSubscriptions,
-        vault: &mut RoomStateVault<'_>,
+        vault: &mut RoomStateVault<'_, RoomGenerationAnchor>,
         state: &mut RelayRoomState,
     ) {
         match notification.notification {
@@ -841,7 +899,7 @@ impl RelayActor {
                 match self.reduce_event(event, now, subscriptions, state) {
                     Reduction::Unchanged => {}
                     Reduction::Changed => {
-                        if let Err(error) = vault.persist(state) {
+                        if let Err(error) = vault.persist(state).await {
                             self.status = RelayStatus::StateRefused(error.to_string());
                             eprintln!(
                                 "omachatd: room state for {} could not be persisted; stopping the relay: {error}",

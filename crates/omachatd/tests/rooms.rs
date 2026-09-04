@@ -180,6 +180,7 @@ fn config_with_relays(relays: Vec<String>) -> DaemonConfig {
         storage_provider: StorageProviderConfig::File,
         rooms: Some(RoomsConfig {
             relays,
+            anchor_provider: Default::default(),
             anchor_directory: None,
         }),
         ..DaemonConfig::default()

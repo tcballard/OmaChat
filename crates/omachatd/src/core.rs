@@ -2624,6 +2624,7 @@ impl DaemonCore {
         &self,
         state_directory: &Path,
         default_anchor_directory: std::path::PathBuf,
+        explicit_anchor_directory: bool,
     ) -> Result<Option<crate::RoomService>, CoreError> {
         let rooms = self
             .inner
@@ -2635,6 +2636,11 @@ impl DaemonCore {
         let Some(rooms) = rooms else {
             return Ok(None);
         };
+        if rooms.anchor_provider == crate::config::RoomAnchorProviderConfig::SecretService
+            && explicit_anchor_directory
+        {
+            return Err(CoreError::InvalidConfig);
+        }
         let relays = rooms.canonical_relays()?;
         if relays.is_empty() {
             return Ok(None);
@@ -2660,6 +2666,14 @@ impl DaemonCore {
                     .anchor_directory
                     .clone()
                     .unwrap_or(default_anchor_directory),
+                anchor_provider: match rooms.anchor_provider {
+                    crate::config::RoomAnchorProviderConfig::File => {
+                        crate::room_service::RoomAnchorProvider::File
+                    }
+                    crate::config::RoomAnchorProviderConfig::SecretService => {
+                        crate::room_service::RoomAnchorProvider::SecretService
+                    }
+                },
                 state_directory: state_directory.to_owned(),
                 store_context,
                 history_window_seconds: ROOM_HISTORY_WINDOW_SECONDS,

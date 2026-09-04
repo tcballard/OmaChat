@@ -16,7 +16,7 @@ use omachat_nostr::{
     nip29_room_state::{RelayRoomState, RelayRoomStateSnapshot, RoomStateError},
 };
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, future::Future};
 
 pub const ROOM_STATE_RECORD_VERSION: u16 = 1;
 const RECORD_PREFIX: &str = "nip29-rooms-v1-";
@@ -43,18 +43,18 @@ struct RecordHeader {
 /// Implementations must ensure a previously stored generation cannot be
 /// deleted or lowered by restoring the [`SealedStore`] from backup.
 pub trait RoomStateGenerationAnchor: Send + Sync {
-    fn load_generation(
-        &self,
-        store_context: &str,
-        relay_pubkey: &str,
-    ) -> Result<Option<u64>, RoomStateAnchorError>;
+    fn load_generation<'a>(
+        &'a self,
+        store_context: &'a str,
+        relay_pubkey: &'a str,
+    ) -> impl Future<Output = Result<Option<u64>, RoomStateAnchorError>> + Send + 'a;
 
-    fn store_generation(
-        &self,
-        store_context: &str,
-        relay_pubkey: &str,
+    fn store_generation<'a>(
+        &'a self,
+        store_context: &'a str,
+        relay_pubkey: &'a str,
         generation: u64,
-    ) -> Result<(), RoomStateAnchorError>;
+    ) -> impl Future<Output = Result<(), RoomStateAnchorError>> + Send + 'a;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -89,21 +89,21 @@ pub enum RoomStateLoad {
 }
 
 /// Persistence boundary for one relay's room state.
-pub struct RoomStateVault<'store> {
+pub struct RoomStateVault<'store, Anchor: RoomStateGenerationAnchor + ?Sized> {
     store: &'store SealedStore,
-    anchor: &'store dyn RoomStateGenerationAnchor,
+    anchor: &'store Anchor,
     store_context: String,
     relay_pubkey: String,
     record_name: String,
     generation: u64,
 }
 
-impl<'store> RoomStateVault<'store> {
+impl<'store, Anchor: RoomStateGenerationAnchor + ?Sized> RoomStateVault<'store, Anchor> {
     /// Bind a vault to a store, a caller-chosen store context (for example
     /// the local account or device public key), and one relay identity.
     pub fn open(
         store: &'store SealedStore,
-        anchor: &'store dyn RoomStateGenerationAnchor,
+        anchor: &'store Anchor,
         store_context: &str,
         relay_pubkey: &str,
     ) -> Result<Self, RoomStateVaultError> {
@@ -141,7 +141,7 @@ impl<'store> RoomStateVault<'store> {
 
     /// Load and validate the persisted room state, returning an empty state
     /// only when the store provably never held one for this relay.
-    pub fn load_or_create(
+    pub async fn load_or_create(
         &mut self,
         now: u64,
         limits: &EventLimits,
@@ -149,6 +149,7 @@ impl<'store> RoomStateVault<'store> {
         let anchor = self
             .anchor
             .load_generation(&self.store_context, &self.relay_pubkey)
+            .await
             .map_err(RoomStateVaultError::Anchor)?;
         let record = match self.store.read(&self.record_name) {
             Ok(bytes) => Some(bytes),
@@ -162,6 +163,7 @@ impl<'store> RoomStateVault<'store> {
                     if anchor.is_none() {
                         self.anchor
                             .store_generation(&self.store_context, &self.relay_pubkey, 0)
+                            .await
                             .map_err(RoomStateVaultError::Anchor)?;
                     }
                     self.generation = 0;
@@ -210,6 +212,7 @@ impl<'store> RoomStateVault<'store> {
         if decoded.generation > anchor_generation {
             self.anchor
                 .store_generation(&self.store_context, &self.relay_pubkey, decoded.generation)
+                .await
                 .map_err(RoomStateVaultError::Anchor)?;
         }
         self.generation = decoded.generation;
@@ -223,18 +226,20 @@ impl<'store> RoomStateVault<'store> {
 
     /// Persist a snapshot as the next generation. Either the previous valid
     /// state or the new one is on disk afterwards, never a mixture.
-    pub fn persist(&mut self, state: &RelayRoomState) -> Result<u64, RoomStateVaultError> {
+    pub async fn persist(&mut self, state: &RelayRoomState) -> Result<u64, RoomStateVaultError> {
         if state.relay_pubkey() != self.relay_pubkey {
             return Err(RoomStateVaultError::RelayMismatch);
         }
         let anchored = self
             .anchor
             .load_generation(&self.store_context, &self.relay_pubkey)
+            .await
             .map_err(RoomStateVaultError::Anchor)?;
         match anchored {
             None if self.generation == 0 => self
                 .anchor
                 .store_generation(&self.store_context, &self.relay_pubkey, 0)
+                .await
                 .map_err(RoomStateVaultError::Anchor)?,
             Some(generation) if generation == self.generation => {}
             None => return Err(RoomStateVaultError::MissingAnchor),
@@ -266,6 +271,7 @@ impl<'store> RoomStateVault<'store> {
             .map_err(RoomStateVaultError::Store)?;
         self.anchor
             .store_generation(&self.store_context, &self.relay_pubkey, generation)
+            .await
             .map_err(RoomStateVaultError::Anchor)?;
         self.generation = generation;
         Ok(generation)

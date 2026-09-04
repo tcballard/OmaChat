@@ -53,7 +53,11 @@ restart retries never infer protocol semantics from encrypted payloads.
 `rooms` is an opt-in object for standard NIP-29 rooms:
 
 ```json
-"rooms": { "relays": ["wss://rooms.example"], "anchor_directory": null }
+"rooms": {
+  "relays": ["wss://rooms.example"],
+  "anchor_provider": "file",
+  "anchor_directory": null
+}
 ```
 
 `rooms.relays` lists room relays (`wss://`, or numeric-loopback `ws://` for
@@ -68,7 +72,12 @@ relay identity and guarded by a generation anchor that must live outside the
 daemon state directory; `rooms.anchor_directory` (or `omachatd --anchors`)
 overrides the default sibling directory `<state>-anchors`. Restoring the state
 directory from backup without the anchors is detected and refused rather than
-silently rewinding rooms. Relay changes require a daemon restart. The default
+silently rewinding rooms. Set `anchor_provider` to `secret-service` to keep
+generations in the unlocked default Secret Service collection instead. This
+selection fails closed when Secret Service is unavailable, locked, duplicated,
+or corrupt; `anchor_directory` and `omachatd --anchors` are rejected with that
+provider rather than silently ignored. File anchors remain the portable
+default. Relay changes require a daemon restart. The default
 configuration permits one active URL per relay signing key. If two configured
 URLs declare the same `self` key, both are reported as `identity-conflict` and
 stopped before they can concurrently reduce or persist that relay's state.
