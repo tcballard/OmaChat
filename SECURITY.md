@@ -35,9 +35,21 @@ under the account root. A configured handle is only a local candidate. No
 global uniqueness, registry freshness, recovery, revocation, or
 key-transparency claim exists until their complete verification paths ship.
 
-IPC is versioned, length bounded, and carried over a 0600 Unix socket. The
-systemd user service restricts writable paths and privileges, but Bluetooth,
-network, Unix-socket, and user-session D-Bus access remain necessary.
+IPC is versioned, length bounded, and carried over a Unix socket created 0600
+under a restrictive umask. The daemon checks SO_PEERCRED on every accepted
+connection and drops any peer whose uid differs from its own effective uid,
+root included. Destructive commands (panic erase, registry handle claims)
+additionally require a single-use confirmation token with a 120-second
+lifetime, minted on request into a 0600 file inside the sealed state
+directory and echoed back in a second step. These are deliberate-two-step
+and freshness guarantees, not an authorization boundary: same-uid isolation
+is not a boundary this daemon can enforce alone. A process running as the
+same user can ultimately ptrace the daemon, read its memory, or read the
+state directory that holds the confirmation tokens. Protecting the account
+from hostile same-user code — including coding agents — requires OS-level
+sandboxing of that code, not daemon-side checks. The systemd user service
+restricts writable paths and privileges, but Bluetooth, network,
+Unix-socket, and user-session D-Bus access remain necessary.
 
 ## Metadata and network limits
 
