@@ -9,6 +9,7 @@ use omachatd::{
 };
 use serde_json::{Value, json};
 use std::{
+    collections::BTreeSet,
     path::Path,
     sync::{
         Arc, Mutex,
@@ -171,10 +172,14 @@ async fn serve_nostr(stream: TcpStream, log: Arc<RelayLog>) {
 }
 
 fn config(url: &str) -> DaemonConfig {
+    config_with_relays(vec![url.to_owned()])
+}
+
+fn config_with_relays(relays: Vec<String>) -> DaemonConfig {
     DaemonConfig {
         storage_provider: StorageProviderConfig::File,
         rooms: Some(RoomsConfig {
-            relays: vec![url.to_owned()],
+            relays,
             anchor_directory: None,
         }),
         ..DaemonConfig::default()
@@ -536,5 +541,76 @@ async fn relay_without_self_key_stays_unavailable_even_when_it_advertises_nip29(
     .await
     .expect_err("join must be refused without NIP-11 self");
     assert!(refused.contains("Unavailable"), "{refused}");
+    service.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn duplicate_urls_for_one_relay_identity_stop_both_actors() {
+    let temporary = tempdir().expect("tempdir");
+    let state = temporary.path().join("state");
+    let anchors = temporary.path().join("anchors");
+    let relay = pubkey(&RELAY_SECRET);
+    let mut urls = Vec::new();
+
+    for _ in 0..2 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        urls.push(format!("ws://{}", listener.local_addr().expect("address")));
+        tokio::spawn(fake_relay(
+            listener,
+            json!({"self": relay, "supported_nips": [1, 11, 29]}),
+            Arc::new(RelayLog::default()),
+        ));
+    }
+
+    let core = DaemonCore::open(
+        &state,
+        config_with_relays(urls.clone()),
+        EventHub::default(),
+    )
+    .await
+    .expect("core");
+    let service = core
+        .start_rooms(&state, anchors)
+        .expect("rooms start")
+        .expect("configured");
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let listed = request(&core, Command::ListRooms).await.expect("list");
+            let relays = listed["relays"].as_array().expect("relays");
+            if relays
+                .iter()
+                .all(|entry| entry["status"] == "identity-conflict")
+            {
+                for entry in relays {
+                    assert_eq!(entry["relay_pubkey"], relay);
+                    assert_eq!(entry["detail"]["relay_pubkey"], relay);
+                    assert_eq!(
+                        entry["detail"]["configured_urls"],
+                        json!(urls.iter().collect::<BTreeSet<_>>())
+                    );
+                }
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("duplicate identity refused in time");
+
+    for url in urls {
+        let refused = request(
+            &core,
+            Command::JoinRoom {
+                relay: url,
+                group_id: "omarchy".into(),
+                invite_code: None,
+            },
+        )
+        .await
+        .expect_err("duplicate relay identity must stay unavailable");
+        assert!(refused.contains("Unavailable"), "{refused}");
+    }
+
     service.shutdown().await;
 }

@@ -69,6 +69,9 @@ daemon state directory; `rooms.anchor_directory` (or `omachatd --anchors`)
 overrides the default sibling directory `<state>-anchors`. Restoring the state
 directory from backup without the anchors is detected and refused rather than
 silently rewinding rooms. Relay changes require a daemon restart. The default
+configuration permits one active URL per relay signing key. If two configured
+URLs declare the same `self` key, both are reported as `identity-conflict` and
+stopped before they can concurrently reduce or persist that relay's state.
 OmaChat bootstrap relay does not implement NIP-29; configure a NIP-29 relay
 explicitly.
 

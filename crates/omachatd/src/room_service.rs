@@ -72,6 +72,40 @@ const IDENTITY_TIMEOUT: Duration = Duration::from_secs(15);
 const COMMAND_CAPACITY: usize = 32;
 const INBOUND_CAPACITY: usize = 256;
 
+#[derive(Default)]
+struct RelayIdentityClaims {
+    claims: Mutex<BTreeMap<String, RelayIdentityClaim>>,
+}
+
+struct RelayIdentityClaim {
+    url: String,
+    conflict: watch::Sender<Option<String>>,
+}
+
+impl RelayIdentityClaims {
+    fn claim(
+        &self,
+        relay_pubkey: &str,
+        url: &str,
+    ) -> Result<watch::Receiver<Option<String>>, String> {
+        let mut claims = self.claims.lock().expect("identity claims mutex poisoned");
+        if let Some(existing) = claims.get(relay_pubkey) {
+            let existing_url = existing.url.clone();
+            let _ = existing.conflict.send(Some(url.to_owned()));
+            return Err(existing_url);
+        }
+        let (conflict, receiver) = watch::channel(None);
+        claims.insert(
+            relay_pubkey.to_owned(),
+            RelayIdentityClaim {
+                url: url.to_owned(),
+                conflict,
+            },
+        );
+        Ok(receiver)
+    }
+}
+
 /// Publishes IPC events on the core's sequence.
 pub type EventPublisher = Arc<dyn Fn(Topic, Value) + Send + Sync>;
 
@@ -262,6 +296,7 @@ impl RoomService {
                 .map_err(RoomServiceError::Anchor)?,
         );
         let (stop, stop_receiver) = watch::channel(false);
+        let identity_claims = Arc::new(RelayIdentityClaims::default());
         let mut relays = BTreeMap::new();
         let mut tasks = Vec::new();
         for url in &options.relays {
@@ -280,6 +315,7 @@ impl RoomService {
                 history_window: options.history_window_seconds,
                 publisher: Arc::clone(&publisher),
                 identity_slot: Arc::clone(&identity),
+                identity_claims: Arc::clone(&identity_claims),
                 limits: EventLimits::default(),
                 status: RelayStatus::DiscoveringIdentity,
             };
@@ -371,6 +407,7 @@ struct RelayActor {
     history_window: u64,
     publisher: EventPublisher,
     identity_slot: Arc<Mutex<Option<String>>>,
+    identity_claims: Arc<RelayIdentityClaims>,
     limits: EventLimits,
     status: RelayStatus,
 }
@@ -406,6 +443,19 @@ impl RelayActor {
             self.discover_identity(&mut commands, &mut stop).await
         else {
             return;
+        };
+        *self.identity_slot.lock().expect("identity mutex poisoned") = Some(relay_pubkey.clone());
+        let mut identity_conflict = match self.identity_claims.claim(&relay_pubkey, &self.url) {
+            Ok(conflict) => conflict,
+            Err(other_url) => {
+                self.status = RelayStatus::IdentityConflict(duplicate_identity_detail(
+                    &relay_pubkey,
+                    &self.url,
+                    &other_url,
+                ));
+                self.serve_terminal(&mut commands, &mut stop).await;
+                return;
+            }
         };
         let store = Arc::clone(&self.store);
         let anchor = Arc::clone(&self.anchor);
@@ -469,8 +519,6 @@ impl RelayActor {
                 return;
             }
         }
-        *self.identity_slot.lock().expect("identity mutex poisoned") = Some(relay_pubkey.clone());
-
         let joined = match self.load_joined_rooms(&relay_pubkey) {
             Ok(joined) => joined,
             Err(error) => {
@@ -513,6 +561,18 @@ impl RelayActor {
             tokio::select! {
                 biased;
                 _ = wait_for_stop(&mut stop) => break,
+                changed = identity_conflict.changed() => {
+                    if changed.is_ok()
+                        && let Some(other_url) = identity_conflict.borrow().clone()
+                    {
+                        self.status = RelayStatus::IdentityConflict(duplicate_identity_detail(
+                            &relay_pubkey,
+                            &self.url,
+                            &other_url,
+                        ));
+                    }
+                    break;
+                }
                 command = commands.recv() => {
                     let Some(command) = command else { break };
                     self.handle_command(command, &handle, &mut sink, &mut subscriptions, &mut vault, &mut state, source).await;
@@ -1074,6 +1134,16 @@ impl RelayActor {
         self.store
             .write(&Self::joined_record_name(relay_pubkey), &encoded)
     }
+}
+
+fn duplicate_identity_detail(relay_pubkey: &str, url: &str, other_url: &str) -> Value {
+    let mut configured_urls = [url, other_url];
+    configured_urls.sort_unstable();
+    json!({
+        "relay_pubkey": relay_pubkey,
+        "configured_urls": configured_urls,
+        "assessment": "multiple configured URLs declared the same relay identity; all actors for that identity are stopped until replica ordering is configured explicitly",
+    })
 }
 
 fn room_summary(
