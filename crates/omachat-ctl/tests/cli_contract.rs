@@ -3,7 +3,7 @@ use omachat_proto::ipc::{
     Command, ErrorBody, ErrorCode, MAX_LINE_BYTES, Request, Response, ResponseOutcome, VERSION,
     encode_line,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 use std::{
     future::Future,
     path::Path,
@@ -153,25 +153,19 @@ fn missing_daemon_and_invalid_arguments_have_distinct_exit_codes() {
 
 #[tokio::test]
 async fn status_json_is_stable_single_line_and_has_no_redirected_color() {
-    let mut outputs = Vec::new();
     for _ in 0..2 {
-        outputs.push(with_peer(&["status", "--json"], |mut peer| async move {
+        let output = with_peer(&["status", "--json"], |mut peer| async move {
             hello(&mut peer).await;
             let request = request(&mut peer).await;
             assert_eq!(request.command, Command::Status);
             respond(&mut peer, &request, ResponseOutcome::Ok {
                 result: json!({"storage_provider":"file", "outbox_pending":2, "joined_geohashes":["gcpvj"]}),
             }).await;
-        }).await);
-    }
-    for output in &outputs {
+        }).await;
         assert!(output.status.success());
         assert!(output.stderr.is_empty());
         assert_eq!(output.stdout, b"{\"joined_geohashes\":[\"gcpvj\"],\"outbox_pending\":2,\"storage_provider\":\"file\"}\n");
-        assert!(!output.stdout.contains(&0x1b));
-        assert!(serde_json::from_slice::<Value>(&output.stdout).is_ok());
     }
-    assert_eq!(outputs[0].stdout, outputs[1].stdout);
 }
 
 #[tokio::test]
