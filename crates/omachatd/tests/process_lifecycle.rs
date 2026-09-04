@@ -247,11 +247,20 @@ fn sigterm_drains_clients_and_restart_preserves_identity_and_sealed_outbox() {
 
     let mut restarted = fixture.start();
     let after = fixture.client().request(Command::Status);
-    for field in ["fingerprint", "nostr_public_key", "peer_id"] {
-        assert_eq!(before[field], after[field], "changed {field}");
-    }
-    for field in ["account_id", "device_id"] {
-        assert_eq!(before["account"][field], after["account"][field]);
+    for field in [
+        "/fingerprint",
+        "/nostr_public_key",
+        "/peer_id",
+        "/account/account_id",
+        "/account/device_id",
+    ] {
+        let identity = before.pointer(field).and_then(Value::as_str).unwrap();
+        assert!(!identity.is_empty(), "empty {field}");
+        assert_eq!(
+            after.pointer(field).and_then(Value::as_str),
+            Some(identity),
+            "changed {field}"
+        );
     }
     assert_eq!(after["outbox_pending"], 1);
     assert_eq!(after["outbox_failed"], 0);
