@@ -148,9 +148,9 @@ def expect(condition: bool, message: str):
 def run(url: str, capture_path: Path) -> None:
     information = fetch_information(url)
     expect(29 in information.get("supported_nips", []), "relay does not advertise NIP-29")
-    relay_pubkey = information.get("pubkey")
-    expect(isinstance(relay_pubkey, str) and len(relay_pubkey) == 64, "NIP-11 pubkey missing")
-    identity_source = "self" if information.get("self") else "pubkey"
+    relay_pubkey = information.get("self")
+    expect(isinstance(relay_pubkey, str) and len(relay_pubkey) == 64, "NIP-11 self missing")
+    identity_source = "self"
 
     capture: list = []
     creator = nostr.public_key(CREATOR_SECRET)

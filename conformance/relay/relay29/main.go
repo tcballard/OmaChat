@@ -10,10 +10,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/fiatjaf/eventstore/slicestore"
@@ -55,6 +57,10 @@ func main() {
 		DefaultRoles:            []*nip29.Role{adminRole, moderatorRole},
 		GroupCreatorDefaultRole: adminRole,
 	})
+	relayPubkey, err := nostr.GetPublicKey(secret)
+	if err != nil {
+		log.Fatalf("derive relay public key: %v", err)
+	}
 
 	state.AllowAction = func(ctx context.Context, group nip29.Group, role *nip29.Role, action relay29.Action) bool {
 		if role == adminRole {
@@ -88,7 +94,29 @@ func main() {
 	})
 
 	fmt.Printf("relay29 harness listening on http://127.0.0.1:%s\n", port)
-	if err := http.ListenAndServe("127.0.0.1:"+port, relay); err != nil {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.Header.Get("Accept"), "application/nostr+json") {
+			document, err := json.Marshal(relay.Info)
+			if err != nil {
+				http.Error(w, "could not encode relay information", http.StatusInternalServerError)
+				return
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(document, &fields); err != nil {
+				http.Error(w, "could not prepare relay information", http.StatusInternalServerError)
+				return
+			}
+			fields["self"] = relayPubkey
+			w.Header().Set("Content-Type", "application/nostr+json")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			if err := json.NewEncoder(w).Encode(fields); err != nil {
+				log.Printf("encode relay information: %v", err)
+			}
+			return
+		}
+		relay.ServeHTTP(w, r)
+	})
+	if err := http.ListenAndServe("127.0.0.1:"+port, handler); err != nil {
 		log.Fatalf("serve: %v", err)
 	}
 }
