@@ -52,16 +52,18 @@ async fn main() -> ExitCode {
             .get(model.selected)
             .map(|conversation| conversation.id.as_str());
         match parse_input(&line, current) {
-            Ok(Some(command)) => match client.request(command).await {
-                Ok(response) => match response.outcome {
-                    ResponseOutcome::Ok { result } => {
-                        model.status = result.to_string();
-                        model.security_notice_pending = false;
-                    }
-                    ResponseOutcome::Error { error } => model.status = error.message,
-                },
-                Err(error) => model.status = format!("disconnected: {error}"),
-            },
+            Ok(Some(command)) => {
+                match omachat_ctl::request_with_confirmation(&mut client, command).await {
+                    Ok(response) => match response.outcome {
+                        ResponseOutcome::Ok { result } => {
+                            model.status = result.to_string();
+                            model.security_notice_pending = false;
+                        }
+                        ResponseOutcome::Error { error } => model.status = error.message,
+                    },
+                    Err(error) => model.status = format!("disconnected: {error}"),
+                }
+            }
             Ok(None) => {}
             Err(error) => model.status = error,
         }

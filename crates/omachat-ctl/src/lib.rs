@@ -74,6 +74,82 @@ impl Client {
     }
 }
 
+/// Restated at every panic invocation: erasure is local-only.
+pub const PANIC_ERASE_WARNING: &str = "panic erase destroys the local master key and sealed \
+state; it cannot retract messages, keys, or metadata already replicated to relays, peers, or \
+backups";
+
+/// Two-phase orchestration for destructive commands. The typed intent
+/// (`ERASE`, or the handle echoed to `--confirm`) is checked locally; the
+/// daemon-minted single-use token is then fetched out of band from the
+/// daemon state directory and echoed back. Non-destructive commands pass
+/// straight through.
+pub async fn request_with_confirmation(
+    client: &mut Client,
+    command: Command,
+) -> Result<Response, ClientError> {
+    match command {
+        Command::Panic { confirmation } => {
+            if confirmation != "ERASE" {
+                return Err(ClientError::ConfirmationRefused(
+                    "panic requires --confirm ERASE".into(),
+                ));
+            }
+            let issued = client.request(Command::RequestPanicConfirmation).await?;
+            let ResponseOutcome::Ok { ref result } = issued.outcome else {
+                return Ok(issued);
+            };
+            let token = read_confirmation_token(result)?;
+            client
+                .request(Command::Panic {
+                    confirmation: token,
+                })
+                .await
+        }
+        Command::ClaimRegistryHandle {
+            handle,
+            confirmation,
+        } => {
+            if confirmation != handle {
+                return Err(ClientError::ConfirmationRefused(
+                    "claim-handle requires --confirm HANDLE to echo the handle exactly".into(),
+                ));
+            }
+            let issued = client
+                .request(Command::RequestRegistryClaimConfirmation {
+                    handle: handle.clone(),
+                })
+                .await?;
+            let ResponseOutcome::Ok { ref result } = issued.outcome else {
+                return Ok(issued);
+            };
+            let token = read_confirmation_token(result)?;
+            client
+                .request(Command::ClaimRegistryHandle {
+                    handle,
+                    confirmation: token,
+                })
+                .await
+        }
+        other => client.request(other).await,
+    }
+}
+
+fn read_confirmation_token(result: &serde_json::Value) -> Result<String, ClientError> {
+    let path = result
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ClientError::ConfirmationProtocol("daemon response lacked token_path".into())
+        })?;
+    // Token files are tens of bytes; a blocking read keeps the client free
+    // of a tokio fs feature dependency.
+    let token = std::fs::read_to_string(path).map_err(|error| {
+        ClientError::ConfirmationProtocol(format!("token file unreadable: {error}"))
+    })?;
+    Ok(token.trim().to_owned())
+}
+
 async fn read_line<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<T, ClientError> {
     let mut line = Vec::new();
     let mut byte = [0_u8; 1];
@@ -103,7 +179,16 @@ pub enum ClientError {
     MalformedResponse,
     VersionMismatch(u16),
     CorrelationMismatch,
-    Remote { code: String, message: String },
+    Remote {
+        code: String,
+        message: String,
+    },
+    /// The locally typed intent (`--confirm` value) did not match; nothing
+    /// was sent to the daemon.
+    ConfirmationRefused(String),
+    /// The daemon's confirmation-token response was malformed or the token
+    /// file could not be read.
+    ConfirmationProtocol(String),
 }
 
 impl fmt::Display for ClientError {
@@ -120,6 +205,10 @@ impl fmt::Display for ClientError {
             }
             Self::CorrelationMismatch => formatter.write_str("daemon response ID does not match"),
             Self::Remote { code, message } => write!(formatter, "daemon error {code}: {message}"),
+            Self::ConfirmationRefused(message) => write!(formatter, "refused: {message}"),
+            Self::ConfirmationProtocol(message) => {
+                write!(formatter, "confirmation protocol failed: {message}")
+            }
         }
     }
 }
