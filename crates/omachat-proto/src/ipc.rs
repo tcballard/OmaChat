@@ -83,6 +83,11 @@ pub enum Command {
     },
     /// Describe every configured room relay and its joined rooms.
     ListRooms,
+    /// Show the relay-published membership view for one NIP-29 room.
+    RoomMembers {
+        relay: String,
+        group_id: String,
+    },
     Panic {
         confirmation: String,
     },
@@ -225,6 +230,11 @@ enum StrictRequestWire {
     ListRooms {
         version: u16,
         id: String,
+    },
+    RoomMembers {
+        version: u16,
+        id: String,
+        params: RoomParams,
     },
     Panic {
         version: u16,
@@ -432,6 +442,11 @@ impl From<StrictRequestWire> for Request {
                 params: RoomParams { relay, group_id },
             } => (version, id, Command::LeaveRoom { relay, group_id }),
             StrictRequestWire::ListRooms { version, id } => (version, id, Command::ListRooms),
+            StrictRequestWire::RoomMembers {
+                version,
+                id,
+                params: RoomParams { relay, group_id },
+            } => (version, id, Command::RoomMembers { relay, group_id }),
             StrictRequestWire::Panic {
                 version,
                 id,

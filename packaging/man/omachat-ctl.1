@@ -41,6 +41,11 @@ Describe every configured room relay: its verified signing identity, how that
 identity was obtained, connection state, and the joined rooms with their
 relay-published metadata.
 .TP
+.B room-members RELAY GROUP [--json]
+Show the relay-published membership view, role labels, relay-admin state, and
+moderation provenance for a room. This view may be partial and does not grant
+client-side authorization; relay policy remains authoritative.
+.TP
 .B panic --confirm ERASE
 Cryptographically erase local state and stop the daemon.
 .SH EXIT STATUS

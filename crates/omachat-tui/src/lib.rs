@@ -229,6 +229,12 @@ pub fn parse_input(
                 }))
             }
             (Some("rooms"), None, None) => Ok(Some(Command::ListRooms)),
+            (Some("room-members"), Some(relay), Some(group_id)) if !group_id.contains(' ') => {
+                Ok(Some(Command::RoomMembers {
+                    relay: relay.into(),
+                    group_id: group_id.into(),
+                }))
+            }
             (Some("quit" | "detach"), None, None) => Ok(None),
             _ => Err("unknown or incomplete command".into()),
         };
@@ -271,6 +277,13 @@ mod room_command_tests {
             }))
         );
         assert_eq!(parse_input("/rooms", None), Ok(Some(Command::ListRooms)));
+        assert_eq!(
+            parse_input("/room-members wss://r.example omarchy", None),
+            Ok(Some(Command::RoomMembers {
+                relay: "wss://r.example".into(),
+                group_id: "omarchy".into(),
+            }))
+        );
         assert_eq!(
             parse_input("hello", Some("room:aa:omarchy")),
             Ok(Some(Command::Send {

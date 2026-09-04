@@ -130,6 +130,13 @@ fn requests_preserve_the_flat_wire_format() {
             r#"{"version":1,"id":"request","method":"list-rooms"}"#,
         ),
         (
+            Command::RoomMembers {
+                relay: "wss://rooms.example".into(),
+                group_id: "omarchy".into(),
+            },
+            r#"{"version":1,"id":"request","method":"room-members","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
+        ),
+        (
             Command::Panic {
                 confirmation: "confirm".into(),
             },

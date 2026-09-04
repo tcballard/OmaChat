@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | join-room RELAY GROUP [--invite CODE] | leave-room RELAY GROUP | rooms [--json] | discover-dm-relays PUBLIC_KEY | discover-nip65-relays PUBLIC_KEY | show-nip65-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-device-profile [--json] | publish-nip65-relays [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | join GEOHASH | leave GEOHASH | send CONVERSATION TEXT | join-room RELAY GROUP [--invite CODE] | leave-room RELAY GROUP | rooms [--json] | room-members RELAY GROUP [--json] | discover-dm-relays PUBLIC_KEY | discover-nip65-relays PUBLIC_KEY | show-nip65-relays PUBLIC_KEY | discover-profile PUBLIC_KEY | show-profile PUBLIC_KEY | publish-device-profile [--json] | publish-nip65-relays [--json] | resolve-handle HANDLE [--json] | show-handle HANDLE [--json] | claim-handle HANDLE --confirm HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -147,6 +147,20 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
         )),
         ["rooms"] => Ok((Command::ListRooms, OutputMode::Human)),
         ["rooms", "--json"] => Ok((Command::ListRooms, OutputMode::Json)),
+        ["room-members", relay, group_id] => Ok((
+            Command::RoomMembers {
+                relay: (*relay).into(),
+                group_id: (*group_id).into(),
+            },
+            OutputMode::Human,
+        )),
+        ["room-members", relay, group_id, "--json"] => Ok((
+            Command::RoomMembers {
+                relay: (*relay).into(),
+                group_id: (*group_id).into(),
+            },
+            OutputMode::Json,
+        )),
         ["discover-dm-relays", public_key] => Ok((
             Command::DiscoverDmRelays {
                 public_key: (*public_key).into(),
@@ -360,6 +374,21 @@ mod tests {
         let (command, mode) =
             parse_command(&args(&["rooms", "--json"])).unwrap_or_else(|_| panic!("rooms"));
         assert_eq!(command, Command::ListRooms);
+        assert!(matches!(mode, OutputMode::Json));
+        let (command, mode) = parse_command(&args(&[
+            "room-members",
+            "wss://r.example",
+            "omarchy",
+            "--json",
+        ]))
+        .unwrap_or_else(|_| panic!("room-members"));
+        assert_eq!(
+            command,
+            Command::RoomMembers {
+                relay: "wss://r.example".into(),
+                group_id: "omarchy".into(),
+            }
+        );
         assert!(matches!(mode, OutputMode::Json));
         assert!(parse_command(&args(&["join-room", "wss://r.example"])).is_err());
         assert!(parse_command(&args(&["join-room", "wss://r.example", "g", "--invite"])).is_err());
