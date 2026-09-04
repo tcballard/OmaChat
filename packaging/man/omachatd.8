@@ -11,7 +11,12 @@ socket.
 Only the Nostr transport is currently wired into the daemon; the mesh transport
 is not yet integrated.
 SIGHUP validates a replacement configuration before applying it.
-SIGINT stops cleanly.
+SIGINT and SIGTERM stop cleanly: stop accepting IPC, drain active requests
+within a bounded deadline, remove the socket, and shut down owned services.
+Neither signal erases identity or the sealed outbox.
+Signal handlers are installed before the IPC socket becomes available.
+With --config, malformed or invalid SIGHUP replacements and relay-policy
+changes requiring restart leave the prior active configuration in effect.
 .SH ACCOUNT
 The JSON configuration may set account_handle and account_display_name. These
 values are sealed into a root-signed local account binding and survive restart.

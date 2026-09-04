@@ -1,5 +1,6 @@
 use omachatd::{DaemonConfig, DaemonCore, EventHub, IpcServer, NostrService};
 use std::{env, ffi::OsStr, fs, os::unix::fs::PermissionsExt, path::PathBuf, process::ExitCode};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
 
 #[tokio::main]
@@ -28,6 +29,16 @@ async fn main() -> ExitCode {
 }
 
 async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
+    // Install handlers before publishing the IPC socket. Once a client can
+    // observe readiness, both terminal interrupts and systemd's SIGTERM must
+    // reach the same draining/cleanup path. Registration failure is fatal.
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    let reload_signal = options
+        .config
+        .as_ref()
+        .map(|path| signal(SignalKind::hangup()).map(|signal| (path.clone(), signal)))
+        .transpose()?;
     let mut config = if let Some(path) = &options.config {
         DaemonConfig::load(path)?
     } else {
@@ -94,26 +105,23 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let server = IpcServer::bind(&options.socket, core.clone(), events)?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    if let Some(config_path) = options.config.clone() {
+    let reload_task = reload_signal.map(|(config_path, mut signal)| {
         let reload_core = core.clone();
         tokio::spawn(async move {
-            let Ok(mut signal) =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
-            else {
-                return;
-            };
             while signal.recv().await.is_some() {
                 if let Err(error) = reload_core.reload(&config_path) {
                     eprintln!("omachatd: rejected SIGHUP reload: {error}");
                 }
             }
-        });
-    }
+        })
+    });
     let signal_shutdown = shutdown_tx.clone();
-    tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            let _ = signal_shutdown.send(true);
+    let signal_task = tokio::spawn(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {},
+            _ = terminate.recv() => {},
         }
+        let _ = signal_shutdown.send(true);
     });
     let panic_shutdown = shutdown_tx.clone();
     let panic_core = core.clone();
@@ -122,6 +130,14 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         let _ = panic_shutdown.send(true);
     });
     let server_result = server.run(shutdown_rx).await;
+    // Join cancellation before dismantling services so SIGHUP cannot race
+    // shutdown by applying a new configuration or restarting subscriptions.
+    if let Some(task) = reload_task {
+        task.abort();
+        let _ = task.await;
+    }
+    signal_task.abort();
+    let _ = signal_task.await;
     core.prepare_for_shutdown().await;
     if let Some(service) = geo_relays {
         service.shutdown().await;
