@@ -272,6 +272,21 @@ async fn rooms_join_receive_send_persist_and_restore() {
             "",
         ),
         signed(
+            &RELAY_SECRET,
+            39001,
+            vec![
+                tag(&["d", "omarchy"]),
+                tag(&["p", &pubkey(&FORGER_SECRET), "admin"]),
+            ],
+            "",
+        ),
+        signed(
+            &RELAY_SECRET,
+            39002,
+            vec![tag(&["d", "omarchy"]), tag(&["p", &pubkey(&FORGER_SECRET)])],
+            "",
+        ),
+        signed(
             &FORGER_SECRET,
             39000,
             vec![
@@ -361,6 +376,22 @@ async fn rooms_join_receive_send_persist_and_restore() {
     assert_eq!(room["private"], false);
     assert_eq!(room["subscribed"], true);
     assert_eq!(listed["relays"][0]["identity_source"], "self");
+    let members = request(
+        &core,
+        Command::RoomMembers {
+            relay: url.clone(),
+            group_id: "omarchy".into(),
+        },
+    )
+    .await
+    .expect("members");
+    assert_eq!(members["authorization"], "relay-policy-only");
+    assert_eq!(members["completeness"], "relay-published-may-be-partial");
+    assert_eq!(members["observed_member_count"], 1);
+    assert_eq!(members["members"][0]["pubkey"], pubkey(&FORGER_SECRET));
+    assert_eq!(members["members"][0]["published_by_relay"], true);
+    assert_eq!(members["members"][0]["relay_admin"], true);
+    assert_eq!(members["members"][0]["relay_admin_roles"], json!(["admin"]));
 
     // Sending into the room publishes a signed kind 9 through that relay.
     let sent = request(

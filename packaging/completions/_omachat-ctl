@@ -1,9 +1,9 @@
 #compdef omachat-ctl
 _arguments '--socket[daemon socket]:path:_files' \
-  '1:command:(status fingerprint join leave send join-room leave-room rooms panic)' \
+  '1:command:(status fingerprint join leave send join-room leave-room rooms room-members panic)' \
   '*::argument:->args'
 case $words[2] in
-  status|rooms) _arguments '--json[emit compact JSON]' ;;
+  status|rooms|room-members) _arguments '--json[emit compact JSON]' ;;
   join-room) _arguments '--invite[invite code]:code:' ;;
   fingerprint) _arguments '--qr[render ANSI QR code]' ;;
   panic) _arguments '--confirm[confirm destructive erase]:confirmation:(ERASE)' ;;

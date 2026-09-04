@@ -217,6 +217,10 @@ enum RoomCommand {
     Describe {
         reply: oneshot::Sender<Value>,
     },
+    Members {
+        group_id: String,
+        reply: oneshot::Sender<Result<Value, RoomError>>,
+    },
 }
 
 /// One configured relay as seen by the core.
@@ -294,6 +298,15 @@ impl RelayHandle {
         receiver
             .await
             .unwrap_or_else(|_| json!({"relay": self.url, "status": "stopped"}))
+    }
+
+    pub async fn members(&self, group_id: String) -> Result<Value, RoomError> {
+        let (reply, receiver) = oneshot::channel();
+        self.commands
+            .send(RoomCommand::Members { group_id, reply })
+            .await
+            .map_err(|_| RoomError::Stopped)?;
+        receiver.await.map_err(|_| RoomError::Stopped)?
     }
 }
 
@@ -716,7 +729,8 @@ impl RelayActor {
         match command {
             RoomCommand::Join { reply, .. }
             | RoomCommand::Leave { reply, .. }
-            | RoomCommand::Publish { reply, .. } => {
+            | RoomCommand::Publish { reply, .. }
+            | RoomCommand::Members { reply, .. } => {
                 let _ = reply.send(Err(unavailable()));
             }
             RoomCommand::Describe { reply } => {
@@ -787,6 +801,9 @@ impl RelayActor {
             }
             RoomCommand::Describe { reply } => {
                 let _ = reply.send(self.describe(subscriptions, state, vault.generation(), source));
+            }
+            RoomCommand::Members { group_id, reply } => {
+                let _ = reply.send(room_members(&self.url, state, &group_id));
             }
         }
     }
@@ -1229,19 +1246,110 @@ fn room_summary(
         "lifecycle": lifecycle,
         "subscribed": subscribed,
         "member_count": group.map_or(0, |group| {
-            let membership = group.membership();
-            membership
-                .snapshot()
-                .records()
-                .iter()
-                .filter(|record| membership.is_member(record.pubkey()))
-                .count()
+            let mut pubkeys = BTreeSet::new();
+            if let Some(roster) = group.members() {
+                pubkeys.extend(
+                    roster
+                        .principals()
+                        .iter()
+                        .map(|member| member.pubkey().to_owned()),
+                );
+            }
+            pubkeys.extend(
+                group
+                    .membership()
+                    .snapshot()
+                    .records()
+                    .iter()
+                    .filter(|record| record.is_member())
+                    .map(|record| record.pubkey().to_owned()),
+            );
+            pubkeys.len()
         }),
         "admin_count": group.and_then(|group| group.admins()).map_or(0, |roster| roster.principals().len()),
         "pinned_count": group.and_then(|group| group.pins()).map_or(0, |pins| pins.pins().len()),
         "deleted_count": group.map_or(0, |group| group.deletions().len()),
         "reason": reason,
     })
+}
+
+fn room_members(url: &str, state: &RelayRoomState, group_id: &str) -> Result<Value, RoomError> {
+    let group = state.group(group_id).ok_or(RoomError::UnknownRoom)?;
+    let membership = group.membership().snapshot();
+    let published = group.members();
+    let admins = group.admins();
+    let mut pubkeys = BTreeSet::new();
+    if let Some(roster) = published {
+        pubkeys.extend(
+            roster
+                .principals()
+                .iter()
+                .map(|member| member.pubkey().to_owned()),
+        );
+    }
+    pubkeys.extend(
+        membership
+            .records()
+            .iter()
+            .filter(|record| record.is_member())
+            .map(|record| record.pubkey().to_owned()),
+    );
+    let members = pubkeys
+        .into_iter()
+        .map(|pubkey| {
+            let published = published.and_then(|roster| {
+                roster
+                    .principals()
+                    .iter()
+                    .find(|principal| principal.pubkey() == pubkey.as_str())
+            });
+            let moderation = membership
+                .records()
+                .iter()
+                .find(|record| record.pubkey() == pubkey.as_str() && record.is_member());
+            let admin = admins.and_then(|roster| {
+                roster
+                    .principals()
+                    .iter()
+                    .find(|principal| principal.pubkey() == pubkey.as_str())
+            });
+            json!({
+                "pubkey": pubkey,
+                "published_by_relay": published.is_some(),
+                "published_roles": published.map_or(&[][..], |principal| principal.roles()),
+                "moderation_member": moderation.is_some(),
+                "moderation_roles": moderation.map_or(&[][..], |record| record.roles()),
+                "relay_admin": admin.is_some(),
+                "relay_admin_roles": admin.map_or(&[][..], |principal| principal.roles()),
+                "moderator_pubkey": moderation.map(|record| record.moderator_pubkey()),
+                "source_event_id": moderation.map(|record| record.source_event_id()),
+                "updated_at": moderation.map(|record| record.created_at()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let role_definitions = group.roles().map_or_else(Vec::new, |roles| {
+        roles
+            .roles()
+            .iter()
+            .map(|role| {
+                json!({
+                    "name": role.name(),
+                    "description": role.description(),
+                })
+            })
+            .collect()
+    });
+    Ok(json!({
+        "conversation": room_conversation_id(state.relay_pubkey(), group_id),
+        "relay": url,
+        "relay_pubkey": state.relay_pubkey(),
+        "group_id": group_id,
+        "authorization": "relay-policy-only",
+        "completeness": "relay-published-may-be-partial",
+        "members": members,
+        "observed_member_count": members.len(),
+        "role_definitions": role_definitions,
+    }))
 }
 
 enum Reduction {
@@ -1312,6 +1420,7 @@ pub enum RoomError {
     Unavailable { status: String, detail: Value },
     NotJoined,
     InvalidGroup,
+    UnknownRoom,
     InvalidEvent,
     Subscription(String),
     Publish(String),
@@ -1327,6 +1436,7 @@ impl fmt::Display for RoomError {
             }
             Self::NotJoined => formatter.write_str("room is not joined on this relay"),
             Self::InvalidGroup => formatter.write_str("room group ID is invalid"),
+            Self::UnknownRoom => formatter.write_str("room has no authenticated state"),
             Self::InvalidEvent => formatter.write_str("event kind does not match the room action"),
             Self::Subscription(detail) => write!(formatter, "room subscription failed: {detail}"),
             Self::Publish(detail) => {

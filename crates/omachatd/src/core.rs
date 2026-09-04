@@ -1711,6 +1711,7 @@ impl DaemonCore {
             } => self.join_room(&relay, group_id, invite_code).await,
             Command::LeaveRoom { relay, group_id } => self.leave_room(&relay, group_id).await,
             Command::ListRooms => self.list_rooms().await,
+            Command::RoomMembers { relay, group_id } => self.room_members(&relay, group_id).await,
             Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),
             Command::Panic { .. } | Command::Hello { .. } => Err(CoreError::InvalidCommand),
         }
@@ -2797,6 +2798,23 @@ impl DaemonCore {
     async fn list_rooms(&self) -> Result<serde_json::Value, CoreError> {
         let rooms = self.rooms_handle()?;
         Ok(serde_json::json!({ "relays": rooms.describe_all().await }))
+    }
+
+    async fn room_members(
+        &self,
+        relay: &str,
+        group_id: String,
+    ) -> Result<serde_json::Value, CoreError> {
+        if group_id.is_empty() || group_id.len() > 128 {
+            return Err(CoreError::Room(crate::RoomError::InvalidGroup));
+        }
+        self.rooms_handle()?
+            .relay(relay)
+            .cloned()
+            .ok_or(CoreError::RoomRelayUnknown)?
+            .members(group_id)
+            .await
+            .map_err(CoreError::Room)
     }
 
     async fn send_room_message(
