@@ -24,40 +24,55 @@ fn copy_tree(source: &Path, target: &Path) {
     }
 }
 
-#[test]
-fn generations_are_monotonic_and_isolated_per_relay_and_context() {
+#[tokio::test]
+async fn generations_are_monotonic_and_isolated_per_relay_and_context() {
     let root = TempDir::new().expect("tempdir");
     let state = root.path().join("state");
     fs::create_dir_all(&state).expect("state");
     let anchor = FileGenerationAnchor::open(root.path().join("anchors"), &state).expect("anchor");
 
-    assert_eq!(anchor.load_generation(CONTEXT, RELAY).expect("load"), None);
-    anchor.store_generation(CONTEXT, RELAY, 0).expect("zero");
-    anchor.store_generation(CONTEXT, RELAY, 3).expect("three");
+    assert_eq!(
+        anchor.load_generation(CONTEXT, RELAY).await.expect("load"),
+        None
+    );
+    anchor
+        .store_generation(CONTEXT, RELAY, 0)
+        .await
+        .expect("zero");
     anchor
         .store_generation(CONTEXT, RELAY, 3)
+        .await
+        .expect("three");
+    anchor
+        .store_generation(CONTEXT, RELAY, 3)
+        .await
         .expect("idempotent");
-    assert!(anchor.store_generation(CONTEXT, RELAY, 2).is_err());
+    assert!(anchor.store_generation(CONTEXT, RELAY, 2).await.is_err());
     assert_eq!(
-        anchor.load_generation(CONTEXT, RELAY).expect("load"),
+        anchor.load_generation(CONTEXT, RELAY).await.expect("load"),
         Some(3)
     );
 
     assert_eq!(
-        anchor.load_generation(CONTEXT, OTHER_RELAY).expect("load"),
+        anchor
+            .load_generation(CONTEXT, OTHER_RELAY)
+            .await
+            .expect("load"),
         None
     );
     assert_eq!(
         anchor
             .load_generation("other-context", RELAY)
+            .await
             .expect("load"),
         None
     );
     anchor
         .store_generation("other-context", RELAY, 1)
+        .await
         .expect("other");
     assert_eq!(
-        anchor.load_generation(CONTEXT, RELAY).expect("load"),
+        anchor.load_generation(CONTEXT, RELAY).await.expect("load"),
         Some(3)
     );
 
@@ -74,9 +89,14 @@ fn generations_are_monotonic_and_isolated_per_relay_and_context() {
         let mode = entry.metadata().expect("meta").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600, "{:?}", entry.path());
     }
-    assert!(anchor.store_generation(CONTEXT, "relay", 1).is_err());
-    assert!(anchor.store_generation("", RELAY, 1).is_err());
-    assert!(anchor.store_generation(&"x".repeat(129), RELAY, 1).is_err());
+    assert!(anchor.store_generation(CONTEXT, "relay", 1).await.is_err());
+    assert!(anchor.store_generation("", RELAY, 1).await.is_err());
+    assert!(
+        anchor
+            .store_generation(&"x".repeat(129), RELAY, 1)
+            .await
+            .is_err()
+    );
 
     // A file rebound to another relay or context is refused, not trusted.
     let path = fs::read_dir(&relay_dir)
@@ -88,11 +108,11 @@ fn generations_are_monotonic_and_isolated_per_relay_and_context() {
         .expect("read")
         .replace(RELAY, OTHER_RELAY);
     fs::write(&path, swapped).expect("write");
-    assert!(anchor.load_generation(CONTEXT, RELAY).is_err());
+    assert!(anchor.load_generation(CONTEXT, RELAY).await.is_err());
 }
 
-#[test]
-fn anchor_refuses_to_share_the_sealed_rollback_domain() {
+#[tokio::test]
+async fn anchor_refuses_to_share_the_sealed_rollback_domain() {
     let root = TempDir::new().expect("tempdir");
     let state = root.path().join("state");
     fs::create_dir_all(&state).expect("state");
@@ -116,11 +136,11 @@ async fn restoring_the_sealed_store_from_backup_is_detected() {
             .expect("store");
         let anchor = FileGenerationAnchor::open(&anchor_directory, &state).expect("anchor");
         let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, RELAY).expect("vault");
-        let (room_state, load) = vault.load_or_create(NOW, &limits).expect("fresh");
+        let (room_state, load) = vault.load_or_create(NOW, &limits).await.expect("fresh");
         assert_eq!(load, RoomStateLoad::Fresh);
-        assert_eq!(vault.persist(&room_state).expect("persist"), 1);
+        assert_eq!(vault.persist(&room_state).await.expect("persist"), 1);
         copy_tree(&state, &backup);
-        assert_eq!(vault.persist(&room_state).expect("persist"), 2);
+        assert_eq!(vault.persist(&room_state).await.expect("persist"), 2);
     }
 
     // Same anchor, current state: loads at generation 2.
@@ -130,7 +150,7 @@ async fn restoring_the_sealed_store_from_backup_is_detected() {
             .expect("store");
         let anchor = FileGenerationAnchor::open(&anchor_directory, &state).expect("anchor");
         let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, RELAY).expect("vault");
-        let (_, load) = vault.load_or_create(NOW, &limits).expect("load");
+        let (_, load) = vault.load_or_create(NOW, &limits).await.expect("load");
         assert_eq!(load, RoomStateLoad::Restored { generation: 2 });
     }
 
@@ -143,7 +163,7 @@ async fn restoring_the_sealed_store_from_backup_is_detected() {
     let anchor = FileGenerationAnchor::open(&anchor_directory, &state).expect("anchor");
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, RELAY).expect("vault");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits),
+        vault.load_or_create(NOW, &limits).await,
         Err(RoomStateVaultError::Rollback {
             record_generation: 1,
             anchor_generation: 2
@@ -158,7 +178,7 @@ async fn restoring_the_sealed_store_from_backup_is_detected() {
     let anchor = FileGenerationAnchor::open(&anchor_directory, &state).expect("anchor");
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, RELAY).expect("vault");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits),
+        vault.load_or_create(NOW, &limits).await,
         Err(RoomStateVaultError::Rollback {
             record_generation: 0,
             anchor_generation: 2
@@ -167,7 +187,7 @@ async fn restoring_the_sealed_store_from_backup_is_detected() {
 
     // A different relay in the same anchor directory is unaffected.
     let mut other = RoomStateVault::open(&store, &anchor, CONTEXT, OTHER_RELAY).expect("vault");
-    let (fresh, load) = other.load_or_create(NOW, &limits).expect("fresh");
+    let (fresh, load) = other.load_or_create(NOW, &limits).await.expect("fresh");
     assert_eq!(load, RoomStateLoad::Fresh);
     assert_eq!(
         fresh,

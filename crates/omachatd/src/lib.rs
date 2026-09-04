@@ -27,6 +27,7 @@ pub use agent_lifecycle_store::{
     AGENT_LIFECYCLE_RECORD_NAME, SealedAgentLifecycle, SealedAgentLifecycleError,
     SealedAgentLifecycleState,
 };
+pub use config::RoomAnchorProviderConfig;
 pub use config::{
     DaemonConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
     RelayListPublicationConfig, RelayListPublicationRelayConfig, RoomsConfig,

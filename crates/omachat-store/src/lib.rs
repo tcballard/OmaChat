@@ -46,7 +46,9 @@ pub use room_state::{
     ROOM_STATE_RECORD_VERSION, RoomStateAnchorError, RoomStateGenerationAnchor, RoomStateLoad,
     RoomStateVault, RoomStateVaultError,
 };
-pub use room_state_anchor::{FileGenerationAnchor, ROOM_STATE_ANCHOR_VERSION};
+pub use room_state_anchor::{
+    FileGenerationAnchor, ROOM_STATE_ANCHOR_VERSION, SecretServiceGenerationAnchor,
+};
 pub use sealed::{
     MasterKey, ProviderKind, RequestedProvider, SealedStore, StoreError, StoreStatus,
 };

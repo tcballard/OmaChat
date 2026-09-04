@@ -191,10 +191,21 @@ pub struct RoomsConfig {
     /// Room relay URLs: `wss://` or numeric-loopback `ws://`, no credentials,
     /// query, or fragment.
     pub relays: Vec<String>,
+    /// Rollback-resistant generation storage. File anchors remain the default;
+    /// Secret Service must be selected explicitly.
+    pub anchor_provider: RoomAnchorProviderConfig,
     /// Directory for room-state generation anchors. It must lie outside the
     /// daemon state directory; when omitted the daemon uses a sibling of the
     /// state directory named `<state>-anchors`.
     pub anchor_directory: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RoomAnchorProviderConfig {
+    #[default]
+    File,
+    SecretService,
 }
 
 impl RoomsConfig {
@@ -210,6 +221,11 @@ impl RoomsConfig {
     }
 
     pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        if self.anchor_provider == RoomAnchorProviderConfig::SecretService
+            && self.anchor_directory.is_some()
+        {
+            return Err(CoreError::InvalidConfig);
+        }
         if self.relays.len() > 16 {
             return Err(CoreError::InvalidConfig);
         }
@@ -325,4 +341,35 @@ fn canonical_publication_url(raw: &str) -> Result<String, CoreError> {
         return Err(CoreError::InvalidConfig);
     }
     Ok(url.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn room_anchor_provider_defaults_to_file() {
+        let config: DaemonConfig =
+            serde_json::from_str(r#"{"rooms":{"relays":["wss://rooms.example"]}}"#)
+                .expect("config");
+        assert_eq!(
+            config.rooms.expect("rooms").anchor_provider,
+            RoomAnchorProviderConfig::File
+        );
+    }
+
+    #[test]
+    fn secret_service_anchor_rejects_a_file_directory() {
+        let config: DaemonConfig = serde_json::from_str(
+            r#"{
+                "rooms": {
+                    "relays": ["wss://rooms.example"],
+                    "anchor_provider": "secret-service",
+                    "anchor_directory": "/tmp/ignored"
+                }
+            }"#,
+        )
+        .expect("config");
+        assert!(matches!(config.validate(), Err(CoreError::InvalidConfig)));
+    }
 }

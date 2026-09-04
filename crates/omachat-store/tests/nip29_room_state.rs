@@ -48,31 +48,36 @@ impl TestGenerationAnchor {
     }
 }
 
+// Explicit RPIT preserves the trait's `Send` future guarantee.
+#[allow(clippy::manual_async_fn)]
 impl RoomStateGenerationAnchor for TestGenerationAnchor {
-    fn load_generation(
-        &self,
-        store_context: &str,
-        relay_pubkey: &str,
-    ) -> Result<Option<u64>, RoomStateAnchorError> {
-        Ok(self.generation(store_context, relay_pubkey))
+    fn load_generation<'a>(
+        &'a self,
+        store_context: &'a str,
+        relay_pubkey: &'a str,
+    ) -> impl std::future::Future<Output = Result<Option<u64>, RoomStateAnchorError>> + Send + 'a
+    {
+        async move { Ok(self.generation(store_context, relay_pubkey)) }
     }
 
-    fn store_generation(
-        &self,
-        store_context: &str,
-        relay_pubkey: &str,
+    fn store_generation<'a>(
+        &'a self,
+        store_context: &'a str,
+        relay_pubkey: &'a str,
         generation: u64,
-    ) -> Result<(), RoomStateAnchorError> {
-        let mut generations = self.generations.lock().expect("anchor lock");
-        let key = (store_context.to_owned(), relay_pubkey.to_owned());
-        if generations
-            .get(&key)
-            .is_some_and(|current| *current > generation)
-        {
-            return Err(RoomStateAnchorError::new("generation cannot decrease"));
+    ) -> impl std::future::Future<Output = Result<(), RoomStateAnchorError>> + Send + 'a {
+        async move {
+            let mut generations = self.generations.lock().expect("anchor lock");
+            let key = (store_context.to_owned(), relay_pubkey.to_owned());
+            if generations
+                .get(&key)
+                .is_some_and(|current| *current > generation)
+            {
+                return Err(RoomStateAnchorError::new("generation cannot decrease"));
+            }
+            generations.insert(key, generation);
+            Ok(())
         }
-        generations.insert(key, generation);
-        Ok(())
     }
 }
 
@@ -334,16 +339,19 @@ async fn restart_preserves_exact_room_state_and_replay_is_idempotent() {
     {
         let store = open_store(&directory).await;
         let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
-        let (fresh, load) = vault.load_or_create(NOW, &limits()).expect("fresh");
+        let (fresh, load) = vault.load_or_create(NOW, &limits()).await.expect("fresh");
         assert_eq!(load, RoomStateLoad::Fresh);
         assert_eq!(fresh, RelayRoomState::new(relay.clone()).expect("empty"));
-        assert_eq!(vault.persist(&state).expect("persist"), 1);
-        assert_eq!(vault.persist(&state).expect("persist again"), 2);
+        assert_eq!(vault.persist(&state).await.expect("persist"), 1);
+        assert_eq!(vault.persist(&state).await.expect("persist again"), 2);
     }
 
     let store = open_store(&directory).await;
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
-    let (restored, load) = vault.load_or_create(NOW, &limits()).expect("restored");
+    let (restored, load) = vault
+        .load_or_create(NOW, &limits())
+        .await
+        .expect("restored");
     assert_eq!(load, RoomStateLoad::Restored { generation: 2 });
     assert_eq!(restored, state);
     assert_eq!(restored.snapshot(), state.snapshot());
@@ -428,7 +436,7 @@ async fn interrupted_write_preserves_the_previous_valid_state() {
     {
         let store = open_store(&directory).await;
         let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
-        vault.persist(&state).expect("persist");
+        vault.persist(&state).await.expect("persist");
     }
     let orphan = directory
         .path()
@@ -439,22 +447,26 @@ async fn interrupted_write_preserves_the_previous_valid_state() {
     let store = open_store(&directory).await;
     assert!(!orphan.exists(), "interrupted temporary must be discarded");
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
-    let (restored, load) = vault.load_or_create(NOW, &limits()).expect("restored");
+    let (restored, load) = vault
+        .load_or_create(NOW, &limits())
+        .await
+        .expect("restored");
     assert_eq!(load, RoomStateLoad::Restored { generation: 1 });
     assert_eq!(restored, state);
 
     // A crash after the record but before the external anchor advances leaves
     // the authenticated record ahead. Load accepts it and heals the anchor.
-    vault.persist(&state).expect("second generation");
+    vault.persist(&state).await.expect("second generation");
     anchor.set_unchecked(CONTEXT, &relay, 1);
     let store = open_store(&directory).await;
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     let (_, load) = vault
         .load_or_create(NOW, &limits())
+        .await
         .expect("record ahead of anchor");
     assert_eq!(load, RoomStateLoad::Restored { generation: 2 });
     assert_eq!(anchor.generation(CONTEXT, &relay), Some(2));
-    assert_eq!(vault.persist(&state).expect("heal"), 3);
+    assert_eq!(vault.persist(&state).await.expect("heal"), 3);
 }
 
 #[tokio::test]
@@ -466,7 +478,7 @@ async fn truncation_corruption_and_authentication_failures_are_rejected() {
     {
         let store = open_store(&directory).await;
         let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
-        vault.persist(&state).expect("persist");
+        vault.persist(&state).await.expect("persist");
     }
     let record = record_path(&directory, &relay);
     let original = fs::read(&record).expect("record");
@@ -479,25 +491,28 @@ async fn truncation_corruption_and_authentication_failures_are_rejected() {
     let store = open_store(&directory).await;
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits()),
+        vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::Store(StoreError::Authentication))
     ));
 
     // Truncation.
     fs::write(&record, &original[..original.len() - 40]).expect("truncate");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits()),
+        vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::Store(StoreError::Authentication))
     ));
     fs::write(&record, &original[..12]).expect("truncate hard");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits()),
+        vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::Store(StoreError::InvalidEnvelope))
     ));
 
     // Restored, it loads again; corruption never reset it to empty.
     fs::write(&record, &original).expect("restore");
-    let (restored, _) = vault.load_or_create(NOW, &limits()).expect("restored");
+    let (restored, _) = vault
+        .load_or_create(NOW, &limits())
+        .await
+        .expect("restored");
     assert_eq!(restored, state);
 }
 
@@ -510,9 +525,9 @@ async fn rollback_is_detected() {
     let record = record_path(&directory, &relay);
     let store = open_store(&directory).await;
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
-    vault.persist(&state).expect("generation 1");
+    vault.persist(&state).await.expect("generation 1");
     let generation_one = fs::read(&record).expect("record");
-    vault.persist(&state).expect("generation 2");
+    vault.persist(&state).await.expect("generation 2");
 
     // Restoring the complete sealed-store record behind the external anchor
     // is refused. The anchor is deliberately outside the restored domain.
@@ -520,7 +535,7 @@ async fn rollback_is_detected() {
     let store = open_store(&directory).await;
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits()),
+        vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::Rollback {
             record_generation: 1,
             anchor_generation: 2
@@ -530,7 +545,7 @@ async fn rollback_is_detected() {
     // A vanished record with a surviving anchor is not "legitimately empty".
     fs::remove_file(&record).expect("remove record");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits()),
+        vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::Rollback {
             record_generation: 0,
             anchor_generation: 2
@@ -547,12 +562,12 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
     let state = build_state(&RELAY_SECRET);
     let store = open_store(&directory).await;
     let mut vault = RoomStateVault::open(&store, &anchor, CONTEXT, &relay).expect("vault");
-    vault.persist(&state).expect("persist");
+    vault.persist(&state).await.expect("persist");
 
     // Persisting a state for another relay through this vault writes nothing.
     let foreign = build_state(&OTHER_RELAY_SECRET);
     assert!(matches!(
-        vault.persist(&foreign),
+        vault.persist(&foreign).await,
         Err(RoomStateVaultError::RelayMismatch)
     ));
     assert!(!record_path(&directory, &other_relay).exists());
@@ -562,7 +577,7 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
     let mut other_context =
         RoomStateVault::open(&store, &anchor, "device:other", &relay).expect("vault");
     assert!(matches!(
-        other_context.load_or_create(NOW, &limits()),
+        other_context.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::ContextMismatch)
     ));
 
@@ -574,7 +589,7 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
     let mut other_vault =
         RoomStateVault::open(&store, &anchor, CONTEXT, &other_relay).expect("vault");
     assert!(matches!(
-        other_vault.load_or_create(NOW, &limits()),
+        other_vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::Store(StoreError::Authentication))
     ));
 
@@ -588,7 +603,7 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
         .expect("seal");
     anchor.set_unchecked(CONTEXT, &other_relay, 9);
     assert!(matches!(
-        other_vault.load_or_create(NOW, &limits()),
+        other_vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::RelayMismatch)
     ));
 
@@ -600,7 +615,7 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
         .write(&format!("nip29-rooms-v1-{relay}"), future.as_bytes())
         .expect("seal future");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits()),
+        vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::UnsupportedVersion(2))
     ));
 
@@ -614,7 +629,7 @@ async fn wrong_relay_context_and_schema_versions_are_rejected() {
         .write(&format!("nip29-rooms-v1-{relay}"), tampered.as_bytes())
         .expect("seal tampered");
     assert!(matches!(
-        vault.load_or_create(NOW, &limits()),
+        vault.load_or_create(NOW, &limits()).await,
         Err(RoomStateVaultError::Corrupt(RoomStateError::Event(_)))
     ));
 
@@ -641,20 +656,24 @@ async fn multiple_relays_stay_isolated_in_one_store() {
         RoomStateVault::open(&store, &anchor, CONTEXT, &relay)
             .expect("vault")
             .persist(&first)
+            .await
             .expect("persist");
         RoomStateVault::open(&store, &anchor, CONTEXT, &other_relay)
             .expect("vault")
             .persist(&second)
+            .await
             .expect("persist");
     }
     let store = open_store(&directory).await;
     let (restored_first, _) = RoomStateVault::open(&store, &anchor, CONTEXT, &relay)
         .expect("vault")
         .load_or_create(NOW, &limits())
+        .await
         .expect("first");
     let (restored_second, _) = RoomStateVault::open(&store, &anchor, CONTEXT, &other_relay)
         .expect("vault")
         .load_or_create(NOW, &limits())
+        .await
         .expect("second");
     assert_eq!(restored_first, first);
     assert_eq!(restored_second, second);

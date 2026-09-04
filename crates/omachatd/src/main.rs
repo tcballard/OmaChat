@@ -42,7 +42,11 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     }
     let events = EventHub::default();
     let core = DaemonCore::open(&options.state, config, events.clone()).await?;
-    let rooms = core.start_rooms(&options.state, options.anchor_directory())?;
+    let rooms = core.start_rooms(
+        &options.state,
+        options.anchor_directory(),
+        options.anchors.is_some(),
+    )?;
     let (inbound_sender, mut inbound_receiver) = tokio::sync::mpsc::channel(256);
     let relays = core.relay_urls();
     let nostr = if relays.is_empty() {
