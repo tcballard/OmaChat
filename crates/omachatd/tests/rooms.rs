@@ -300,7 +300,7 @@ async fn rooms_join_receive_send_persist_and_restore() {
         .await
         .expect("core");
     let service = core
-        .start_rooms(&state, anchors.clone())
+        .start_rooms(&state, anchors.clone(), false)
         .expect("rooms start")
         .expect("rooms configured");
     let bound = wait_for_identity(&core).await;
@@ -405,7 +405,7 @@ async fn rooms_join_receive_send_persist_and_restore() {
         .await
         .expect("core again");
     let service = core
-        .start_rooms(&state, anchors.clone())
+        .start_rooms(&state, anchors.clone(), false)
         .expect("rooms restart")
         .expect("rooms configured");
     assert_eq!(wait_for_identity(&core).await, relay);
@@ -473,7 +473,7 @@ async fn relay_without_self_key_stays_unavailable_even_when_it_advertises_nip29(
         .await
         .expect("core");
     let service = core
-        .start_rooms(&state, anchors.clone())
+        .start_rooms(&state, anchors.clone(), false)
         .expect("rooms start")
         .expect("configured");
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -516,7 +516,7 @@ async fn relay_without_self_key_stays_unavailable_even_when_it_advertises_nip29(
         .await
         .expect("core");
     let service = core
-        .start_rooms(&state, anchors)
+        .start_rooms(&state, anchors, false)
         .expect("rooms start")
         .expect("configured");
     tokio::time::timeout(Duration::from_secs(5), async {
@@ -571,7 +571,7 @@ async fn duplicate_urls_for_one_relay_identity_stop_both_actors() {
     .await
     .expect("core");
     let service = core
-        .start_rooms(&state, anchors)
+        .start_rooms(&state, anchors, false)
         .expect("rooms start")
         .expect("configured");
 
