@@ -1550,6 +1550,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "k256",
+ "libc",
  "omachat-crypto",
  "omachat-nostr",
  "omachat-proto",
