@@ -20,6 +20,13 @@ receipt proves global uniqueness. The separate nickname setting remains the
 public geohash-chat nickname and is never populated from the account handle.
 .SH PRIVATE RELAYS
 The optional dm_relays JSON array enables the standard NIP-17 private inbox.
+The optional geo_relays object enables separate pinned per-geohash pools.
+Its mode is supplement (default) or replace, and overrides is an array of
+at most ten WSS URLs (numeric-loopback WS is allowed for tests).
+Replace requires a nonempty override list. At most eight cells and ten relays
+per cell are supported. Failed candidates are re-evaluated every 30 seconds
+and become eligible again after five minutes. Status includes profile and
+snapshot hashes plus selected/skipped endpoints. Policy changes require restart.
 Each ws or wss relay must authenticate the persisted device Nostr principal
 with NIP-42 before receiving its recipient-only kind-1059 subscription. An
 empty array disables this inbox. Relay changes require a daemon restart. A

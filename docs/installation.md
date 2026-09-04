@@ -52,6 +52,11 @@ from the account handle automatically. Omitting or setting either account field
 to JSON `null` preserves its sealed value in this first slice; replacement uses
 a new valid value, while clearing/tombstoning belongs to the registry workflow.
 
+For opt-in geographic selection, configure `geo_relays` with `mode` set to
+`supplement` or `replace` and an explicit `overrides` list. See
+[pinned geo-relay routing](geo-relays.md) for bounds, health fallback, status
+diagnostics and restart requirements. Omission preserves fixed `relays` behaviour.
+
 `dm_relays` is an opt-in list of NIP-17 private-inbox relays (`wss://`, or
 numeric-loopback `ws://` for local testing). Geochat `relays` use the same URL
 rule. An empty list disables that inbox. Every configured relay

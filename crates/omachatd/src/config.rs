@@ -243,6 +243,8 @@ pub struct DaemonConfig {
     pub storage_provider: StorageProviderConfig,
     pub relays: Vec<String>,
     pub dm_relays: Vec<String>,
+    /// Opt-in pinned per-cell pools, isolated from the legacy relay list.
+    pub geo_relays: Option<crate::GeoRelayConfig>,
     /// Explicit profile publication policy. Omission is a truthful disabled
     /// state and never inherits geochat or private-message relays.
     pub profile_publication: Option<ProfilePublicationConfig>,
@@ -274,6 +276,12 @@ impl DaemonConfig {
     }
 
     pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        if let Some(geo) = &self.geo_relays {
+            geo.validate()?;
+            if self.joined_geohashes.len() > crate::geo_relay_service::MAX_GEO_CELLS {
+                return Err(CoreError::InvalidConfig);
+            }
+        }
         let mut geochat_relays = HashSet::with_capacity(self.relays.len());
         for relay in &self.relays {
             if !geochat_relays.insert(canonical_publication_url(relay)?) {
@@ -321,7 +329,7 @@ impl DaemonConfig {
     }
 }
 
-fn canonical_publication_url(raw: &str) -> Result<String, CoreError> {
+pub(crate) fn canonical_publication_url(raw: &str) -> Result<String, CoreError> {
     let url = url::Url::parse(raw).map_err(|_| CoreError::InvalidConfig)?;
     let secure = url.scheme() == "wss";
     let numeric_loopback = url.scheme() == "ws"

@@ -1,7 +1,7 @@
 use omachat_nostr::{
     event::SignedEvent,
     pool::{PoolNotification, PoolPublishResult, RelayPool, RelayPoolConfig, RelayPoolError},
-    relay::{RelayConfig, RelayRoute},
+    relay::{RelayConfig, RelayHealth, RelayNotification, RelayRoute},
 };
 use serde_json::Value;
 use std::{
@@ -21,6 +21,34 @@ use tokio::{
 
 const COMMAND_CAPACITY: usize = 64;
 const INBOUND_POLL: Duration = Duration::from_millis(50);
+
+struct Inbound {
+    sender: mpsc::Sender<PoolNotification>,
+    cell: Option<String>,
+}
+
+impl Inbound {
+    fn accepts(&self, notification: &PoolNotification) -> bool {
+        let Some(cell) = &self.cell else {
+            return true;
+        };
+        match &notification.notification {
+            RelayNotification::Event { event, .. } => {
+                matches!(event.kind, 20000 | 20001)
+                    && event
+                        .tags
+                        .iter()
+                        .filter(|tag| tag.first().is_some_and(|key| key == "g"))
+                        .count()
+                        == 1
+                    && event.tags.iter().any(|tag| {
+                        tag.first().is_some_and(|key| key == "g") && tag.get(1) == Some(cell)
+                    })
+            }
+            _ => true,
+        }
+    }
+}
 
 enum Command {
     Publish(
@@ -44,8 +72,12 @@ pub struct NostrHandle {
     accepting: Arc<AtomicBool>,
     stop: watch::Sender<bool>,
     stopped: watch::Receiver<bool>,
+    health: watch::Receiver<Vec<RelayHealth>>,
 }
 impl NostrHandle {
+    pub fn health(&self) -> Vec<RelayHealth> {
+        self.health.borrow().clone()
+    }
     pub async fn publish(&self, event: SignedEvent) -> Result<PoolPublishResult, RelayPoolError> {
         if !self.accepting.load(Ordering::Acquire) {
             return Err(stopped_pool_error());
@@ -140,6 +172,23 @@ impl NostrService {
         route: RelayRoute,
         inbound: mpsc::Sender<PoolNotification>,
     ) -> Result<Self, RelayPoolError> {
+        Self::spawn_inner(urls, route, inbound, None)
+    }
+
+    pub(crate) fn spawn_geo(
+        urls: &[String],
+        cell: String,
+        inbound: mpsc::Sender<PoolNotification>,
+    ) -> Result<Self, RelayPoolError> {
+        Self::spawn_inner(urls, RelayRoute::Direct, inbound, Some(cell))
+    }
+
+    fn spawn_inner(
+        urls: &[String],
+        route: RelayRoute,
+        inbound: mpsc::Sender<PoolNotification>,
+        cell: Option<String>,
+    ) -> Result<Self, RelayPoolError> {
         let configs = urls
             .iter()
             .cloned()
@@ -150,19 +199,25 @@ impl NostrService {
         let accepting = Arc::new(AtomicBool::new(true));
         let (stop, stop_receiver) = watch::channel(false);
         let (stopped_sender, stopped) = watch::channel(false);
+        let (health_sender, health) = watch::channel(pool.health());
         let handle = NostrHandle {
             commands: sender,
             accepting: Arc::clone(&accepting),
             stop,
             stopped,
+            health,
         };
         let task = tokio::spawn(run(
             pool,
             receiver,
-            inbound,
+            Inbound {
+                sender: inbound,
+                cell,
+            },
             stop_receiver,
             accepting,
             stopped_sender,
+            health_sender,
         ));
         Ok(Self {
             handle,
@@ -200,12 +255,13 @@ impl Drop for NostrService {
 async fn run(
     mut pool: RelayPool,
     mut commands: mpsc::Receiver<Command>,
-    inbound: mpsc::Sender<PoolNotification>,
+    inbound: Inbound,
     mut stop: watch::Receiver<bool>,
     accepting: Arc<AtomicBool>,
     stopped: watch::Sender<bool>,
+    health: watch::Sender<Vec<RelayHealth>>,
 ) -> Result<(), RelayPoolError> {
-    run_until_stopped(&mut pool, &mut commands, &inbound, &mut stop).await;
+    run_until_stopped(&mut pool, &mut commands, &inbound, &mut stop, &health).await;
 
     // Closing and draining the command queue drops every response sender. No
     // queued publish is forwarded while the relay pool is shutting down.
@@ -225,10 +281,20 @@ async fn run(
 async fn run_until_stopped(
     pool: &mut RelayPool,
     commands: &mut mpsc::Receiver<Command>,
-    inbound: &mpsc::Sender<PoolNotification>,
+    inbound: &Inbound,
     stop: &mut watch::Receiver<bool>,
+    health: &watch::Sender<Vec<RelayHealth>>,
 ) {
     loop {
+        health.send_if_modified(|current| {
+            let next = pool.health();
+            if *current == next {
+                false
+            } else {
+                *current = next;
+                true
+            }
+        });
         tokio::select! {
             biased;
             _ = wait_for_stop(stop) => return,
@@ -240,10 +306,11 @@ async fn run_until_stopped(
             }
             notification = timeout(INBOUND_POLL, pool.next_notification()) => {
                 if let Ok(Some(notification)) = notification {
+                    if !inbound.accepts(&notification) { continue; }
                     tokio::select! {
                         biased;
                         _ = wait_for_stop(stop) => return,
-                        result = inbound.send(notification) => {
+                        result = inbound.sender.send(notification) => {
                             if result.is_err() {
                                 return;
                             }
@@ -327,5 +394,45 @@ impl Error for NostrServiceError {
             Self::Pool(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod geo_filter_tests {
+    use super::*;
+
+    #[test]
+    fn geographic_input_rejects_other_cells_private_mail_and_ambiguous_tags() {
+        let (sender, _) = mpsc::channel(1);
+        let input = Inbound {
+            sender,
+            cell: Some("gcpvj".into()),
+        };
+        let mut event = SignedEvent {
+            id: String::new(),
+            pubkey: String::new(),
+            created_at: 0,
+            kind: 20000,
+            tags: vec![vec!["g".into(), "gcpvj".into()]],
+            content: String::new(),
+            sig: String::new(),
+        };
+        let accepts = |event| {
+            input.accepts(&PoolNotification {
+                relay_index: 0,
+                notification: RelayNotification::Event {
+                    subscription_id: "geo".into(),
+                    event,
+                },
+            })
+        };
+        assert!(accepts(event.clone()));
+        event.kind = 1059;
+        assert!(!accepts(event.clone()));
+        event.kind = 20001;
+        event.tags[0][1] = "u4pruy".into();
+        assert!(!accepts(event.clone()));
+        event.tags.push(vec!["g".into(), "gcpvj".into()]);
+        assert!(!accepts(event));
     }
 }
