@@ -97,3 +97,50 @@ async fn claim_confirmation_request_validates_the_handle() {
             .is_some()
     );
 }
+
+#[tokio::test]
+async fn the_legacy_erase_constant_no_longer_authorizes_panic() {
+    let temporary = tempdir().expect("temporary directory");
+    let core = open_core(temporary.path()).await;
+    let outcome = core
+        .handle(Request {
+            version: VERSION,
+            id: "legacy".into(),
+            command: Command::Panic {
+                confirmation: "ERASE".into(),
+            },
+        })
+        .await;
+    assert!(matches!(outcome, ResponseOutcome::Error { .. }));
+    assert!(
+        !core.is_panicked(),
+        "a rejected confirmation must not erase"
+    );
+}
+
+#[tokio::test]
+async fn a_minted_token_authorizes_panic_exactly_once() {
+    let temporary = tempdir().expect("temporary directory");
+    let core = open_core(temporary.path()).await;
+    let result = ok_result(&core, "token", Command::RequestPanicConfirmation).await;
+    let token_path = result
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .expect("token_path")
+        .to_owned();
+    let token = std::fs::read_to_string(&token_path)
+        .expect("token file")
+        .trim()
+        .to_owned();
+    let outcome = core
+        .handle(Request {
+            version: VERSION,
+            id: "commit".into(),
+            command: Command::Panic {
+                confirmation: token,
+            },
+        })
+        .await;
+    assert!(matches!(outcome, ResponseOutcome::Ok { .. }), "{outcome:?}");
+    assert!(core.is_panicked());
+}
