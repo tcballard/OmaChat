@@ -6,9 +6,14 @@ inputs for the Omarchy v4.0.1 clean-install gate.
 ## User service
 
 OmaChat's local IPC socket is an account-local control boundary, not an
-application sandbox. Socket permissions exclude other Unix users, and the
-daemon refuses a concurrent instance, but processes already running as the
-same account are inside this trust boundary. Run untrusted desktop software
+application sandbox. Socket permissions exclude other Unix users, the daemon
+rejects any connection whose peer credentials report a different uid, and it
+refuses a concurrent instance, but processes already running as the same
+account are inside this trust boundary. Destructive commands (`panic`,
+`claim-handle`) require a single-use confirmation token that the daemon mints
+into its state directory on request and that expires after 120 seconds, so a
+blind one-shot write to the socket cannot erase the account; a same-account
+process that can read the state directory can still complete that exchange. Run untrusted desktop software
 under a separate OS identity or sandbox that cannot access the account's
 runtime directory. In particular, do not describe the `0600` socket as
 authenticating individual same-user applications.

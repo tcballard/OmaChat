@@ -17,6 +17,7 @@ omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
 omachat-registry = { path = "../omachat-registry", version = "=0.0.1" }
 omachat-registry-transport = { path = "../omachat-registry-transport", version = "=0.0.1" }
 omachat-store = { path = "../omachat-store", version = "=0.0.1" }
+rustix = { version = "=1.1.4", features = ["fs", "process"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }

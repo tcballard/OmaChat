@@ -221,6 +221,7 @@ struct CoreInner {
     config: Mutex<DaemonConfig>,
     events: EventHub,
     sequence: AtomicU64,
+    confirmations: crate::confirmation::DestructiveConfirmations,
 }
 
 #[derive(Clone)]
@@ -290,6 +291,7 @@ impl DaemonCore {
         events: EventHub,
     ) -> Result<Self, CoreError> {
         config.validate()?;
+        let confirmation_root = state_directory.as_ref().to_owned();
         let store = Arc::new(
             SealedStore::open(&state_directory, config.storage_provider.into())
                 .await
@@ -390,6 +392,9 @@ impl DaemonCore {
                 config: Mutex::new(config),
                 events,
                 sequence: AtomicU64::new(1),
+                confirmations: crate::confirmation::DestructiveConfirmations::new(
+                    &confirmation_root,
+                ),
             }),
         })
     }
@@ -1775,13 +1780,45 @@ impl DaemonCore {
                 confirmation,
             } => {
                 let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
-                if confirmation != handle.as_str() {
-                    return Err(CoreError::RegistryClaimConfirmationRequired);
-                }
+                self.inner
+                    .confirmations
+                    .redeem(
+                        &crate::confirmation::ConfirmationAction::RegistryClaim {
+                            handle: handle.as_str().to_owned(),
+                        },
+                        &confirmation,
+                        unix_time()?,
+                    )
+                    .map_err(|error| match error {
+                        crate::confirmation::ConfirmationError::Expired => {
+                            CoreError::ConfirmationExpired
+                        }
+                        crate::confirmation::ConfirmationError::Missing
+                        | crate::confirmation::ConfirmationError::Mismatch => {
+                            CoreError::RegistryClaimConfirmationRequired
+                        }
+                    })?;
                 let result = self
                     .claim_configured_registry_handle_active(&handle, unix_time()?)
                     .await?;
                 Ok(registry_claim_value(&handle, &result))
+            }
+            Command::RequestPanicConfirmation => {
+                let issued = self.inner.confirmations.issue(
+                    crate::confirmation::ConfirmationAction::PanicErase,
+                    unix_time()?,
+                )?;
+                Ok(confirmation_issue_value(&issued))
+            }
+            Command::RequestRegistryClaimConfirmation { handle } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                let issued = self.inner.confirmations.issue(
+                    crate::confirmation::ConfirmationAction::RegistryClaim {
+                        handle: handle.as_str().to_owned(),
+                    },
+                    unix_time()?,
+                )?;
+                Ok(confirmation_issue_value(&issued))
             }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
@@ -2620,9 +2657,20 @@ impl DaemonCore {
     }
 
     async fn panic_erase(&self, confirmation: &str) -> Result<serde_json::Value, CoreError> {
-        if confirmation != "ERASE" {
-            return Err(CoreError::ConfirmationRequired);
-        }
+        self.inner
+            .confirmations
+            .redeem(
+                &crate::confirmation::ConfirmationAction::PanicErase,
+                confirmation,
+                unix_time()?,
+            )
+            .map_err(|error| match error {
+                crate::confirmation::ConfirmationError::Expired => CoreError::ConfirmationExpired,
+                crate::confirmation::ConfirmationError::Missing
+                | crate::confirmation::ConfirmationError::Mismatch => {
+                    CoreError::ConfirmationRequired
+                }
+            })?;
         if !self.inner.panic.begin() {
             return Err(CoreError::Panicked);
         }
@@ -3049,7 +3097,7 @@ mod relay_list_publication_lifecycle_tests {
         .await
         .expect("open configured core");
 
-        core.panic_erase("ERASE")
+        core.panic_erase(&super::minted_panic_token(&core))
             .await
             .expect("panic erasure completes");
 
@@ -3096,6 +3144,32 @@ fn panic_unavailable() -> ResponseOutcome {
             message: "daemon is shutting down and unavailable".into(),
         },
     }
+}
+
+fn confirmation_issue_value(issued: &crate::confirmation::IssuedConfirmation) -> serde_json::Value {
+    serde_json::json!({
+        "token_path": issued.token_path.display().to_string(),
+        "expires_at": issued.expires_at,
+        "ttl_seconds": crate::confirmation::CONFIRMATION_TTL_SECONDS,
+    })
+}
+
+/// Mint a real panic-confirmation token for tests: destructive commands are
+/// no longer authorized by a constant string.
+#[cfg(test)]
+fn minted_panic_token(core: &DaemonCore) -> String {
+    let issued = core
+        .inner
+        .confirmations
+        .issue(
+            crate::confirmation::ConfirmationAction::PanicErase,
+            unix_time().expect("clock"),
+        )
+        .expect("issue panic token");
+    std::fs::read_to_string(issued.token_path)
+        .expect("token file")
+        .trim()
+        .to_owned()
 }
 
 fn unix_time() -> Result<u64, CoreError> {
@@ -3313,7 +3387,8 @@ mod tests {
         let waiting_core = core.clone();
         let waiter = tokio::spawn(async move { waiting_core.wait_for_panic_terminal().await });
         let panic_core = core.clone();
-        let panic = tokio::spawn(async move { panic_core.panic_erase("ERASE").await });
+        let panic_token = super::minted_panic_token(&core);
+        let panic = tokio::spawn(async move { panic_core.panic_erase(&panic_token).await });
 
         tokio::time::timeout(Duration::from_secs(1), async {
             while core.panic_state() != PanicState::Erasing {
@@ -3370,7 +3445,8 @@ mod tests {
 
         core.prepare_for_shutdown().await;
         assert_eq!(core.panic_state(), PanicState::Stopping);
-        assert!(core.panic_erase("ERASE").await.is_err());
+        let token = super::minted_panic_token(&core);
+        assert!(core.panic_erase(&token).await.is_err());
         assert!(temporary.path().exists(), "late panic did not erase state");
     }
 

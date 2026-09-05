@@ -2,6 +2,7 @@
 
 mod agent_lifecycle_store;
 mod config;
+mod confirmation;
 mod core;
 mod core_error;
 mod dm_delivery_service;
@@ -33,6 +34,10 @@ pub use config::{
     DaemonConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
     RelayListPublicationConfig, RelayListPublicationRelayConfig, RoomsConfig,
     StorageProviderConfig,
+};
+pub use confirmation::{
+    CONFIRMATION_TTL_SECONDS, ConfirmationAction, ConfirmationError, DestructiveConfirmations,
+    IssuedConfirmation,
 };
 pub use core::{
     DaemonCore, PanicState, RegistryClaimEvidence, RegistryClaimResult, RegistryClaimStatus,
