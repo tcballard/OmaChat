@@ -194,8 +194,13 @@ impl Options {
             .map(PathBuf::from)
             .ok_or("XDG_RUNTIME_DIR is unset")?
             .join("omachat/omachat.sock");
+        let config = env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+            .map(|root| root.join("omachat/config.json"))
+            .filter(|path| path.exists());
         let mut options = Self {
-            config: None,
+            config,
             state,
             socket,
             anchors: None,

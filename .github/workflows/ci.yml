@@ -52,6 +52,9 @@ jobs:
       - name: Build size-optimized release binaries
         run: cargo build --workspace --bins --release --locked
 
+      - name: Exercise live TUI and terminal restoration
+        run: python3 scripts/test-tui-pty.py
+
       - name: Check release binary size budget
         run: ./scripts/check-release-size.sh
 

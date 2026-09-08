@@ -39,17 +39,25 @@ fn oversized_malformed_and_unknown_fields_fail_boundedly() {
     );
     assert_eq!(decoder.push(b"not-json\n"), Err(IpcError::MalformedJson));
     assert_eq!(
-        decoder.push(b"{\"version\":1,\"id\":\"x\",\"method\":\"status\",\"extra\":true}\n"),
+        decoder.push(b"{\"version\":2,\"id\":\"x\",\"method\":\"status\",\"extra\":true}\n"),
         Err(IpcError::MalformedJson)
     );
 }
 
 #[test]
 fn hello_negotiation_is_explicit() {
-    assert_eq!(negotiate(1, 1).expect("compatible").version, VERSION);
+    assert_eq!(negotiate(2, 2).expect("compatible").version, VERSION);
+    assert_eq!(negotiate(1, 2).expect("ranged").version, VERSION);
+    assert!(
+        matches!(
+            negotiate(1, 1),
+            Err(IpcError::VersionMismatch { supported: 2, .. })
+        ),
+        "version 1 destructive semantics are gone"
+    );
     assert!(matches!(
-        negotiate(2, 3),
-        Err(IpcError::VersionMismatch { supported: 1, .. })
+        negotiate(3, 4),
+        Err(IpcError::VersionMismatch { supported: 2, .. })
     ));
 }
 
@@ -61,46 +69,46 @@ fn requests_preserve_the_flat_wire_format() {
                 minimum_version: 1,
                 maximum_version: 2,
             },
-            r#"{"version":1,"id":"request","method":"hello","params":{"minimum_version":1,"maximum_version":2}}"#,
+            r#"{"version":2,"id":"request","method":"hello","params":{"minimum_version":1,"maximum_version":2}}"#,
         ),
         (
             Command::Status,
-            r#"{"version":1,"id":"request","method":"status"}"#,
+            r#"{"version":2,"id":"request","method":"status"}"#,
         ),
         (
             Command::Fingerprint,
-            r#"{"version":1,"id":"request","method":"fingerprint"}"#,
+            r#"{"version":2,"id":"request","method":"fingerprint"}"#,
         ),
         (
             Command::Join {
                 geohash: "u4pruy".into(),
             },
-            r#"{"version":1,"id":"request","method":"join","params":{"geohash":"u4pruy"}}"#,
+            r#"{"version":2,"id":"request","method":"join","params":{"geohash":"u4pruy"}}"#,
         ),
         (
             Command::Leave {
                 geohash: "u4pruy".into(),
             },
-            r#"{"version":1,"id":"request","method":"leave","params":{"geohash":"u4pruy"}}"#,
+            r#"{"version":2,"id":"request","method":"leave","params":{"geohash":"u4pruy"}}"#,
         ),
         (
             Command::Send {
                 conversation: "general".into(),
                 text: "hello".into(),
             },
-            r#"{"version":1,"id":"request","method":"send","params":{"conversation":"general","text":"hello"}}"#,
+            r#"{"version":2,"id":"request","method":"send","params":{"conversation":"general","text":"hello"}}"#,
         ),
         (
             Command::Who {
                 geohash: "u4pruy".into(),
             },
-            r#"{"version":1,"id":"request","method":"who","params":{"geohash":"u4pruy"}}"#,
+            r#"{"version":2,"id":"request","method":"who","params":{"geohash":"u4pruy"}}"#,
         ),
         (
             Command::Block {
                 public_key: "pubkey".into(),
             },
-            r#"{"version":1,"id":"request","method":"block","params":{"public_key":"pubkey"}}"#,
+            r#"{"version":2,"id":"request","method":"block","params":{"public_key":"pubkey"}}"#,
         ),
         (
             Command::JoinRoom {
@@ -108,7 +116,7 @@ fn requests_preserve_the_flat_wire_format() {
                 group_id: "omarchy".into(),
                 invite_code: None,
             },
-            r#"{"version":1,"id":"request","method":"join-room","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
+            r#"{"version":2,"id":"request","method":"join-room","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
         ),
         (
             Command::JoinRoom {
@@ -116,37 +124,37 @@ fn requests_preserve_the_flat_wire_format() {
                 group_id: "omarchy".into(),
                 invite_code: Some("welcome".into()),
             },
-            r#"{"version":1,"id":"request","method":"join-room","params":{"relay":"wss://rooms.example","group_id":"omarchy","invite_code":"welcome"}}"#,
+            r#"{"version":2,"id":"request","method":"join-room","params":{"relay":"wss://rooms.example","group_id":"omarchy","invite_code":"welcome"}}"#,
         ),
         (
             Command::LeaveRoom {
                 relay: "wss://rooms.example".into(),
                 group_id: "omarchy".into(),
             },
-            r#"{"version":1,"id":"request","method":"leave-room","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
+            r#"{"version":2,"id":"request","method":"leave-room","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
         ),
         (
             Command::ListRooms,
-            r#"{"version":1,"id":"request","method":"list-rooms"}"#,
+            r#"{"version":2,"id":"request","method":"list-rooms"}"#,
         ),
         (
             Command::RoomMembers {
                 relay: "wss://rooms.example".into(),
                 group_id: "omarchy".into(),
             },
-            r#"{"version":1,"id":"request","method":"room-members","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
+            r#"{"version":2,"id":"request","method":"room-members","params":{"relay":"wss://rooms.example","group_id":"omarchy"}}"#,
         ),
         (
             Command::Panic {
                 confirmation: "confirm".into(),
             },
-            r#"{"version":1,"id":"request","method":"panic","params":{"confirmation":"confirm"}}"#,
+            r#"{"version":2,"id":"request","method":"panic","params":{"confirmation":"confirm"}}"#,
         ),
         (
             Command::Subscribe {
                 topics: vec![Topic::Status, Topic::Messages],
             },
-            r#"{"version":1,"id":"request","method":"subscribe","params":{"topics":["status","messages"]}}"#,
+            r#"{"version":2,"id":"request","method":"subscribe","params":{"topics":["status","messages"]}}"#,
         ),
     ];
 
@@ -168,7 +176,7 @@ fn requests_preserve_the_flat_wire_format() {
 #[test]
 fn request_fields_may_arrive_in_any_order() {
     let request = serde_json::from_str::<Request>(
-        r#"{"params":{"text":"hello","conversation":"general"},"method":"send","id":"request","version":1}"#,
+        r#"{"params":{"text":"hello","conversation":"general"},"method":"send","id":"request","version":2}"#,
     )
     .expect("reordered request deserializes");
     assert_eq!(
@@ -187,15 +195,15 @@ fn request_fields_may_arrive_in_any_order() {
 #[test]
 fn requests_reject_noncanonical_arms_and_fields() {
     let invalid = [
-        r#"{"version":1,"id":"x","method":"send"}"#,
-        r#"{"version":1,"id":"x","method":"send","params":null}"#,
-        r#"{"version":1,"id":"x","method":"status","params":null}"#,
-        r#"{"version":1,"id":"x","method":"status","params":{"conversation":"general","text":"hello"}}"#,
-        r#"{"version":1,"id":"x","method":"send","params":{"conversation":"general","text":"hello","extra":true}}"#,
-        r#"{"version":1,"id":"x","method":"send","params":{"conversation":"general","conversation":"other","text":"hello"}}"#,
-        r#"{"version":1,"id":"x","method":"status","extra":true}"#,
-        r#"{"version":1,"id":"x","method":"status","method":"status"}"#,
-        r#"{"version":1,"id":"x","method":"unknown"}"#,
+        r#"{"version":2,"id":"x","method":"send"}"#,
+        r#"{"version":2,"id":"x","method":"send","params":null}"#,
+        r#"{"version":2,"id":"x","method":"status","params":null}"#,
+        r#"{"version":2,"id":"x","method":"status","params":{"conversation":"general","text":"hello"}}"#,
+        r#"{"version":2,"id":"x","method":"send","params":{"conversation":"general","text":"hello","extra":true}}"#,
+        r#"{"version":2,"id":"x","method":"send","params":{"conversation":"general","conversation":"other","text":"hello"}}"#,
+        r#"{"version":2,"id":"x","method":"status","extra":true}"#,
+        r#"{"version":2,"id":"x","method":"status","method":"status"}"#,
+        r#"{"version":2,"id":"x","method":"unknown"}"#,
     ];
 
     for wire in invalid {
@@ -218,7 +226,7 @@ fn responses_preserve_the_flat_wire_format_and_null_result() {
     let encoded = serde_json::to_string(&response).expect("response serializes");
     assert_eq!(
         encoded,
-        r#"{"version":1,"id":"response-1","status":"ok","result":null}"#
+        r#"{"version":2,"id":"response-1","status":"ok","result":null}"#
     );
     assert_eq!(
         serde_json::from_str::<Response>(&encoded).expect("null result deserializes"),
@@ -237,11 +245,11 @@ fn responses_preserve_the_flat_wire_format_and_null_result() {
     };
     assert_eq!(
         serde_json::to_string(&error).expect("error serializes"),
-        r#"{"version":1,"id":"response-2","status":"error","error":{"code":"unavailable","message":"offline"}}"#
+        r#"{"version":2,"id":"response-2","status":"error","error":{"code":"unavailable","message":"offline"}}"#
     );
     assert_eq!(
         serde_json::from_str::<Response>(
-            r#"{"error":{"message":"offline","code":"unavailable"},"status":"error","id":"response-2","version":1}"#
+            r#"{"error":{"message":"offline","code":"unavailable"},"status":"error","id":"response-2","version":2}"#
         )
         .expect("reordered response deserializes"),
         error
@@ -251,18 +259,18 @@ fn responses_preserve_the_flat_wire_format_and_null_result() {
 #[test]
 fn responses_reject_missing_wrong_unknown_and_duplicate_arms() {
     let invalid = [
-        r#"{"version":1,"id":"x","status":"ok"}"#,
-        r#"{"version":1,"id":"x","status":"ok","error":{"code":"internal","message":"failed"}}"#,
-        r#"{"version":1,"id":"x","status":"ok","result":null,"error":{"code":"internal","message":"failed"}}"#,
-        r#"{"version":1,"id":"x","status":"error","result":null}"#,
-        r#"{"version":1,"id":"x","status":"error","error":{"code":"internal","message":"failed"},"result":null}"#,
-        r#"{"version":1,"id":"x","status":"error"}"#,
-        r#"{"version":1,"id":"x","status":"error","error":null}"#,
-        r#"{"version":1,"id":"x","status":"error","error":{"code":"internal","message":"failed","extra":true}}"#,
-        r#"{"version":1,"id":"x","status":"ok","result":null,"extra":true}"#,
-        r#"{"version":1,"id":"x","status":"ok","result":null,"result":null}"#,
-        r#"{"version":1,"id":"x","status":"ok","status":"ok","result":null}"#,
-        r#"{"version":1,"id":"x","status":"unknown","result":null}"#,
+        r#"{"version":2,"id":"x","status":"ok"}"#,
+        r#"{"version":2,"id":"x","status":"ok","error":{"code":"internal","message":"failed"}}"#,
+        r#"{"version":2,"id":"x","status":"ok","result":null,"error":{"code":"internal","message":"failed"}}"#,
+        r#"{"version":2,"id":"x","status":"error","result":null}"#,
+        r#"{"version":2,"id":"x","status":"error","error":{"code":"internal","message":"failed"},"result":null}"#,
+        r#"{"version":2,"id":"x","status":"error"}"#,
+        r#"{"version":2,"id":"x","status":"error","error":null}"#,
+        r#"{"version":2,"id":"x","status":"error","error":{"code":"internal","message":"failed","extra":true}}"#,
+        r#"{"version":2,"id":"x","status":"ok","result":null,"extra":true}"#,
+        r#"{"version":2,"id":"x","status":"ok","result":null,"result":null}"#,
+        r#"{"version":2,"id":"x","status":"ok","status":"ok","result":null}"#,
+        r#"{"version":2,"id":"x","status":"unknown","result":null}"#,
     ];
 
     for wire in invalid {
@@ -271,4 +279,38 @@ fn responses_reject_missing_wrong_unknown_and_duplicate_arms() {
             "accepted invalid response: {wire}"
         );
     }
+}
+
+#[test]
+fn confirmation_request_commands_round_trip() {
+    let mut decoder = RequestDecoder::default();
+    let requests = decoder
+        .push(b"{\"version\":2,\"id\":\"1\",\"method\":\"request-panic-confirmation\"}\n")
+        .expect("decode panic confirmation request");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].command, Command::RequestPanicConfirmation);
+
+    let requests = decoder
+        .push(
+            b"{\"version\":2,\"id\":\"2\",\"method\":\"request-registry-claim-confirmation\",\"params\":{\"handle\":\"tom\"}}\n",
+        )
+        .expect("decode claim confirmation request");
+    assert_eq!(
+        requests[0].command,
+        Command::RequestRegistryClaimConfirmation {
+            handle: "tom".into()
+        }
+    );
+
+    let encoded = encode_line(&Request {
+        version: VERSION,
+        id: "3".into(),
+        command: Command::RequestRegistryClaimConfirmation {
+            handle: "tom".into(),
+        },
+    })
+    .expect("encode claim confirmation request");
+    let text = std::str::from_utf8(&encoded).expect("utf8 line");
+    assert!(text.contains("\"method\":\"request-registry-claim-confirmation\""));
+    assert!(text.contains("\"handle\":\"tom\""));
 }

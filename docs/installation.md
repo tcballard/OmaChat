@@ -6,9 +6,14 @@ inputs for the Omarchy v4.0.1 clean-install gate.
 ## User service
 
 OmaChat's local IPC socket is an account-local control boundary, not an
-application sandbox. Socket permissions exclude other Unix users, and the
-daemon refuses a concurrent instance, but processes already running as the
-same account are inside this trust boundary. Run untrusted desktop software
+application sandbox. Socket permissions exclude other Unix users, the daemon
+rejects any connection whose peer credentials report a different uid, and it
+refuses a concurrent instance, but processes already running as the same
+account are inside this trust boundary. Destructive commands (`panic`,
+`claim-handle`) require a single-use confirmation token that the daemon mints
+into its state directory on request and that expires after 120 seconds, so a
+blind one-shot write to the socket cannot erase the account; a same-account
+process that can read the state directory can still complete that exchange. Run untrusted desktop software
 under a separate OS identity or sandbox that cannot access the account's
 runtime directory. In particular, do not describe the `0600` socket as
 authenticating individual same-user applications.
@@ -134,3 +139,32 @@ is for local testing. Neither is authorized for AUR publication yet.
 The optional Quattro widget lives under `packaging/omarchy-quattro`; validate
 it with `omarchy plugin validate` on v4.0.1 before enabling. The legacy Waybar
 example is separate and is not the Quattro integration.
+
+## Development trial controls and local history
+
+The daemon reads `$XDG_CONFIG_HOME/omachat/config.json` (normally
+`~/.config/omachat/config.json`) when present. `--config PATH` overrides it.
+Packages do not create or overwrite that file. Relay configuration changes
+require a restart. The unit grants write access to both its state directory
+and the separate `omachat-anchors` directory used by room rollback checks.
+
+The TUI subscribes to live messages, delivery, presence, conversations and
+status. Tab/Shift-Tab selects a conversation; Escape switches compose/scroll
+mode, `i` returns to compose, and Page Up/Down scrolls history. `/help` shows
+controls. A disconnected client keeps its draft and retries with a 1–30 second
+backoff. It never automatically resends a draft after an ambiguous send failure.
+Ctrl-C, Ctrl-D and `/detach` leave the daemon running. SIGINT, SIGTERM and the
+panic hook restore the terminal, including release builds using panic-abort.
+
+The daemon keeps a sealed local UI cache of at most 128 messages and 32 KiB,
+with a 24-hour age limit. Expiry is enforced on load, updates and snapshots;
+this is a bounded recent view, not a full-history archive. Reattaching loads
+this snapshot and deduplicates live events by message ID. Retry delivery
+updates come from the daemon outbox. Panic clears the cache along with the
+other sealed state. This local cache does not define relay or backup retention.
+
+IPC v2 separates response correlation from a bounded client event queue.
+Overflow or malformed/incompatible input disconnects the client; the TUI
+resubscribes and obtains a fresh snapshot. Subscribe responses include
+`status` and `messages`; topic filters govern streamed events. A snapshot and
+its queued live tail may overlap, so clients must deduplicate by message ID.

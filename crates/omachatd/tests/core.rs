@@ -10,6 +10,30 @@ use tempfile::tempdir;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
+/// Destructive commands require a daemon-minted single-use token; mint one
+/// over the same IPC surface the client uses.
+async fn minted_panic_token(core: &DaemonCore) -> String {
+    let outcome = core
+        .handle(Request {
+            version: VERSION,
+            id: "panic-token".into(),
+            command: Command::RequestPanicConfirmation,
+        })
+        .await;
+    let ResponseOutcome::Ok { result } = outcome else {
+        panic!("panic token issuance failed: {outcome:?}");
+    };
+    let path = result
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .expect("token_path")
+        .to_owned();
+    std::fs::read_to_string(path)
+        .expect("token file")
+        .trim()
+        .to_owned()
+}
+
 async fn command(core: &DaemonCore, command: Command) -> serde_json::Value {
     match core
         .handle(Request {
@@ -96,6 +120,15 @@ async fn identity_outbox_and_commands_survive_restart() {
     );
     assert_eq!(second_status["account"]["registry_state"], "unconfigured");
     assert_eq!(second_status["outbox_pending"], 1);
+    let snapshot = command(
+        &reopened,
+        Command::Subscribe {
+            topics: vec![omachat_proto::ipc::Topic::Messages],
+        },
+    )
+    .await;
+    assert_eq!(snapshot["messages"][0]["text"], "private restart message");
+    assert_eq!(snapshot["messages"][0]["delivery"], "queued");
 
     let backing =
         fs::read(temporary.path().join("records/nostr-outbox-v1")).expect("sealed outbox backing");
@@ -348,10 +381,11 @@ async fn panic_requires_confirmation_erases_state_and_rejects_more_work() {
         .await;
     assert!(matches!(denied, ResponseOutcome::Error { .. }));
     assert_eq!(core.panic_state(), PanicState::Active);
+    let token = minted_panic_token(&core).await;
     command(
         &core,
         Command::Panic {
-            confirmation: "ERASE".into(),
+            confirmation: token,
         },
     )
     .await;
@@ -388,12 +422,13 @@ async fn panic_cleanup_failure_is_terminal_and_never_reenables_the_daemon() {
     .expect("open core");
     fs::remove_file(temporary.path().join("master.key")).expect("inject key cleanup failure");
 
+    let token = minted_panic_token(&core).await;
     let failed = core
         .handle(Request {
             version: VERSION,
             id: "panic-failure".into(),
             command: Command::Panic {
-                confirmation: "ERASE".into(),
+                confirmation: token,
             },
         })
         .await;
@@ -472,13 +507,14 @@ async fn panic_cancels_a_slow_publish_before_erasing_and_emits_no_local_message(
         .expect("relay event signal");
 
     let panic_core = core.clone();
+    let panic_token = minted_panic_token(&core).await;
     let panic = tokio::spawn(async move {
         panic_core
             .handle(Request {
                 version: VERSION,
                 id: "panic-during-send".into(),
                 command: Command::Panic {
-                    confirmation: "ERASE".into(),
+                    confirmation: panic_token,
                 },
             })
             .await
