@@ -12,6 +12,13 @@ Commands include /join, /leave, /who, /block, /send,
 /panic ERASE, and /detach.
 Panic erasure is destructive and cannot remove copies already held by relays,
 peers, backups, or filesystem snapshots.
+.SH CONTROLS
+Tab and Shift-Tab switch conversations. Escape toggles scroll/compose mode;
+i returns to compose. Page Up/Down scroll messages. /help shows controls.
+On disconnect, drafts are preserved and connection retries back off to 30 seconds.
+Failed sends are never automatically resubmitted by the client.
+Recent messages are loaded from a bounded sealed daemon cache on reattach.
+Ctrl-C, Ctrl-D, /detach, SIGINT and SIGTERM detach without stopping the daemon.
 .SH FILES
 .I $XDG_RUNTIME_DIR/omachat/omachat.sock
 .SH SEE ALSO

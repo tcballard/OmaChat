@@ -17,4 +17,4 @@ jobs:
         with:
           toolchain: nightly
       - run: cargo install cargo-fuzz --locked
-      - run: cargo fuzz run hostile-codecs -- -max_total_time=300 -rss_limit_mb=1024
+      - run: cargo +nightly fuzz run hostile-codecs -- -max_total_time=300 -rss_limit_mb=1024

@@ -32,7 +32,7 @@ advertising must remain disabled until its live health gate succeeds.
 
 ## Development
 
-The repository is a nine-crate Rust workspace pinned to Rust 1.98.0. It now
+The repository is a eleven-crate Rust workspace pinned to Rust 1.98.0. It now
 contains bounded protocol codecs, distinct device/account/recovery keys, sealed
 persistence, daemon IPC, CLI/TUI surfaces, and pre-release
 packaging assets. Size-optimized release builds of the three installed binaries

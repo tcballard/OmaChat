@@ -123,8 +123,8 @@ async fn socket_is_private_and_hello_status_work() {
             version: VERSION,
             id: "hello".into(),
             command: Command::Hello {
-                minimum_version: 1,
-                maximum_version: 1,
+                minimum_version: VERSION,
+                maximum_version: VERSION,
             },
         },
         Request {
@@ -368,13 +368,37 @@ async fn panic_response_during_terminal_shutdown(
         },
     )
     .await;
+    // Destructive commands need a daemon-minted single-use token, obtained
+    // over the same connection before the panic request itself.
+    let token_response = write_request(
+        &mut writer,
+        &mut reader,
+        Request {
+            version: VERSION,
+            id: "token".into(),
+            command: Command::RequestPanicConfirmation,
+        },
+    )
+    .await;
+    let ResponseOutcome::Ok { result } = token_response.outcome else {
+        panic!("token issuance failed");
+    };
+    let token = std::fs::read_to_string(
+        result
+            .get("token_path")
+            .and_then(serde_json::Value::as_str)
+            .expect("token_path"),
+    )
+    .expect("token file")
+    .trim()
+    .to_owned();
     writer
         .write_all(
             &encode_line(&Request {
                 version: VERSION,
                 id: "panic".into(),
                 command: Command::Panic {
-                    confirmation: "ERASE".into(),
+                    confirmation: token,
                 },
             })
             .expect("encode panic request"),

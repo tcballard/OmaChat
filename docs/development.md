@@ -1,6 +1,6 @@
 # Development contract
 
-OmaChat 0.0.1 is a Rust workspace containing ten crates. The toolchain is
+OmaChat 0.0.1 is a Rust workspace containing eleven crates. The toolchain is
 locked to Rust 1.98.0 in `rust-toolchain.toml`; the workspace manifest declares
 Rust 1.98 as its minimum supported Rust version (MSRV). Changing either value
 requires a pull request that updates both together and demonstrates the full
@@ -61,3 +61,11 @@ The dependency policy permits 0BSD, Apache-2.0, MIT, Unicode-3.0, ISC, and the
 two- and three-clause BSD licenses. The BSD/ISC additions cover the pinned
 BlueR and Rustls probe stacks; they do not weaken the Android clean-room rule or
 allow copyleft source into OmaChat.
+
+Release-binary terminal and local-relay smoke checks:
+
+```sh
+python3 scripts/test-tui-pty.py
+# Requires the localhost Grain test relay on port 18181:
+python3 scripts/test-local-dm.py
+```

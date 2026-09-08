@@ -14,6 +14,33 @@ use omachatd::{
     RequestHandler, StorageProviderConfig,
 };
 use tempfile::tempdir;
+
+/// Registry claims require a daemon-minted single-use token bound to the
+/// exact handle; mint one over the same IPC surface the client uses.
+async fn minted_claim_token(core: &DaemonCore, handle: &str) -> String {
+    let outcome = core
+        .handle(Request {
+            version: VERSION,
+            id: "claim-token".into(),
+            command: Command::RequestRegistryClaimConfirmation {
+                handle: handle.to_owned(),
+            },
+        })
+        .await;
+    let ResponseOutcome::Ok { result } = outcome else {
+        panic!("claim token issuance failed: {outcome:?}");
+    };
+    let path = result
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .expect("token_path")
+        .to_owned();
+    std::fs::read_to_string(path)
+        .expect("token file")
+        .trim()
+        .to_owned()
+}
+
 use tokio::{net::TcpListener, sync::oneshot};
 
 fn now() -> u64 {
@@ -94,13 +121,14 @@ async fn pending_claim_replays_after_restart_and_clears_after_durable_receipt() 
         )
         .await
         .expect("daemon core");
+        let confirmation = minted_claim_token(&core, "alice").await;
         let result = core
             .handle(Request {
                 version: VERSION,
                 id: "claim-handle".into(),
                 command: Command::ClaimRegistryHandle {
                     handle: "alice".into(),
-                    confirmation: "alice".into(),
+                    confirmation,
                 },
             })
             .await;
@@ -167,13 +195,16 @@ async fn offline_preflight_never_creates_a_new_claim_intent() {
     )
     .await
     .expect("daemon core");
+    // A token minted for another handle must not confirm this claim, and the
+    // legacy handle echo is no longer a confirmation at all.
+    let foreign_token = minted_claim_token(&core, "bob").await;
     let rejected = core
         .handle(Request {
             version: VERSION,
             id: "wrong-confirmation".into(),
             command: Command::ClaimRegistryHandle {
                 handle: "alice".into(),
-                confirmation: "bob".into(),
+                confirmation: foreign_token,
             },
         })
         .await;

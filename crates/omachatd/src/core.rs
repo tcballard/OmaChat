@@ -201,6 +201,7 @@ const ROOM_HISTORY_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
 struct CoreInner {
     store: Arc<SealedStore>,
+    chat_history: Mutex<crate::chat_history::ChatHistory>,
     identity: Mutex<Option<IdentitySecrets>>,
     account: Mutex<Option<LocalAccount>>,
     storage_transaction: Mutex<()>,
@@ -221,6 +222,7 @@ struct CoreInner {
     config: Mutex<DaemonConfig>,
     events: EventHub,
     sequence: AtomicU64,
+    confirmations: crate::confirmation::DestructiveConfirmations,
 }
 
 #[derive(Clone)]
@@ -290,6 +292,7 @@ impl DaemonCore {
         events: EventHub,
     ) -> Result<Self, CoreError> {
         config.validate()?;
+        let confirmation_root = state_directory.as_ref().to_owned();
         let store = Arc::new(
             SealedStore::open(&state_directory, config.storage_provider.into())
                 .await
@@ -367,8 +370,10 @@ impl DaemonCore {
             } else {
                 None
             };
+        let chat_history = crate::chat_history::ChatHistory::load(&store, unix_time()?)?;
         Ok(Self {
             inner: Arc::new(CoreInner {
+                chat_history: Mutex::new(chat_history),
                 store,
                 identity: Mutex::new(Some(identity)),
                 account: Mutex::new(Some(account)),
@@ -390,6 +395,9 @@ impl DaemonCore {
                 config: Mutex::new(config),
                 events,
                 sequence: AtomicU64::new(1),
+                confirmations: crate::confirmation::DestructiveConfirmations::new(
+                    &confirmation_root,
+                ),
             }),
         })
     }
@@ -1386,7 +1394,7 @@ impl DaemonCore {
                     );
                 }
             }
-            self.inner.events.publish(Event { version: VERSION, sequence: self.inner.sequence.fetch_add(1, Ordering::Relaxed), topic, payload: serde_json::json!({"id": event.id, "conversation": format!("#{}", geohash), "text": content}) });
+            self.publish_topic_event(topic, serde_json::json!({"id": event.id, "conversation": format!("#{}", geohash), "sender": event.pubkey, "text": content, "delivery": "received"}));
             return;
         }
         let recipient_secret = {
@@ -1775,13 +1783,45 @@ impl DaemonCore {
                 confirmation,
             } => {
                 let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
-                if confirmation != handle.as_str() {
-                    return Err(CoreError::RegistryClaimConfirmationRequired);
-                }
+                self.inner
+                    .confirmations
+                    .redeem(
+                        &crate::confirmation::ConfirmationAction::RegistryClaim {
+                            handle: handle.as_str().to_owned(),
+                        },
+                        &confirmation,
+                        unix_time()?,
+                    )
+                    .map_err(|error| match error {
+                        crate::confirmation::ConfirmationError::Expired => {
+                            CoreError::ConfirmationExpired
+                        }
+                        crate::confirmation::ConfirmationError::Missing
+                        | crate::confirmation::ConfirmationError::Mismatch => {
+                            CoreError::RegistryClaimConfirmationRequired
+                        }
+                    })?;
                 let result = self
                     .claim_configured_registry_handle_active(&handle, unix_time()?)
                     .await?;
                 Ok(registry_claim_value(&handle, &result))
+            }
+            Command::RequestPanicConfirmation => {
+                let issued = self.inner.confirmations.issue(
+                    crate::confirmation::ConfirmationAction::PanicErase,
+                    unix_time()?,
+                )?;
+                Ok(confirmation_issue_value(&issued))
+            }
+            Command::RequestRegistryClaimConfirmation { handle } => {
+                let handle = GlobalHandle::parse(&handle).map_err(|_| CoreError::InvalidHandle)?;
+                let issued = self.inner.confirmations.issue(
+                    crate::confirmation::ConfirmationAction::RegistryClaim {
+                        handle: handle.as_str().to_owned(),
+                    },
+                    unix_time()?,
+                )?;
+                Ok(confirmation_issue_value(&issued))
             }
             Command::Who { geohash } => self.who(&geohash),
             Command::Block { public_key } => self.block(&public_key),
@@ -1793,7 +1833,20 @@ impl DaemonCore {
             Command::LeaveRoom { relay, group_id } => self.leave_room(&relay, group_id).await,
             Command::ListRooms => self.list_rooms().await,
             Command::RoomMembers { relay, group_id } => self.room_members(&relay, group_id).await,
-            Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),
+            Command::Subscribe { topics } => {
+                let messages = if topics.contains(&omachat_proto::ipc::Topic::Messages) {
+                    self.inner
+                        .chat_history
+                        .lock()
+                        .expect("chat history mutex poisoned")
+                        .snapshot(&self.inner.store, unix_time()?)?
+                } else {
+                    Vec::new()
+                };
+                Ok(
+                    serde_json::json!({"topics": topics, "status": self.status_value()?, "messages": messages}),
+                )
+            }
             Command::Panic { .. } | Command::Hello { .. } => Err(CoreError::InvalidCommand),
         }
     }
@@ -2517,9 +2570,23 @@ impl DaemonCore {
             return None;
         }
         let mut outbox = NostrOutbox::load(&self.inner.store, now).ok()?;
-        outbox
+        let state = outbox
             .record_transport_attempt(id, omachat_store::OutboxTransport::Nostr, outcome, now)
-            .ok()
+            .ok();
+        drop(outbox);
+        drop(_storage);
+        let delivery = if outcome == omachat_store::AttemptOutcome::Acknowledged {
+            "stored"
+        } else if state == Some(omachat_store::OutboxState::Failed) {
+            "failed"
+        } else {
+            "queued"
+        };
+        self.publish_topic_event(
+            omachat_proto::ipc::Topic::Delivery,
+            serde_json::json!({"id": id, "delivery": delivery}),
+        );
+        state
     }
 
     fn identity(&self) -> Result<std::sync::MutexGuard<'_, Option<IdentitySecrets>>, CoreError> {
@@ -2620,9 +2687,20 @@ impl DaemonCore {
     }
 
     async fn panic_erase(&self, confirmation: &str) -> Result<serde_json::Value, CoreError> {
-        if confirmation != "ERASE" {
-            return Err(CoreError::ConfirmationRequired);
-        }
+        self.inner
+            .confirmations
+            .redeem(
+                &crate::confirmation::ConfirmationAction::PanicErase,
+                confirmation,
+                unix_time()?,
+            )
+            .map_err(|error| match error {
+                crate::confirmation::ConfirmationError::Expired => CoreError::ConfirmationExpired,
+                crate::confirmation::ConfirmationError::Missing
+                | crate::confirmation::ConfirmationError::Mismatch => {
+                    CoreError::ConfirmationRequired
+                }
+            })?;
         if !self.inner.panic.begin() {
             return Err(CoreError::Panicked);
         }
@@ -2718,6 +2796,11 @@ impl DaemonCore {
             identity.take();
             account.take();
         }
+        self.inner
+            .chat_history
+            .lock()
+            .expect("chat history mutex poisoned")
+            .clear();
         let erase_result = self
             .inner
             .store
@@ -2820,6 +2903,27 @@ impl DaemonCore {
     }
 
     fn publish_topic_event(&self, topic: omachat_proto::ipc::Topic, payload: serde_json::Value) {
+        let mut history = self
+            .inner
+            .chat_history
+            .lock()
+            .expect("chat history mutex poisoned");
+        if self.ensure_active().is_err() {
+            return;
+        }
+        if matches!(
+            topic,
+            omachat_proto::ipc::Topic::Messages | omachat_proto::ipc::Topic::Delivery
+        ) && history
+            .update(
+                &self.inner.store,
+                payload.clone(),
+                unix_time().unwrap_or_default(),
+            )
+            .is_err()
+        {
+            eprintln!("chat history persistence failed");
+        }
         self.inner.events.publish(Event {
             version: VERSION,
             sequence: self.inner.sequence.fetch_add(1, Ordering::Relaxed),
@@ -2982,17 +3086,25 @@ impl DaemonCore {
     }
 
     fn publish_message_event(&self, id: &str, conversation: &str, text: &str, delivery: &str) {
-        self.inner.events.publish(Event {
-            version: VERSION,
-            sequence: self.inner.sequence.fetch_add(1, Ordering::Relaxed),
-            topic: omachat_proto::ipc::Topic::Messages,
-            payload: serde_json::json!({
-                "id": id,
-                "conversation": conversation,
-                "text": text,
-                "delivery": delivery,
-            }),
-        });
+        let conversation = if let Ok(geohash) = Geohash::parse(conversation.trim_start_matches('#'))
+        {
+            format!("#{geohash}")
+        } else {
+            let peer = conversation
+                .strip_prefix("dm:")
+                .or_else(|| conversation.strip_prefix("nostr_"))
+                .unwrap_or(conversation);
+            if decode_xonly(peer).is_ok() {
+                format!("dm:{}", peer.to_ascii_lowercase())
+            } else {
+                conversation.to_owned()
+            }
+        };
+        self.publish_topic_event(omachat_proto::ipc::Topic::Messages, serde_json::json!({
+            "id": id, "conversation": conversation, "text": text, "delivery": delivery,
+            "outgoing": delivery != "received",
+            "sender": if delivery == "received" { conversation.strip_prefix("dm:").unwrap_or("peer") } else { "you" },
+        }));
     }
 }
 
@@ -3049,7 +3161,7 @@ mod relay_list_publication_lifecycle_tests {
         .await
         .expect("open configured core");
 
-        core.panic_erase("ERASE")
+        core.panic_erase(&super::minted_panic_token(&core))
             .await
             .expect("panic erasure completes");
 
@@ -3096,6 +3208,32 @@ fn panic_unavailable() -> ResponseOutcome {
             message: "daemon is shutting down and unavailable".into(),
         },
     }
+}
+
+fn confirmation_issue_value(issued: &crate::confirmation::IssuedConfirmation) -> serde_json::Value {
+    serde_json::json!({
+        "token_path": issued.token_path.display().to_string(),
+        "expires_at": issued.expires_at,
+        "ttl_seconds": crate::confirmation::CONFIRMATION_TTL_SECONDS,
+    })
+}
+
+/// Mint a real panic-confirmation token for tests: destructive commands are
+/// no longer authorized by a constant string.
+#[cfg(test)]
+fn minted_panic_token(core: &DaemonCore) -> String {
+    let issued = core
+        .inner
+        .confirmations
+        .issue(
+            crate::confirmation::ConfirmationAction::PanicErase,
+            unix_time().expect("clock"),
+        )
+        .expect("issue panic token");
+    std::fs::read_to_string(issued.token_path)
+        .expect("token file")
+        .trim()
+        .to_owned()
 }
 
 fn unix_time() -> Result<u64, CoreError> {
@@ -3313,7 +3451,8 @@ mod tests {
         let waiting_core = core.clone();
         let waiter = tokio::spawn(async move { waiting_core.wait_for_panic_terminal().await });
         let panic_core = core.clone();
-        let panic = tokio::spawn(async move { panic_core.panic_erase("ERASE").await });
+        let panic_token = super::minted_panic_token(&core);
+        let panic = tokio::spawn(async move { panic_core.panic_erase(&panic_token).await });
 
         tokio::time::timeout(Duration::from_secs(1), async {
             while core.panic_state() != PanicState::Erasing {
@@ -3370,7 +3509,8 @@ mod tests {
 
         core.prepare_for_shutdown().await;
         assert_eq!(core.panic_state(), PanicState::Stopping);
-        assert!(core.panic_erase("ERASE").await.is_err());
+        let token = super::minted_panic_token(&core);
+        assert!(core.panic_erase(&token).await.is_err());
         assert!(temporary.path().exists(), "late panic did not erase state");
     }
 

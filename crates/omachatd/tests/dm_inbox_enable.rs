@@ -10,6 +10,31 @@ use omachat_proto::ipc::{Command, Request, ResponseOutcome, Topic, VERSION};
 use omachatd::{DaemonConfig, DaemonCore, EventHub, RequestHandler, StorageProviderConfig};
 use serde_json::{Value, json};
 use tempfile::tempdir;
+
+/// Destructive commands require a daemon-minted single-use token; mint one
+/// over the same IPC surface the client uses.
+async fn minted_panic_token(core: &DaemonCore) -> String {
+    let outcome = core
+        .handle(Request {
+            version: VERSION,
+            id: "panic-token".into(),
+            command: Command::RequestPanicConfirmation,
+        })
+        .await;
+    let ResponseOutcome::Ok { result } = outcome else {
+        panic!("panic token issuance failed: {outcome:?}");
+    };
+    let path = result
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .expect("token_path")
+        .to_owned();
+    std::fs::read_to_string(path)
+        .expect("token file")
+        .trim()
+        .to_owned()
+}
+
 use tokio::{
     net::{TcpListener, TcpStream},
     time::timeout,
@@ -101,10 +126,11 @@ async fn configured_private_inbox_reaches_ipc_and_quiesces_before_panic_erasure(
     );
     assert_eq!(event.payload["delivery"], "received");
 
+    let token = minted_panic_token(&core).await;
     let erased = command(
         &core,
         Command::Panic {
-            confirmation: "ERASE".to_owned(),
+            confirmation: token,
         },
     )
     .await;
