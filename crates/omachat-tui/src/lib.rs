@@ -212,8 +212,14 @@ impl UiModel {
             if let Some(index) = conversation.messages.iter().position(|m| m.id == id) {
                 if payload["deleted"] == true {
                     conversation.messages.remove(index);
-                } else if let Some(delivery) = delivery(payload) {
-                    conversation.messages[index].delivery = Some(delivery);
+                } else {
+                    if let Some(delivery) = delivery(payload) {
+                        conversation.messages[index].delivery = Some(delivery);
+                    }
+                    if payload["outgoing"] == true {
+                        conversation.messages[index].outgoing = true;
+                        conversation.messages[index].sender = "you".into();
+                    }
                 }
                 return;
             }

@@ -69,6 +69,10 @@ impl ChatHistory {
             let old = self.messages[index]
                 .as_object_mut()
                 .ok_or(CoreError::Encoding)?;
+            if payload["outgoing"] == true {
+                old.insert("outgoing".into(), true.into());
+                old.insert("sender".into(), "you".into());
+            }
             if let Some(delivery) = payload.get("delivery")
                 && delivery != "received"
             {

@@ -296,6 +296,11 @@ async fn submit(client: &mut Client, model: &mut UiModel, line: &str) -> bool {
         Ok(Some(command)) => match omachat_ctl::request_with_confirmation(client, command).await {
             Ok(response) => match response.outcome {
                 ResponseOutcome::Ok { result } => {
+                    if result["erased"] == true {
+                        model.conversations.clear();
+                        model.selected = 0;
+                        model.scroll_offset = 0;
+                    }
                     model.panic_confirmation_pending = false;
                     model.input.clear();
                     model.status = result.to_string();

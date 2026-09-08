@@ -168,3 +168,8 @@ Overflow or malformed/incompatible input disconnects the client; the TUI
 resubscribes and obtains a fresh snapshot. Subscribe responses include
 `status` and `messages`; topic filters govern streamed events. A snapshot and
 its queued live tail may overlap, so clients must deduplicate by message ID.
+
+Both Arch recipes disable makepkg-injected C LTO and debug information. Cargo
+retains the workspace size-optimized Rust LTO profile; GCC LTO objects from
+`ring` are incompatible with Rust's linker and caused the original package
+build to fail despite a successful direct Cargo release build.

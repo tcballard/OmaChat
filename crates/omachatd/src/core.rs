@@ -3086,6 +3086,20 @@ impl DaemonCore {
     }
 
     fn publish_message_event(&self, id: &str, conversation: &str, text: &str, delivery: &str) {
+        let conversation = if let Ok(geohash) = Geohash::parse(conversation.trim_start_matches('#'))
+        {
+            format!("#{geohash}")
+        } else {
+            let peer = conversation
+                .strip_prefix("dm:")
+                .or_else(|| conversation.strip_prefix("nostr_"))
+                .unwrap_or(conversation);
+            if decode_xonly(peer).is_ok() {
+                format!("dm:{}", peer.to_ascii_lowercase())
+            } else {
+                conversation.to_owned()
+            }
+        };
         self.publish_topic_event(omachat_proto::ipc::Topic::Messages, serde_json::json!({
             "id": id, "conversation": conversation, "text": text, "delivery": delivery,
             "outgoing": delivery != "received",

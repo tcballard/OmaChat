@@ -6,6 +6,9 @@ pkgdesc='Tiny encrypted text collaboration for Omarchy (git)'
 arch=('x86_64')
 url='https://github.com/tcballard/OmaChat'
 license=('0BSD')
+# Cargo owns release LTO/stripping. GCC LTO objects from ring cannot be linked
+# by rust-lld; do not inject makepkg's C LTO or unused debug information.
+options=('!lto' '!debug')
 depends=('dbus' 'ca-certificates' 'coreutils' 'gcc-libs' 'qrencode')
 makedepends=('cargo' 'rust' 'git')
 provides=('omachat')
