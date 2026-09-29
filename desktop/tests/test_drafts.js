@@ -57,7 +57,24 @@ function reply(s, request, text, revision, saved = true) {
     reply(s,clear,'',3); assert.equal(D.meta(c).dirty,false);
     s.status={}; D.edit(c,'old daemon'); assert.equal(D.next(s),null); assert.match(D.label(s,c),/Session/);
 }
-console.log('PASS: recovery, late acknowledgements, conflicts, reconnects, UTF-8 limits, failures and clear-after-send');
+{
+    // Unknown save outcome: reread, never retry blind. A committed save reconciles without a prompt.
+    const {s,c}=fixture(); D.edit(c,'maybe saved'); const save=D.next(s);
+    D.response(s,{id:save.id,ok:false,unknown:true,error:'no answer'},S.ensure);
+    assert.equal(c.draft,'maybe saved'); assert.equal(D.meta(c).error,'');
+    const get=D.next(s); assert.equal(get.method,'get-draft');
+    reply(s,get,'maybe saved',3); assert.equal(D.meta(c).dirty,false); assert.equal(D.meta(c).revision,3);
+    assert.equal(D.meta(c).conflict,null);
+}
+{
+    // A refused save whose stored text already equals ours is adopted, not a conflict.
+    const {s,c}=fixture(); D.edit(c,'same text'); const save=D.next(s);
+    reply(s,save,'same text',5,false);
+    assert.equal(D.meta(c).conflict,null); assert.equal(D.meta(c).revision,5); assert.equal(D.meta(c).dirty,false);
+    D.edit(c,'differs'); const again=D.next(s); assert.equal(again.params.expected_revision,5);
+    reply(s,again,'other client',6,false); assert.ok(D.meta(c).conflict);
+}
+console.log('PASS: recovery, late acknowledgements, conflicts, reconnects, UTF-8 limits, failures, unknown outcomes and clear-after-send');
 {
     const {s,c}=fixture();
     const background=S.ensure(s,'#other'); D.edit(background,'background text');

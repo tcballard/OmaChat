@@ -64,7 +64,44 @@ class ProtocolTests(unittest.TestCase):
         session.receive({"version": 2, "id": request["id"], "status": "error", "error": {"message": "refused"}})
         self.assertEqual(frames[-1]["id"], "ui-7")
         self.assertFalse(frames[-1]["ok"])
-        session.pending["timeout"] = ("ui-8", time.monotonic() - 1)
+        session.pending["timeout"] = ("snapshot", time.monotonic() - 1)
+        with self.assertRaises(TimeoutError): session.check_deadlines()
+        session, frames = self.ready_session()
+        session.pending["rooms-late"] = ("rooms", time.monotonic() - 1)
+        count = len(frames)
+        session.check_deadlines()  # a slow startup room listing is dropped, not fatal
+        self.assertEqual(len(frames), count)
+        self.assertEqual(session.expired, {"rooms-late": "rooms"})
+
+    def test_slow_ui_request_becomes_unknown_without_ending_session(self):
+        session, frames = self.ready_session()
+        session.command({"id": "ui-7", "method": "send", "params": {"conversation": "dm:key", "text": "hello"}})
+        request = json.loads(session.output)
+        target, deadline = session.pending[request["id"]]
+        self.assertEqual(target, "ui-7")
+        self.assertGreater(deadline, time.monotonic() + 20)
+        session.pending[request["id"]] = (target, time.monotonic() - 1)
+        session.check_deadlines()
+        self.assertEqual(frames[-1], {"kind": "response", "id": "ui-7", "ok": False, "unknown": True, "error": frames[-1]["error"]})
+        self.assertNotIn(request["id"], session.pending)
+        # The late daemon reply is discarded; a following event still flows.
+        session.receive({"version": 2, "id": request["id"], "status": "ok", "result": {"id": "e", "delivery": "stored"}})
+        session.receive({"version": 2, "sequence": 1, "topic": "delivery", "payload": {"id": "e", "delivery": "stored"}})
+        self.assertEqual(frames[-1]["kind"], "event")
+        self.assertEqual(session.expired, {})
+        with self.assertRaises(ValueError): session.receive({"version": 2, "id": request["id"], "status": "ok"})
+        session.output.clear()
+        session.command({"id": "ui-8", "method": "get-draft", "params": {"conversation": "dm:key"}})
+        _, deadline = session.pending[json.loads(session.output)["id"]]
+        self.assertLess(deadline, time.monotonic() + 6)
+
+    def test_daemon_that_never_answers_ends_session(self):
+        session, frames = self.ready_session()
+        for i in range(bridge.MAX_EXPIRED):
+            session.expired[str(1000 + i)] = f"ui-{i}"
+        session.command({"id": "ui-x", "method": "status"})
+        request = json.loads(session.output)
+        session.pending[request["id"]] = ("ui-x", time.monotonic() - 1)
         with self.assertRaises(TimeoutError): session.check_deadlines()
 
     def test_backpressure_and_event_bounds(self):

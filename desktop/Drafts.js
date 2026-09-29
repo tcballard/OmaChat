@@ -57,14 +57,21 @@ function response(s, value, ensure) {
     }
     var c = request.chat, d = meta(c);
     d.pending = false;
+    if (!value.ok && value.unknown) {
+        // Unknown outcome: reread instead of retrying blind. A save that did
+        // commit shows up as the same text or as a revision conflict.
+        d.loaded = false; d.error = ""; return true;
+    }
     if (!value.ok) { d.error = value.error || "Draft was not saved."; return true; }
     var remote = value.data;
     if (!remote || remote.conversation !== c.id || typeof remote.text !== "string" || !Number.isSafeInteger(remote.revision)) {
         d.error = "Invalid saved draft response."; return true;
     }
-    if (request.method === "save-draft" && remote.saved !== true) {
+    if (request.method === "save-draft" && remote.saved !== true && remote.text !== c.draft) {
         d.conflict = remote; return true;
     }
+    // A refused save whose stored text already equals ours is not a conflict:
+    // adopt its revision so the next change is checked against it.
     if (request.method === "get-draft") {
         d.loaded = true;
         if (d.dirty && remote.text !== c.draft && remote.text !== d.baseline) {

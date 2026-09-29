@@ -74,6 +74,10 @@ function response(s, value) {
     var c = ensure(s, sent.conversation);
     if (!c) return true;
     c.busy = false;
+    if (!value.ok && value.unknown) {
+        // The adapter gave up waiting. The daemon may still deliver; never resend automatically.
+        c.uncertain = true; c.error = "Delivery is unknown. Check the conversation before sending again."; return true;
+    }
     if (!value.ok) { c.error = value.error || "Message rejected; draft kept."; return true; }
     // A reply belongs to the chat/text at submission, never whichever is selected now.
     if (c.draft === sent.text) c.draft = "";

@@ -22,6 +22,10 @@ VERSION = 2
 LIMIT = 65536
 TOPICS = ["status", "conversations", "messages", "delivery"]
 ALLOWED = {"send", "status", "list-rooms", "join-room", "leave-room", "room-members", "list-drafts", "get-draft", "save-draft"}
+# Relay round trips (connect and response timeouts of 20 s each in the daemon)
+# take longer than local storage or status requests.
+DEADLINES = {"send": 30, "join-room": 30, "leave-room": 30}
+MAX_EXPIRED = 64
 
 
 def encode(value):
@@ -82,9 +86,10 @@ class Session:
         self.ready = False
         self.events = []
         self.sequence = -1
+        self.expired = {}
         self.request("hello", {"minimum_version": VERSION, "maximum_version": VERSION}, "hello")
 
-    def request(self, method, params=None, target=None):
+    def request(self, method, params=None, target=None, deadline=None):
         if len(self.pending) >= 32:
             raise ValueError("Too many pending requests")
         self.serial += 1
@@ -95,7 +100,7 @@ class Session:
         data = encode(value)
         if len(self.output) + len(data) > LIMIT * 2:
             raise ValueError("IPC write queue is full")
-        self.pending[identity] = (target, time.monotonic() + self.timeout)
+        self.pending[identity] = (target, time.monotonic() + (self.timeout if deadline is None else deadline))
         self.output.extend(data)
 
     def command(self, value):
@@ -106,7 +111,7 @@ class Session:
         if not self.ready or method not in ALLOWED:
             self.emit({"kind": "response", "id": identity, "ok": False, "error": "Daemon is not ready or command is unsupported"})
             return
-        self.request(method, value.get("params"), identity)
+        self.request(method, value.get("params"), identity, DEADLINES.get(method))
 
     def receive(self, value):
         if value.get("version") != VERSION:
@@ -126,7 +131,14 @@ class Session:
                 self.events.append(value)
             return
         identity = value.get("id")
-        if identity not in self.pending or value.get("status") not in ("ok", "error"):
+        if value.get("status") not in ("ok", "error"):
+            raise ValueError("Uncorrelated or malformed daemon response")
+        if identity in self.expired:
+            # The UI already treats this request as unknown; a resulting
+            # message or delivery change reaches it through the subscription.
+            del self.expired[identity]
+            return
+        if identity not in self.pending:
             raise ValueError("Uncorrelated or malformed daemon response")
         target, _ = self.pending.pop(identity)
         ok = value["status"] == "ok"
@@ -152,8 +164,20 @@ class Session:
             self.emit({"kind": "response", "id": target, "ok": ok, "data": result, "error": error if not ok else ""})
 
     def check_deadlines(self):
-        if any(deadline <= time.monotonic() for _, deadline in self.pending.values()):
-            raise TimeoutError("Daemon request timed out; pending delivery may be unknown")
+        now = time.monotonic()
+        for identity, (target, deadline) in list(self.pending.items()):
+            if deadline > now:
+                continue
+            if target in ("hello", "snapshot"):
+                raise TimeoutError("Daemon request timed out; pending delivery may be unknown")
+            if len(self.expired) >= MAX_EXPIRED:
+                raise TimeoutError("Daemon stopped answering; pending delivery may be unknown")
+            del self.pending[identity]
+            self.expired[identity] = target
+            if target == "rooms":
+                continue
+            self.emit({"kind": "response", "id": target, "ok": False, "unknown": True,
+                       "error": "The daemon did not answer in time. The outcome is unknown; check before repeating it."})
 
 
 def run(path):
