@@ -59,9 +59,74 @@ offscreen. Unix sockets are available. No Quickshell, no Wayland, no relay.
   `QQmlEngine::quit` connection all exist; a running `Process` is killed when
   its object is destroyed.
 
+## Headless Quickshell run (same day, after the fixes above)
+
+An Arch Linux userland (Quickshell 0.3.1, Qt 6.11.2, Sway 1.12 with the
+headless wlroots backend and pixman rendering, Mesa 26.2) was set up in this
+container with the production `desktop/omachat-desktop` launcher, the real
+`bridge.py` and `setup.py`, and the daemon built from this branch. Pointer and
+keyboard input came from a virtual keyboard and pointer helper; screenshots
+came from `grim`. This is real Quickshell process and IPC evidence. It is not
+Hyprland, not Omarchy, and not a GPU-backed session. Screenshots are in
+`docs/images/desktop-headless/`.
+
+Passed:
+
+- Launch through the launcher: one `quickshell` process, one `bridge.py`
+  child, an `xdg` toplevel with app id `dev.omachat.Desktop`, no QML warnings
+  in the Quickshell log across three instances.
+- Connect, contact link preview, opening a direct conversation, typing, and
+  "Draft saved securely" with the daemon's draft store confirming the text
+  and revision.
+- Daemon stop while typing: "Offline" status; a compositor close request then
+  opened the close guard with Save and close disabled and Keep editing and
+  Close anyway available. After the daemon restart the offline edits were
+  reconciled and saved without a prompt (verified through IPC).
+- Two windows on one daemon: the second recovered the saved draft with the
+  review prompt and Send disabled; typing into the stale copy produced the
+  "Another client changed this draft" choice with local text preserved; Use
+  saved text replaced the composer.
+- Save and close: typed text, close request, dialog, Save and close; the
+  window and its adapter exited and the daemon held the final revision.
+- Unknown outcome: with the daemon paused (SIGSTOP), Send showed "Sending…"
+  with the window still connected; at 30 s it showed "Delivery is unknown"
+  with "I checked — allow another send" and Send disabled; after SIGCONT the
+  message appeared through the subscription and nothing was resent.
+- Storage failure: with the records directory mounted read-only, typing
+  showed the daemon's "Read-only file system" error and "Retry draft
+  recovery" with text intact; after restoring, retry saved the draft.
+- Relay setup through the real helper process against a custom
+  `OMACHAT_CONFIG` path: load, save a URL, canonical form shown, unrelated
+  `joined_geohashes` preserved, a 0600 backup created, the restart notice shown.
+- Hot reload: appending to `ChatView.qml` while the window ran caused no
+  reload and no state loss.
+- Narrow layout at 640 px and at the 440×480 minimum, the Chats toggle, and
+  the light theme read from `colors.toml`.
+- Forced termination (SIGTERM to quickshell) and Close anyway both left no
+  adapter process behind.
+
+Defects found by this run and fixed in this PR:
+
+- On Qt 6.11 the bindings on the active conversation's `busy`, `uncertain`
+  and `error` fields never refreshed (same object reference each revision), so
+  "Sending…", send errors and the "allow another send" button never appeared;
+  Send simply went dark. The offscreen Qt 6.8 fixture does refresh them, so
+  fixture tests had not caught it.
+- Dialog titles were invisible on a light default header; the conflict
+  preview and identity link were white boxes with light text; relay dialog
+  labels clipped instead of wrapping.
+- Reconnect backoff reached 30 s, so a daemon restart could go unnoticed for
+  half a minute; capped at 10 s.
+
+Daemon behaviour observed, not changed here: with an unreachable NIP-17 relay
+configured the daemon exits at startup ("relay authentication timed out")
+instead of running degraded, so a wrong relay URL leaves the desktop
+disconnected until the URL is corrected and the daemon restarted. The relay
+dialog and the XPS guide now say so.
+
 ## Not verified
 
-Everything in [XPS live testing](xps-live-testing.md): an actual Quickshell
-window, compositor close shortcuts, themes, restart and recovery on Omarchy,
-two live clients, relay reachability and two-machine messaging. Fixture and
-container results are not live evidence.
+Hyprland and Omarchy themselves, GPU rendering, the Omarchy close-window
+binding, real relays, NIP-17 and NIP-29 delivery between machines, and the
+clipboard copy of the contact link. See [XPS live testing](xps-live-testing.md).
+Fixture and headless-container results are not Omarchy evidence.

@@ -116,17 +116,23 @@ Check, in order:
    the sidebar previews show both drafts. Send in A (the scratch daemon
    accepts the legacy DM profile only if a relay is set; with none, the
    desktop refuses with the NIP-17 message, which is the expected result).
-6. **Timeout and unknown outcome.** Stop the scratch daemon, edit its config
-   to `"dm_relays": ["wss://192.0.2.1"]` (TEST-NET, unroutable), restart it,
-   reconnect and send a message. The button shows "Sending…" for up to 30 s,
-   then "Delivery is unknown" with "I checked — allow another send"; the
-   window must not show "Disconnected". The draft stays. The message may later
-   appear as queued once the daemon gives up; it must never be sent twice by
-   the desktop.
-7. **Storage failure.** With the daemon running, make its records read-only:
-   `chmod 500 /tmp/omachat-scratch/state/records`, type in a draft: the
-   status must show the daemon's error and "Retry draft recovery"; text stays.
-   Restore with `chmod 700 /tmp/omachat-scratch/state/records` and retry.
+6. **Timeout and unknown outcome.** The daemon refuses to start with an
+   unreachable NIP-17 relay, so use a room instead: add
+   `"joined_geohashes": ["gcpvj"]` to the scratch config, restart the daemon,
+   select `#gcpvj`, type, then pause the daemon with
+   `kill -STOP $(pgrep -f omachat-scratch/state)` and click Send. The button
+   shows "Sending…" and the window stays connected; at 30 s it shows
+   "Delivery is unknown" with "I checked — allow another send". Resume with
+   `kill -CONT` on the same PID: the message appears once as "Created
+   locally" and the draft stays. Nothing may be resent by the desktop.
+   Separately, configure `"dm_relays": ["wss://192.0.2.1"]` and restart: the
+   daemon must exit with "relay authentication timed out" and the desktop
+   must show the missing-socket notice until the URL is corrected.
+7. **Storage failure.** With the daemon running as your user, make its
+   records read-only: `chmod 500 /tmp/omachat-scratch/state/records`, type
+   in a draft: the status must show the daemon's storage error and "Retry
+   draft recovery"; text stays. Restore with `chmod 700` on the same
+   directory and click retry: the draft saves.
 8. **Close protection.** With unsaved text, use the Omarchy close-window
    binding (Super+W by default) and the title-bar close if present. The
    dialog must appear both times. Test Keep editing, Save and close (window
