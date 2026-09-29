@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "ChatState.js" as State
+import "Contact.js" as Contact
 
 Item {
     id: view
@@ -208,10 +209,18 @@ Item {
         id: dm
         title: "New direct message"
         onOpened: { service.actionError = ""; peer.forceActiveFocus() }
+        onClosed: { peer.clear(); service.actionError = "" }
         contentItem: ColumnLayout {
             spacing: 16
-            Text { text: "Ask your contact for their device’s Nostr public key. Check it with them before sharing sensitive information."; color: view.muted; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Field { id: peer; objectName: "peerKey"; placeholderText: "64-character public key"; Accessible.name: "Contact public key"; Layout.fillWidth: true; onAccepted: if (service.newDm(text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } }
+            Text { text: "Paste an npub, nprofile, nostr: contact link, or hexadecimal public key. Check the identity with your contact before sharing sensitive information."; color: view.muted; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Field { id: peer; objectName: "peerKey"; placeholderText: "Paste a contact link or public key"; Accessible.name: "Contact public key or link"; maximumLength: 5000; Layout.fillWidth: true; onAccepted: if (service.newDm(text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } }
+            Text {
+                property var contact: Contact.preview(peer.text)
+                objectName: "contactPreview"
+                text: contact.key ? contact.format + " · " + contact.key + (contact.hintsIgnored ? "\nRelay hints in this link are ignored; your configured relays are used." : "") : contact.error
+                textFormat: Text.PlainText; color: contact.key ? view.accent : view.warning
+                visible: text.length > 0; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true
+            }
             Text { text: service.actionError; textFormat: Text.PlainText; visible: text.length > 0; color: view.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             RowLayout { Layout.alignment: Qt.AlignRight; Action { text: "Cancel"; onClicked: dm.close() } Action { text: "Open conversation"; onClicked: if (service.newDm(peer.text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } } }
         }
@@ -236,9 +245,10 @@ Item {
         contentItem: ColumnLayout {
             spacing: 16
             Text { text: service.ready ? "Connected to the local daemon. This does not prove relay reachability or message delivery." : "Waiting for the daemon. Build PR #230 and start omachatd using the setup instructions."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            Text { text: "DEVICE NOSTR PUBLIC KEY"; color: view.accent; font.pixelSize: 10; font.letterSpacing: 1 }
-            TextArea { text: service.publicKey || "Available after connecting"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; Layout.fillWidth: true; Accessible.name: "My device public key" }
-            Text { text: "Select and copy this public key to share it. It identifies this device, not a verified global handle. Drafts are kept only while this window is open; recent message history belongs to the daemon."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: "SHARE YOUR CONTACT LINK"; color: view.accent; font.pixelSize: 10; font.letterSpacing: 1 }
+            TextArea { id: myLink; text: service.publicKey ? "nostr:" + Contact.npub(service.publicKey) : "Available after connecting"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; Layout.fillWidth: true; Accessible.name: "My contact link" }
+            Action { text: "Copy contact link"; enabled: service.publicKey.length === 64; onClicked: { myLink.selectAll(); myLink.copy(); myLink.deselect() } }
+            Text { text: "This public link identifies this device, not a verified global handle. Copying it shares no private key. Drafts are kept only while this window is open; recent message history belongs to the daemon."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Action { text: "Done"; Layout.alignment: Qt.AlignRight; onClicked: identity.close() }
         }
     }

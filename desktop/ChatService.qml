@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "ChatState.js" as State
+import "Contact.js" as Contact
 
 Item {
     id: service
@@ -33,9 +34,9 @@ Item {
         revision++
     }
     function newDm(key) {
-        var parsed = State.dmKey(key)
-        if (!parsed) { actionError = "Paste a 64-character Nostr public key. Handles and npub links are not supported in this preview."; return false }
-        if (!State.select(state, "dm:" + parsed)) { actionError = state.notice; revision++; return false }
+        var contact = Contact.preview(key)
+        if (!contact.key) { actionError = contact.error || "Paste a contact link or public key."; return false }
+        if (!State.select(state, "dm:" + contact.key)) { actionError = state.notice; revision++; return false }
         actionError = ""; revision++; return true
     }
     function request(method, params) {

@@ -3,6 +3,7 @@ import QtQuick
 import QtQuick.Controls
 import ".." as Desktop
 import "../ChatState.js" as State
+import "../Contact.js" as Contact
 
 ApplicationWindow {
     id: window
@@ -28,7 +29,7 @@ ApplicationWindow {
         function reviewedUnknown() { var c = State.current(state); c.uncertain = false; c.error = ""; revision++ }
         function request(method) {}
         function joinRoom(relay, group, code) {}
-        function newDm(key) { var k = State.dmKey(key); if (!k) { actionError = "Invalid public key"; return false }; var opened = State.select(state, "dm:" + k); revision++; return opened }
+        function newDm(key) { var contact = Contact.preview(key); if (!contact.key) { actionError = contact.error; return false }; var opened = State.select(state, "dm:" + contact.key); revision++; return opened }
         function send() {
             var req = State.beginSend(state)
             if (req) State.response(state, { id: req.id, ok: true, data: { id: "sent-" + state.serial, delivery: "stored" } })

@@ -56,7 +56,7 @@ class ViewTests(unittest.TestCase):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)
         peer = self.window.findChild(QObject, "peerKey")
-        peer.setProperty("text", "d" * 64)
+        peer.setProperty("text", "nostr:npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
         peer.forceActiveFocus()
         QTest.keyClick(self.window, Qt.Key_Return)
         QTest.qWait(20)
@@ -67,6 +67,18 @@ class ViewTests(unittest.TestCase):
         QTest.qWait(20)
         self.assertEqual(composer.property("text"), "save my draft")
         self.assertFalse(self.window.findChild(QObject,"sendButton").property("enabled"))
+
+    def test_secret_key_is_rejected_in_contact_dialog(self):
+        QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
+        QTest.qWait(20)
+        peer = self.window.findChild(QObject, "peerKey")
+        peer.setProperty("text", "nostr:nsec1secret")
+        peer.forceActiveFocus()
+        QTest.keyClick(self.window, Qt.Key_Return)
+        QTest.qWait(20)
+        preview = self.window.findChild(QObject, "contactPreview")
+        self.assertIn("private key", preview.property("text"))
+        self.assertTrue(peer.property("visible"))
 
 
 if __name__ == "__main__": unittest.main()

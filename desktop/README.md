@@ -11,7 +11,7 @@ desktop client yet. PR #230's XPS evidence applies to its daemon/TUI only.
 ## What works in this slice
 
 - Conversation sidebar and local conversation filter; direct conversations
-  opened with a full hexadecimal device Nostr public key.
+  opened with an npub, nprofile, nostr: contact link, or hexadecimal public key.
 - Live recent messages and delivery updates via the daemon's subscription.
 - Multiline, selectable plain text; Enter sends, Shift+Enter inserts a newline.
 - Per-conversation drafts for the lifetime of the window. Switching chats while
@@ -84,7 +84,7 @@ can use `systemctl --user restart omachatd.service`; a source-run daemon can be
 stopped with Ctrl+C and restarted with the same arguments.
 
 Connect two configured clients, open **My identity & connection** on each,
-exchange device public keys, and use **New message**. A connected green marker
+copy contact links, and paste them into **New message**. A connected green marker
 means the *local daemon* is connected, not that a remote relay or peer is online.
 
 ### Stop, remove, and preserve data
@@ -103,7 +103,7 @@ This is a recent-history client, not an archive: PR #230 retains at most 128
 messages / 32 KiB / 24 hours in its sealed UI cache. The presentation bounds
 each conversation to 128 messages and the session to 128 conversations.
 There is no older-history paging, persistent draft storage, attachment flow,
-notification service, profile search, npub decoding, account recovery UI,
+notification service, profile search, account recovery UI,
 room creation/moderation UI, or deployment wizard yet. Global handle claims,
 multi-device human identity, and agent coordination must not be inferred from
 this desktop UI. See the [product roadmap](../docs/desktop-roadmap.md).
@@ -113,6 +113,7 @@ this desktop UI. See the [product roadmap](../docs/desktop-roadmap.md).
 ```sh
 python3 -m unittest discover -s desktop/tests -p 'test_bridge.py' -v
 node desktop/tests/test_state.js
+node desktop/tests/test_contact.js
 python3 -m venv /tmp/omachat-qt-tests
 /tmp/omachat-qt-tests/bin/pip install PySide6==6.8.3
 QT_QPA_PLATFORM=offscreen /tmp/omachat-qt-tests/bin/python -m unittest discover -s desktop/tests -p 'test_view.py' -v
@@ -124,3 +125,13 @@ The Qt suite loads the **production ChatView** with an explicitly fake backend;
 it proves UI behavior, not a live daemon or a Quickshell launch. The CI job runs
 all three suites. Runtime evidence and gaps are recorded in
 [desktop evidence](../docs/desktop-evidence.md).
+
+## Contact links
+
+NIP-19 checksum and canonical padding are checked before opening a conversation.
+NIP-21 `nostr:` links accept public npub/nprofile identifiers only. Private nsec
+keys, event links, malformed/duplicate profile keys and mixed-case encodings are
+rejected. Unknown profile metadata is ignored. Relay hints are not followed or
+added to configuration; links do not cause network requests. IPC continues to
+use hexadecimal keys. A checksum identifies a well-formed key, not a trusted
+person or a verified handle. The identity panel provides a copyable public link.

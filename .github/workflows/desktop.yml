@@ -23,6 +23,8 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: /tmp/omachat-qt-tests/bin/python -m unittest discover -s desktop/tests -p 'test_*.py' -v
       - name: Presentation state regressions
-        run: node desktop/tests/test_state.js
+        run: |
+          node desktop/tests/test_state.js
+          node desktop/tests/test_contact.js
       - name: Launcher syntax
         run: sh -n desktop/omachat-desktop
