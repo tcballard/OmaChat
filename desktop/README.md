@@ -124,7 +124,8 @@ changed by the launcher. Remove this checkout (or its `desktop/` directory) to
 remove the preview. Daemon identity, sealed history, and outbox are untouched.
 Normal window close checks every conversation for unsaved drafts, conflicts,
 pending sends and unknown send outcomes. Choose **Keep editing**, **Save and
-close**, or explicitly **Close anyway**. Saving waits up to ten seconds; failure
+close**, or explicitly **Close anyway**. Saving waits up to 35 seconds, enough
+for one slow relay send to be acknowledged; failure
 keeps the window and text intact. Autosave runs every 600 ms while connected. Older daemons retain session-only drafts.
 Saved drafts remain in the daemon’s sealed store; no plaintext disk cache is created.
 A different daemon identity on reconnect clears the previous session's view

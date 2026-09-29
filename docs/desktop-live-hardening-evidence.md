@@ -27,8 +27,8 @@ development record, not a release claim, and nothing here was run on Omarchy.
   (`src/core/qmlglobal.hpp`, `src/core/rootwrapper.cpp`).
 - The setup helper installs a SIGTERM handler so the desktop's 5 s deadline
   kill unwinds through cleanup and removes its temporary file.
-- The close-guard failure text now covers pending sends, which can legitimately
-  take longer than the ten-second save-and-close limit.
+- Save-and-close now waits 35 seconds instead of ten, covering one full send
+  deadline, and its failure text names pending sends.
 
 ## Verified in this environment
 

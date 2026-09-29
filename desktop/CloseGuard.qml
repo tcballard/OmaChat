@@ -47,10 +47,10 @@ Item {
     Timer {
         id: deadline
         objectName: "closeDeadline"
-        interval: 10000
+        interval: 35000
         onTriggered: {
             guard.waiting = false
-            guard.failure = "Not all changes could be saved or acknowledged within ten seconds. Keep editing to resolve offline, storage, conflict, or pending send states. Your text is still here."
+            guard.failure = "Not all changes could be saved or acknowledged within 35 seconds. Keep editing to resolve offline, storage, conflict, or pending send states. Your text is still here."
         }
     }
     Dialog {

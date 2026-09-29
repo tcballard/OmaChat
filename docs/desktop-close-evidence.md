@@ -3,7 +3,7 @@
 The production CloseGuard connects to the Qt window attached to its Item; it is
 shared by the Quickshell shell and offscreen Qt fixture. It blocks normal close
 while any conversation has unsaved text, a pending send/save, conflicts, or an
-unknown send outcome. Save-and-close waits for acknowledged state with a ten
+unknown send outcome. Save-and-close waits for acknowledged state with a 35
 second limit; it never auto-discards or resends messages. Explicit close-anyway
 loses memory-only edits and does not undo queued sends or remove sealed drafts.
 
