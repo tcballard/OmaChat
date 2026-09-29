@@ -13,6 +13,7 @@ ShellRoot {
         visible: true
         color: "#17191e"
         ChatView { anchors.fill: parent; service: chatService }
+        CloseGuard { service: chatService }
     }
     Connections { target: Quickshell; function onLastWindowClosed() { Qt.quit() } }
 }

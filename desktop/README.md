@@ -94,9 +94,10 @@ Close the window to exit the desktop and its owned adapter. The daemon keeps
 running. No install step, autostart, service, desktop setting, or binding is
 changed by the launcher. Remove this checkout (or its `desktop/` directory) to
 remove the preview. Daemon identity, sealed history, and outbox are untouched.
-Wait for **Draft saved securely on this device** before closing. Autosave runs
-every 600 ms while connected; unsaved/offline edits are still memory-only and
-closing the window can lose them. Older daemons retain session-only drafts.
+Normal window close checks every conversation for unsaved drafts, conflicts,
+pending sends and unknown send outcomes. Choose **Keep editing**, **Save and
+close**, or explicitly **Close anyway**. Saving waits up to ten seconds; failure
+keeps the window and text intact. Autosave runs every 600 ms while connected. Older daemons retain session-only drafts.
 Saved drafts remain in the daemon’s sealed store; no plaintext disk cache is created.
 A different daemon identity on reconnect clears the previous session's view
 and drafts so they cannot accidentally be sent as another identity.
@@ -156,6 +157,6 @@ intervening edit causes another conflict. Storage failures preserve your local
 text and offer recovery retry. Draft bodies are fetched only for opened chats;
 the startup list contains metadata only. See [storage limits and protocol](../docs/draft-storage.md).
 
-This preview does not yet intercept window close while saving. Keep the window
-open until saved; forced exit, offline editing and a full store remain explicit
-limitations. A live Quickshell/reboot test is required before release.
+The close guard handles normal Qt window-close requests, including compositor
+close shortcuts. Forced termination, power loss, and runtime hot reload can still
+lose unsaved/offline edits. A live Quickshell/reboot test is required before release.

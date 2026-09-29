@@ -38,12 +38,24 @@ ApplicationWindow {
         }
         function reviewDraft() { draftRecovered = false }
         function retryDraft() {}
+        function pumpDrafts() {}
+        function savedFixture() {
+            state.status.drafts_version = 1
+            var c = State.current(state)
+            c.draft = "saved"
+            var d = Drafts.meta(c)
+            d.loaded = true; d.dirty = false; d.baseline = "saved"
+            revision++
+        }
+        function dirtyFixture() { savedFixture(); Drafts.edit(State.current(state), "waiting to save"); revision++ }
+        function pendingFixture() { State.current(state).busy = true; revision++ }
+        function clearFixture() { state.chats.forEach(function(c) { c.draft = ""; c.busy = false; c.uncertain = false; c.savedDraft = undefined }); revision++ }
         property var rooms: []
         property bool actionBusy: false
         property string actionError: ""
         signal actionFinished(string method)
         function select(id) { State.select(state, id); revision++ }
-        function draft(text) { var c = State.current(state); if (c) c.draft = text }
+        function draft(text) { var c = State.current(state); if (c && c.draft !== text) { Drafts.edit(c, text); revision++ } }
         function reviewedUnknown() { var c = State.current(state); c.uncertain = false; c.error = ""; revision++ }
         function request(method) {}
         function joinRoom(relay, group, code) {}
@@ -66,4 +78,5 @@ ApplicationWindow {
         }
     }
     Desktop.ChatView { anchors.fill: parent; service: mock }
+    Desktop.CloseGuard { service: mock }
 }

@@ -26,7 +26,12 @@ function issue(s, method, c, params) {
 function next(s) {
     if (!s.ready || !supported(s)) return null;
     if (s.draftListNeeded) { s.draftListNeeded = false; return issue(s, "list-drafts", null); }
-    var active = s.chats.find(function(c) { return c.id === s.active; });
+    // A user can type and switch chats before the first read completes.
+    // Recover dirty background chats too, otherwise they can never be saved.
+    var active = s.chats.find(function(c) {
+        var d = meta(c);
+        return d.dirty && !d.loaded && !d.pending && !d.error;
+    }) || s.chats.find(function(c) { return c.id === s.active; });
     if (active && !meta(active).loaded && !meta(active).pending && !meta(active).error)
         return issue(s, "get-draft", active, { conversation: active.id });
     var c = s.chats.find(function(c) {

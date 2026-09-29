@@ -58,3 +58,20 @@ function reply(s, request, text, revision, saved = true) {
     s.status={}; D.edit(c,'old daemon'); assert.equal(D.next(s),null); assert.match(D.label(s,c),/Session/);
 }
 console.log('PASS: recovery, late acknowledgements, conflicts, reconnects, UTF-8 limits, failures and clear-after-send');
+{
+    const {s,c}=fixture();
+    const background=S.ensure(s,'#other'); D.edit(background,'background text');
+    const get=D.next(s); assert.equal(get.params.conversation,'#other');
+    reply(s,get,'',3); const save=D.next(s);
+    assert.equal(save.params.conversation,'#other'); assert.equal(save.params.text,'background text');
+}
+const E={};vm.createContext(E);vm.runInContext(fs.readFileSync('desktop/ExitState.js','utf8'),E);
+{
+    const {s,c}=fixture('saved'); assert.equal(E.inspect(s).safe,true);
+    D.edit(c,'unsaved'); assert.equal(E.inspect(s).safe,false);
+    c.draft='saved';D.meta(c).dirty=false;c.busy=true;assert.equal(E.inspect(s).safe,false);
+    c.busy=false;c.uncertain=true;assert.equal(E.inspect(s).safe,false);
+    c.uncertain=false;D.meta(c).conflict={text:'other'};assert.equal(E.inspect(s).safe,false);
+    s.status={};D.meta(c).conflict=null;assert.equal(E.inspect(s).safe,false);
+}
+console.log('PASS: background draft recovery and close safety across all conversations');

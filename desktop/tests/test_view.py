@@ -26,6 +26,7 @@ class ViewTests(unittest.TestCase):
 
     def tearDown(self):
         self.assertEqual(self.warnings, [])
+        self.window.property("backend").clearFixture()
         self.window.close()
         self.engine.deleteLater()
         self.app.processEvents()
@@ -78,6 +79,50 @@ class ViewTests(unittest.TestCase):
         backend.resolveDraft(False)
         QTest.qWait(20)
         self.assertEqual(composer.property("text"), "their saved text")
+
+    def test_close_refuses_unsaved_and_pending_work(self):
+        composer = self.window.findChild(QObject, "composer")
+        composer.setProperty("text", "do not lose me")
+        self.window.close()
+        QTest.qWait(20)
+        self.assertTrue(self.window.isVisible())
+        self.assertEqual(composer.property("text"), "do not lose me")
+        self.assertTrue(self.window.findChild(QObject, "closeGuardDialog").property("opened"))
+        self.window.findChild(QObject, "keepEditing").click()
+        self.assertFalse(self.window.findChild(QObject, "closeGuardDialog").property("opened"))
+        backend = self.window.property("backend")
+        backend.clearFixture()
+        backend.pendingFixture()
+        self.window.close()
+        QTest.qWait(20)
+        self.assertTrue(self.window.isVisible())
+
+    def test_close_accepts_saved_draft_and_explicit_discard(self):
+        backend = self.window.property("backend")
+        backend.savedFixture()
+        self.window.close()
+        QTest.qWait(20)
+        self.assertFalse(self.window.isVisible())
+        self.window.show()
+        backend.clearFixture()
+        self.window.findChild(QObject, "composer").setProperty("text", "discard explicitly")
+        self.window.close()
+        QTest.qWait(20)
+        self.window.findChild(QObject, "closeAnyway").click()
+        QTest.qWait(20)
+        self.assertFalse(self.window.isVisible())
+
+    def test_save_and_close_waits_for_acknowledged_state(self):
+        backend = self.window.property("backend")
+        backend.dirtyFixture()
+        self.window.close()
+        QTest.qWait(20)
+        self.window.findChild(QObject, "saveAndClose").click()
+        QTest.qWait(20)
+        self.assertTrue(self.window.isVisible())
+        backend.savedFixture()
+        QTest.qWait(20)
+        self.assertFalse(self.window.isVisible())
 
     def test_secret_key_is_rejected_in_contact_dialog(self):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
