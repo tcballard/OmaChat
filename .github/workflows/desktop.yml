@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install offscreen Qt test runtime
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0
           python3 -m venv /tmp/omachat-qt-tests
           /tmp/omachat-qt-tests/bin/pip install PySide6==6.8.3
       - name: Protocol, real Unix socket, and Qt interaction checks

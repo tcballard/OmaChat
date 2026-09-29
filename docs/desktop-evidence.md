@@ -42,6 +42,12 @@
 adapter could be exercised. They were not skipped or relabelled as passes.
 The dedicated desktop CI job requires both to run on its Linux runner.
 
+Initial CI run `36543962485`, head `1bd59c3f0caa6d4afbfc84567c65f8ecc89e1e14`,
+ran all **9 adapter tests successfully**, including the real Unix-socket and
+subprocess lifecycle checks. Qt test discovery then failed because the runner
+lacked `libEGL.so.1`. The workflow now explicitly installs `libegl1` and
+`libopengl0`; that initial run remains a failure, not a full-suite pass.
+
 ## Historical only
 
 PR #230 reports a real XPS 9320 / Omarchy 4.0.2 TUI and a two-daemon NIP-17
