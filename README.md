@@ -18,6 +18,15 @@ only feature by feature: its release has no courier/prekey/current-bridge
 surface. Proprietary private envelopes are not standard Nostr DMs. Bridge
 advertising must remain disabled until its live health gate succeeds.
 
+## Desktop preview
+
+A standalone conversation window is now available on this development branch.
+It builds on the live IPC v2 trial in PR #230: DMs, recent history, delivery
+updates, per-chat session drafts, reconnect recovery and configured-room joining.
+See [Desktop setup and limits](desktop/README.md), the
+[product roadmap](docs/desktop-roadmap.md), and [test evidence](docs/desktop-evidence.md).
+This is a source-run preview, not an official Omarchy default or a release.
+
 ## Planning
 
 - [Upstream validation](docs/upstream-validation.md)
@@ -32,7 +41,7 @@ advertising must remain disabled until its live health gate succeeds.
 
 ## Development
 
-The repository is a eleven-crate Rust workspace pinned to Rust 1.98.0. It now
+The repository is an eleven-crate Rust workspace pinned to Rust 1.98.0. It now
 contains bounded protocol codecs, distinct device/account/recovery keys, sealed
 persistence, daemon IPC, CLI/TUI surfaces, and pre-release
 packaging assets. Size-optimized release builds of the three installed binaries
@@ -43,3 +52,4 @@ see the development contract and build backlog for the exact boundary.
 All implementation changes use pull requests. Pull requests are not merged without explicit owner approval.
 
 OmaChat is licensed under the [Zero-Clause BSD license](LICENSE). The project name remains provisional pending a separate adoption-grade clearance review.
+
