@@ -154,6 +154,26 @@ class ViewTests(unittest.TestCase):
         self.assertIn("could be saved", guard.property("failure"))
         self.assertEqual(self.window.findChild(QObject, "composer").property("text"), "waiting to save")
 
+    def test_send_state_indicators_follow_in_place_conversation_updates(self):
+        backend = self.window.property("backend")
+        button = self.window.findChild(QObject, "sendButton")
+        self.window.findChild(QObject, "composer").setProperty("text", "pending")
+        backend.pendingFixture()
+        QTest.qWait(20)
+        self.assertEqual(button.property("text"), "Sending…")
+        self.assertFalse(button.property("enabled"))
+        backend.clearFixture()
+        self.window.findChild(QObject, "composer").setProperty("text", "unknown")
+        backend.uncertainFixture()
+        QTest.qWait(20)
+        self.assertTrue(self.window.findChild(QObject, "allowResend").property("visible"))
+        self.assertIn("unknown", self.window.findChild(QObject, "sendError").property("text"))
+        self.assertFalse(button.property("enabled"))
+        backend.reviewedUnknown()
+        QTest.qWait(20)
+        self.assertFalse(self.window.findChild(QObject, "allowResend").property("visible"))
+        self.assertTrue(button.property("enabled"))
+
     def test_secret_key_is_rejected_in_contact_dialog(self):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)

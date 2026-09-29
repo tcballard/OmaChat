@@ -65,6 +65,7 @@ ApplicationWindow {
         }
         function dirtyFixture() { savedFixture(); Drafts.edit(State.current(state), "waiting to save"); revision++ }
         function pendingFixture() { State.current(state).busy = true; revision++ }
+        function uncertainFixture() { var c = State.current(state); c.uncertain = true; c.error = "Delivery is unknown. Check the conversation before sending again."; revision++ }
         function clearFixture() { state.settingsDirty = false; state.configBusy = false; state.chats.forEach(function(c) { c.draft = ""; c.busy = false; c.uncertain = false; c.savedDraft = undefined }); revision++ }
         property var rooms: []
         property bool actionBusy: false

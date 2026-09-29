@@ -30,13 +30,15 @@ Dialog {
         }
     }
     contentItem: ScrollView {
+        id: scroll
         clip: true
+        contentWidth: availableWidth
         ColumnLayout {
-            width: parent.width; spacing: 12
+            width: scroll.availableWidth; spacing: 12
             Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "1. Choose the config used by your daemon. If you start it with --config, select that same file here." }
             TextField { id: config; objectName: "relayConfigPath"; Layout.fillWidth: true; placeholderText: "Default OmaChat configuration"; enabled: !dialog.setup.busy; onTextChanged: dialog.changed(); Accessible.name: "Daemon configuration file" }
             Button { text: "Load file / discard unapplied edits"; enabled: !dialog.setup.busy; onClicked: dialog.setup.read(config.text) }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "2. Enter relays you operate or have permission to use, one URL per line. Saving a URL does not verify reachability or protocol support." }
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "2. Enter relays you operate or have permission to use, one URL per line. Saving a URL does not verify reachability or protocol support. The daemon refuses to start while a private-message relay cannot be authenticated; correct or remove the URL here and restart it again." }
             Label { text: "Private messages · NIP-17 inbox relays" }
             TextArea { id: dm; objectName: "dmRelayUrls"; Layout.fillWidth: true; Layout.preferredHeight: 80; wrapMode: TextEdit.Wrap; placeholderText: "wss://…"; enabled: !dialog.setup.busy; onTextChanged: dialog.changed(); Accessible.name: "Private message relay URLs" }
             Label { text: "Rooms · NIP-29 relays (optional)" }

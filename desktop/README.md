@@ -19,7 +19,7 @@ desktop client yet. PR #230's XPS evidence applies to its daemon/TUI only.
   clear another chat’s draft. Conflicts preserve local text until you choose.
 - Explicit queued / relay-stored / failed states. Relay storage is not proof
   of recipient delivery or reading. No typing indicators or read receipts.
-- Reconnect with a 1–30 second backoff and a fresh recent-history snapshot.
+- Reconnect with a 1–10 second backoff and a fresh recent-history snapshot.
   A send whose outcome is unknown requires the user to check before resending.
   The daemon answers one window's requests in order and a send waits for its
   relay round trip, so the adapter allows 30 seconds for a send or room join

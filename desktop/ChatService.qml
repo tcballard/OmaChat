@@ -139,7 +139,7 @@ Item {
         id: retry
         interval: service.retryDelay
         onTriggered: {
-            service.retryDelay = Math.min(30000, service.retryDelay * 2)
+            service.retryDelay = Math.min(10000, service.retryDelay * 2)
             helper.running = true
         }
     }

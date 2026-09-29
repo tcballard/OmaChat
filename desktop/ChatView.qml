@@ -10,6 +10,12 @@ Item {
     property bool showChats: false
     readonly property bool narrow: width < 760
     readonly property var active: service.activeChat
+    // The conversation object is mutated in place and reused across revisions, so
+    // bindings must read the revision explicitly or they never refresh (Qt 6.10).
+    readonly property bool activeBusy: { service.revision; return !!active && !!active.busy }
+    readonly property bool activeUncertain: { service.revision; return !!active && !!active.uncertain }
+    readonly property string activeError: { service.revision; return active && active.error ? active.error : "" }
+    readonly property string activeTitle: { service.revision; return active ? active.title : "" }
     readonly property color surface: service.theme.background || "#17191e"
     readonly property color sidebar: Qt.tint(surface, "#0b808080")
     readonly property color ink: service.theme.foreground || "#eef0f5"
@@ -125,7 +131,7 @@ Item {
                     Action { text: "Chats"; visible: view.narrow; onClicked: view.showChats = true }
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 5
-                        Text { text: view.active ? view.active.title : "A place to talk."; textFormat: Text.PlainText; color: view.ink; font.pixelSize: 20; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
+                        Text { text: view.active ? view.activeTitle : "A place to talk."; textFormat: Text.PlainText; color: view.ink; font.pixelSize: 20; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
                         Text { text: !view.active ? "People first. Agents when you need them." : view.active.id.indexOf("dm:") === 0 ? "Direct message · confirm the public key with your contact" : "Room · relay permissions apply; not an encrypted DM"; color: view.muted; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
                     }
                     Rectangle { width: 8; height: 8; radius: 4; color: service.ready ? view.accent : view.warning; Accessible.name: service.ready ? "Local daemon connected" : "Local daemon disconnected" }
@@ -170,13 +176,13 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true; Layout.margins: 20; spacing: 10
                 visible: !!view.active
-                Text { visible: !!view.active && !!view.active.error; text: view.active ? view.active.error : ""; textFormat: Text.PlainText; color: view.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                Action { visible: !!view.active && view.active.uncertain; text: "I checked — allow another send"; onClicked: service.reviewedUnknown() }
+                Text { objectName: "sendError"; visible: view.activeError.length > 0; text: view.activeError; textFormat: Text.PlainText; color: view.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                Action { objectName: "allowResend"; visible: view.activeUncertain; text: "I checked — allow another send"; onClicked: service.reviewedUnknown() }
                 Text { objectName: "draftStatus"; text: service.draftStatus; textFormat: Text.PlainText; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 ScrollView {
                     visible: service.draftConflict
                     Layout.fillWidth: true; Layout.preferredHeight: 70
-                    TextArea { text: service.draftConflictText || "(Saved draft is empty)"; readOnly: true; selectByMouse: true; wrapMode: TextArea.Wrap; color: view.ink; Accessible.name: "Saved draft from another client" }
+                    TextArea { text: service.draftConflictText || "(Saved draft is empty)"; readOnly: true; selectByMouse: true; wrapMode: TextArea.Wrap; color: view.ink; padding: 10; Accessible.name: "Saved draft from another client"; background: Rectangle { color: view.control; radius: 6; border.color: view.line } }
                 }
                 RowLayout {
                     visible: service.draftConflict
@@ -206,13 +212,15 @@ Item {
                     Layout.fillWidth: true
                     Text { text: "Enter to send · Shift+Enter for a new line"; color: view.muted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     Text { text: State.utf8Length(composer.text) + "/4096"; color: State.utf8Length(composer.text) > 4096 ? view.warning : view.muted; font.pixelSize: 10 }
-                    Action { objectName: "sendButton"; text: view.active && view.active.busy ? "Sending…" : "Send"; enabled: service.ready && service.draftCanSend && !!view.active && !view.active.busy && !view.active.uncertain && composer.text.trim().length > 0 && State.utf8Length(composer.text) <= 4096; onClicked: service.send() }
+                    Action { objectName: "sendButton"; text: view.activeBusy ? "Sending…" : "Send"; enabled: service.ready && service.draftCanSend && !!view.active && !view.activeBusy && !view.activeUncertain && composer.text.trim().length > 0 && State.utf8Length(composer.text) <= 4096; onClicked: service.send() }
                 }
             }
         }
     }
     component Sheet : Dialog {
+        id: sheet
         parent: Overlay.overlay
+        header: Label { text: sheet.title; color: view.ink; font.pixelSize: 17; font.weight: Font.DemiBold; leftPadding: 24; rightPadding: 24; topPadding: 20; bottomPadding: 4; background: null }
         anchors.centerIn: parent
         width: Math.min(500, view.width - 32)
         modal: true; focus: true; padding: 24
@@ -260,7 +268,7 @@ Item {
             spacing: 16
             Text { text: service.ready ? "Connected to the local daemon. This does not prove relay reachability or message delivery." : "Waiting for the daemon. Build PR #230 and start omachatd using the setup instructions."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Text { text: "SHARE YOUR CONTACT LINK"; color: view.accent; font.pixelSize: 10; font.letterSpacing: 1 }
-            TextArea { id: myLink; text: service.publicKey ? "nostr:" + Contact.npub(service.publicKey) : "Available after connecting"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; Layout.fillWidth: true; Accessible.name: "My contact link" }
+            TextArea { id: myLink; text: service.publicKey ? "nostr:" + Contact.npub(service.publicKey) : "Available after connecting"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; padding: 10; Layout.fillWidth: true; Accessible.name: "My contact link"; background: Rectangle { color: view.control; radius: 6; border.color: view.line } }
             Action { text: "Copy contact link"; enabled: service.publicKey.length === 64; onClicked: { myLink.selectAll(); myLink.copy(); myLink.deselect() } }
             Text { text: "This public link identifies this device, not a verified global handle. Copying it shares no private key. Saved drafts and recent message history belong to the daemon. Unsaved edits remain in this window."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Action { text: "Done"; Layout.alignment: Qt.AlignRight; onClicked: identity.close() }
