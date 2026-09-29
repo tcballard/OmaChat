@@ -17,7 +17,7 @@ This avoids introducing a web runtime or changing the Rust protocol/storage
 stack. It is an optional source-run client, outside the three-Rust-binary size
 ceiling, with no change to the existing package payload.
 
-The UI owns selection, filtering, layout and ephemeral per-chat drafts. The
+The UI owns selection, filtering, layout and the in-memory composer and sealed-draft synchronization. The
 adapter owns framing, correlation, deadline and queue bounds; it cannot change
 keys, configuration, global handles or destructive state. The daemon owns
 identity, cryptography, room authority, history, network and retries. Closing
@@ -72,3 +72,9 @@ install/update/remove tests, recovery documentation and multi-user soak.
 Publish honest screenshots and supported-version evidence, then seek upstream
 review. No automatic protocol switch to Matrix, production service deployment,
 repository merge or release is part of this desktop development change.
+
+## Stack progress: contacts and drafts
+
+Contact links, daemon-owned sealed drafts, conflict handling and desktop recovery
+are implemented in follow-up draft PRs. First-run relay configuration, paginated
+history, close-while-saving protection and live multi-machine evidence remain.

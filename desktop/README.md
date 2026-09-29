@@ -14,8 +14,9 @@ desktop client yet. PR #230's XPS evidence applies to its daemon/TUI only.
   opened with an npub, nprofile, nostr: contact link, or hexadecimal public key.
 - Live recent messages and delivery updates via the daemon's subscription.
 - Multiline, selectable plain text; Enter sends, Shift+Enter inserts a newline.
-- Per-conversation drafts for the lifetime of the window. Switching chats while
-  a send is pending cannot clear another chat's draft.
+- Per-conversation drafts saved through the daemon’s sealed store when it
+  advertises draft support. Switching chats while a send is pending cannot
+  clear another chat’s draft. Conflicts preserve local text until you choose.
 - Explicit queued / relay-stored / failed states. Relay storage is not proof
   of recipient delivery or reading. No typing indicators or read receipts.
 - Reconnect with a 1–30 second backoff and a fresh recent-history snapshot.
@@ -93,7 +94,10 @@ Close the window to exit the desktop and its owned adapter. The daemon keeps
 running. No install step, autostart, service, desktop setting, or binding is
 changed by the launcher. Remove this checkout (or its `desktop/` directory) to
 remove the preview. Daemon identity, sealed history, and outbox are untouched.
-Drafts disappear on exit; they are intentionally not written to plaintext disk.
+Wait for **Draft saved securely on this device** before closing. Autosave runs
+every 600 ms while connected; unsaved/offline edits are still memory-only and
+closing the window can lose them. Older daemons retain session-only drafts.
+Saved drafts remain in the daemon’s sealed store; no plaintext disk cache is created.
 A different daemon identity on reconnect clears the previous session's view
 and drafts so they cannot accidentally be sent as another identity.
 
@@ -102,7 +106,7 @@ and drafts so they cannot accidentally be sent as another identity.
 This is a recent-history client, not an archive: PR #230 retains at most 128
 messages / 32 KiB / 24 hours in its sealed UI cache. The presentation bounds
 each conversation to 128 messages and the session to 128 conversations.
-There is no older-history paging, persistent draft storage, attachment flow,
+There is no older-history paging, attachment flow,
 notification service, profile search, account recovery UI,
 room creation/moderation UI, or deployment wizard yet. Global handle claims,
 multi-device human identity, and agent coordination must not be inferred from
@@ -114,6 +118,7 @@ this desktop UI. See the [product roadmap](../docs/desktop-roadmap.md).
 python3 -m unittest discover -s desktop/tests -p 'test_bridge.py' -v
 node desktop/tests/test_state.js
 node desktop/tests/test_contact.js
+node desktop/tests/test_drafts.js
 python3 -m venv /tmp/omachat-qt-tests
 /tmp/omachat-qt-tests/bin/pip install PySide6==6.8.3
 QT_QPA_PLATFORM=offscreen /tmp/omachat-qt-tests/bin/python -m unittest discover -s desktop/tests -p 'test_view.py' -v
@@ -135,3 +140,22 @@ rejected. Unknown profile metadata is ignored. Relay hints are not followed or
 added to configuration; links do not cause network requests. IPC continues to
 use hexadecimal keys. A checksum identifies a well-formed key, not a trusted
 person or a verified handle. The identity panel provides a copyable public link.
+
+## Saved draft recovery
+
+The draft status distinguishes loading, saving, saved, offline, storage errors,
+and conflicts. Drafts are local to this daemon, not synchronized between devices.
+A recovered draft must be reviewed before sending: a crash could have happened
+after sending but before clearing its saved copy. Check recent messages first.
+After a successful send the desktop requests an empty draft with the last known
+revision. Another client’s newer draft cannot be silently deleted.
+
+On conflict, the saved version is shown separately. **Keep my text** attempts a
+revision-checked replacement; **Use saved text** replaces the composer. Another
+intervening edit causes another conflict. Storage failures preserve your local
+text and offer recovery retry. Draft bodies are fetched only for opened chats;
+the startup list contains metadata only. See [storage limits and protocol](../docs/draft-storage.md).
+
+This preview does not yet intercept window close while saving. Keep the window
+open until saved; forced exit, offline editing and a full store remain explicit
+limitations. A live Quickshell/reboot test is required before release.

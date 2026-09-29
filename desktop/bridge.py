@@ -21,7 +21,7 @@ import tomllib
 VERSION = 2
 LIMIT = 65536
 TOPICS = ["status", "conversations", "messages", "delivery"]
-ALLOWED = {"send", "status", "list-rooms", "join-room", "leave-room", "room-members"}
+ALLOWED = {"send", "status", "list-rooms", "join-room", "leave-room", "room-members", "list-drafts", "get-draft", "save-draft"}
 
 
 def encode(value):

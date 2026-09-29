@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import "ChatState.js" as State
 import "Contact.js" as Contact
+import "Drafts.js" as Drafts
 
 Item {
     id: service
@@ -24,11 +25,22 @@ Item {
     signal actionFinished(string method)
 
     function select(id) { State.select(state, id); revision++ }
-    function draft(text) { var c = State.current(state); if (c) c.draft = text }
+    readonly property string draftStatus: { revision; return Drafts.label(state, State.current(state)) }
+    readonly property bool draftCanSend: { revision; return Drafts.canSend(state, State.current(state)) }
+    readonly property bool draftConflict: { revision; var c = State.current(state); return !!c && !!Drafts.meta(c).conflict }
+    readonly property string draftConflictText: { revision; var c = State.current(state); return c && Drafts.meta(c).conflict ? Drafts.meta(c).conflict.text : "" }
+    readonly property bool draftRecovered: { revision; var c = State.current(state); return !!c && Drafts.meta(c).recovered }
+    readonly property bool draftError: { revision; var c = State.current(state); return !!c && !!Drafts.meta(c).error }
+    function draft(text) { var c = State.current(state); if (c && c.draft !== text) { Drafts.edit(c, text); revision++ } }
+    function resolveDraft(keepMine) { var c = State.current(state); if (c) Drafts.resolve(c, keepMine); revision++ }
+    function reviewDraft() { var c = State.current(state); if (c) Drafts.meta(c).recovered = false; revision++ }
+    function retryDraft() { var c = State.current(state); if (c) { var d = Drafts.meta(c); d.loaded = false; d.error = "" }; revision++ }
+    function pumpDrafts() { var request = Drafts.next(state); if (request) helper.write(JSON.stringify(request) + "\n"); revision++ }
     function reviewedUnknown() { var c = State.current(state); if (c) { c.uncertain = false; c.error = ""; revision++ } }
     function markViewed() { var c = State.current(state); if (c && focused && c.unread) { c.unread = 0; revision++ } }
     onFocusedChanged: markViewed()
     function send() {
+        if (!draftCanSend) return
         var request = State.beginSend(state)
         if (request) helper.write(JSON.stringify(request) + "\n")
         revision++
@@ -62,11 +74,18 @@ Item {
     }
     function receive(value) {
         if (value.kind === "theme") theme = value.data
-        else if (value.kind === "snapshot") { State.snapshot(state, value.data); retryDelay = 1000 }
+        else if (value.kind === "snapshot") { State.snapshot(state, value.data); Drafts.reset(state); retryDelay = 1000 }
         else if (value.kind === "event") State.event(state, value.data, focused)
         else if (value.kind === "rooms") updateRooms(value.data)
         else if (value.kind === "disconnected") State.disconnected(state, value.error)
-        else if (value.kind === "response" && !State.response(state, value)) {
+        else if (value.kind === "response" && Drafts.response(state, value, State.ensure)) {}
+        else if (value.kind === "response" && state.pending[value.id]) {
+            var sent = state.pending[value.id]
+            State.response(state, value)
+            var sentChat = State.ensure(state, sent.conversation)
+            if (sentChat && value.ok) Drafts.meta(sentChat).dirty = true
+        }
+        else if (value.kind === "response") {
             var method = actions[value.id]; delete actions[value.id]; actionBusy = false
             if (!value.ok) actionError = value.error
             else {
@@ -85,6 +104,7 @@ Item {
         }
         revision++
     }
+    Timer { interval: 600; repeat: true; running: service.ready; onTriggered: service.pumpDrafts() }
     Process {
         id: helper
         command: ["/usr/bin/python3", Quickshell.shellPath("bridge.py"), "--socket", service.socketPath]

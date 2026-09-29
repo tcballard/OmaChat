@@ -4,6 +4,7 @@ import QtQuick.Controls
 import ".." as Desktop
 import "../ChatState.js" as State
 import "../Contact.js" as Contact
+import "../Drafts.js" as Drafts
 
 ApplicationWindow {
     id: window
@@ -20,6 +21,23 @@ ApplicationWindow {
         readonly property var chats: { revision; return state.chats.slice() }
         readonly property var activeChat: { revision; return State.current(state) }
         readonly property string publicKey: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        property string draftStatus: "Session draft only — test fixture."
+        property bool draftCanSend: true
+        property bool draftConflict: false
+        property string draftConflictText: ""
+        property bool draftRecovered: false
+        property bool draftError: false
+        function resolveDraft(keepMine) { Drafts.resolve(State.current(state), keepMine); draftConflict = false; revision++ }
+        function conflictFixture() {
+            state.status.drafts_version = 1
+            var c = State.current(state)
+            Drafts.edit(c, "my unsaved text")
+            Drafts.meta(c).conflict = { text: "their saved text", revision: 2 }
+            draftConflict = true; draftConflictText = "their saved text"
+            draftStatus = Drafts.label(state, c); revision++
+        }
+        function reviewDraft() { draftRecovered = false }
+        function retryDraft() {}
         property var rooms: []
         property bool actionBusy: false
         property string actionError: ""

@@ -171,6 +171,19 @@ Item {
                 visible: !!view.active
                 Text { visible: !!view.active && !!view.active.error; text: view.active ? view.active.error : ""; textFormat: Text.PlainText; color: view.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Action { visible: !!view.active && view.active.uncertain; text: "I checked — allow another send"; onClicked: service.reviewedUnknown() }
+                Text { objectName: "draftStatus"; text: service.draftStatus; textFormat: Text.PlainText; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+                ScrollView {
+                    visible: service.draftConflict
+                    Layout.fillWidth: true; Layout.preferredHeight: 70
+                    TextArea { text: service.draftConflictText || "(Saved draft is empty)"; readOnly: true; selectByMouse: true; wrapMode: TextArea.Wrap; color: view.ink; Accessible.name: "Saved draft from another client" }
+                }
+                RowLayout {
+                    visible: service.draftConflict
+                    Action { text: "Keep my text"; onClicked: service.resolveDraft(true) }
+                    Action { text: "Use saved text"; onClicked: service.resolveDraft(false) }
+                }
+                Action { visible: service.draftRecovered; text: "I checked — continue with this draft"; onClicked: service.reviewDraft() }
+                Action { visible: service.draftError; text: "Retry draft recovery"; onClicked: service.retryDraft() }
                 ScrollView {
                     Layout.fillWidth: true; Layout.preferredHeight: 106
                     TextArea {
@@ -192,7 +205,7 @@ Item {
                     Layout.fillWidth: true
                     Text { text: "Enter to send · Shift+Enter for a new line"; color: view.muted; font.pixelSize: 10; Layout.fillWidth: true; wrapMode: Text.WordWrap }
                     Text { text: State.utf8Length(composer.text) + "/4096"; color: State.utf8Length(composer.text) > 4096 ? view.warning : view.muted; font.pixelSize: 10 }
-                    Action { objectName: "sendButton"; text: view.active && view.active.busy ? "Sending…" : "Send"; enabled: service.ready && !!view.active && !view.active.busy && !view.active.uncertain && composer.text.trim().length > 0 && State.utf8Length(composer.text) <= 4096; onClicked: service.send() }
+                    Action { objectName: "sendButton"; text: view.active && view.active.busy ? "Sending…" : "Send"; enabled: service.ready && service.draftCanSend && !!view.active && !view.active.busy && !view.active.uncertain && composer.text.trim().length > 0 && State.utf8Length(composer.text) <= 4096; onClicked: service.send() }
                 }
             }
         }

@@ -68,6 +68,17 @@ class ViewTests(unittest.TestCase):
         self.assertEqual(composer.property("text"), "save my draft")
         self.assertFalse(self.window.findChild(QObject,"sendButton").property("enabled"))
 
+    def test_saved_draft_conflict_preserves_local_text_until_choice(self):
+        backend = self.window.property("backend")
+        backend.conflictFixture()
+        QTest.qWait(20)
+        composer = self.window.findChild(QObject, "composer")
+        self.assertEqual(composer.property("text"), "my unsaved text")
+        self.assertIn("Another client", self.window.findChild(QObject, "draftStatus").property("text"))
+        backend.resolveDraft(False)
+        QTest.qWait(20)
+        self.assertEqual(composer.property("text"), "their saved text")
+
     def test_secret_key_is_rejected_in_contact_dialog(self):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)
