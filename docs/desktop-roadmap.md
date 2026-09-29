@@ -76,5 +76,6 @@ repository merge or release is part of this desktop development change.
 ## Stack progress: contacts and drafts
 
 Contact links, daemon-owned sealed drafts, conflict handling and desktop recovery
-are implemented in follow-up draft PRs. First-run relay configuration, paginated
-history, close-while-saving protection and live multi-machine evidence remain.
+are implemented in follow-up draft PRs. Guided relay configuration and normal-close protection are added in the next
+stacked slices. A working hosted relay choice, paginated history, and live
+multi-machine evidence remain.

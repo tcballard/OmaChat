@@ -12,7 +12,7 @@ Item {
     property bool waiting: false
     property string failure: ""
     readonly property var hostWindow: guard.Window.window
-    readonly property bool supportsSave: { service.revision; return service.ready && service.state.status.drafts_version === 1 }
+    readonly property bool supportsSave: { service.revision; return service.ready && service.state.status.drafts_version === 1 && !service.state.settingsDirty && !service.state.configBusy }
     readonly property var work: { service.revision; return ExitState.inspect(service.state) }
 
     function finish() {

@@ -124,6 +124,22 @@ class ViewTests(unittest.TestCase):
         QTest.qWait(150)
         self.assertFalse(self.window.isVisible())
 
+    def test_relay_setup_collects_urls_and_protects_unapplied_edits(self):
+        self.window.findChild(QObject, "openRelaySetup").click()
+        QTest.qWait(30)
+        self.assertTrue(self.window.findChild(QObject, "relaySetupDialog").property("opened"))
+        dm = self.window.findChild(QObject, "dmRelayUrls")
+        dm.setProperty("text", "wss://relay.test\nwss://second.test")
+        self.window.close()
+        QTest.qWait(20)
+        self.assertTrue(self.window.isVisible())
+        self.window.findChild(QObject, "keepEditing").click()
+        self.window.findChild(QObject, "saveRelaySettings").click()
+        QTest.qWait(20)
+        self.assertEqual(dm.property("text"), "wss://relay.test\nwss://second.test")
+        backend = self.window.property("backend")
+        self.assertFalse(backend.property("state").toVariant().get("settingsDirty"))
+
     def test_secret_key_is_rejected_in_contact_dialog(self):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)

@@ -64,6 +64,28 @@ accounts, not malicious software already running as your account.
 
 ### Configure messaging
 
+Open **Set up messaging** in the sidebar. Load the configuration used by your
+daemon, enter NIP-17 inbox and optional NIP-29 room relay URLs, then save. The
+editor creates a private backup of an existing file and preserves unrelated
+settings. A changed file is rejected until reloaded. It does not contact relays,
+create accounts, modify key storage, or restart services. URLs alone do not
+prove a relay implements the required protocol.
+
+The default path follows absolute `XDG_CONFIG_HOME` or `~/.config`. Set
+`OMACHAT_CONFIG=/absolute/path/config.json` when launching the desktop, or choose
+the path in the dialog, if the daemon uses `--config`. The UI cannot infer a
+custom daemon path. Confirm it before saving. Configuration operations and
+unapplied settings also block normal window close.
+
+Restart the daemon after saving (instructions below). For a source-run daemon,
+stop it and run `./target/release/omachatd --config /absolute/path/config.json`.
+Backups are named `config.json.backup-<random>` beside the file, mode 0600. To
+roll back, stop the daemon, restore the desired backup, and restart. Backups may
+contain existing sensitive settings; preserve or remove them intentionally.
+Uninstalling the desktop does not remove configuration or backups.
+
+Manual configuration remains supported:
+
 The daemon reads `$XDG_CONFIG_HOME/omachat/config.json`, normally
 `~/.config/omachat/config.json`. Add the relevant fields to your existing
 configuration; **do not overwrite an existing config with this illustration**:

@@ -23,6 +23,12 @@ Item {
     property int retryDelay: 1000
     property string socketPath: Quickshell.env("OMACHAT_SOCKET") || ((Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omachat/omachat.sock")
     signal actionFinished(string method)
+    property alias setup: relaySetup
+    function settingsEdited(dirty) { state.settingsDirty = dirty; revision++ }
+    SetupService {
+        id: relaySetup
+        onBusyChanged: { service.state.configBusy = busy; service.revision++ }
+    }
 
     function select(id) { State.select(state, id); revision++ }
     readonly property string draftStatus: { revision; return Drafts.label(state, State.current(state)) }

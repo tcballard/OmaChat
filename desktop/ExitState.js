@@ -10,11 +10,15 @@ function inspect(s) {
             if ((d && d.dirty) || (c.draft && (!d || !d.loaded))) unsaved++;
         } else if (c.draft) unsaved++;
     });
+    if (s.settingsDirty) unsaved++;
+    if (s.configBusy) pending++;
     return { safe: !(unsaved || pending || conflicts || unknown), unsaved: unsaved,
              pending: pending, conflicts: conflicts, unknown: unknown };
 }
 function describe(s) {
     var result = inspect(s), parts = [];
+    if (s.settingsDirty) parts.push("Relay settings have unapplied edits.");
+    if (s.configBusy) parts.push("A configuration operation is still running.");
     if (result.unsaved) parts.push(result.unsaved + " conversation(s) have unsaved draft changes.");
     if (result.pending) parts.push("A save or send is still waiting for the daemon.");
     if (result.conflicts) parts.push("Resolve draft conflicts before saving and closing.");

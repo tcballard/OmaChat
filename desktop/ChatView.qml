@@ -110,6 +110,7 @@ Item {
                     }
                     Text { anchors.centerIn: parent; width: parent.width; visible: conversations.count === 0; text: filter.text ? "No matching conversations" : "Your conversations will appear here."; color: view.muted; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
                 }
+                Action { objectName: "openRelaySetup"; text: "Set up messaging"; Layout.fillWidth: true; onClicked: relaySetup.open() }
                 Action { text: "My identity & connection"; Layout.fillWidth: true; onClicked: identity.open() }
             }
         }
@@ -261,10 +262,11 @@ Item {
             Text { text: "SHARE YOUR CONTACT LINK"; color: view.accent; font.pixelSize: 10; font.letterSpacing: 1 }
             TextArea { id: myLink; text: service.publicKey ? "nostr:" + Contact.npub(service.publicKey) : "Available after connecting"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; Layout.fillWidth: true; Accessible.name: "My contact link" }
             Action { text: "Copy contact link"; enabled: service.publicKey.length === 64; onClicked: { myLink.selectAll(); myLink.copy(); myLink.deselect() } }
-            Text { text: "This public link identifies this device, not a verified global handle. Copying it shares no private key. Drafts are kept only while this window is open; recent message history belongs to the daemon."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: "This public link identifies this device, not a verified global handle. Copying it shares no private key. Saved drafts and recent message history belong to the daemon. Unsaved edits remain in this window."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Action { text: "Done"; Layout.alignment: Qt.AlignRight; onClicked: identity.close() }
         }
     }
+    RelaySetup { id: relaySetup; service: view.service }
     Shortcut { sequence: "Ctrl+N"; onActivated: dm.open() }
     Shortcut { sequence: "Ctrl+K"; onActivated: { view.showChats = true; filter.forceActiveFocus() } }
 }

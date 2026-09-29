@@ -12,7 +12,23 @@ ApplicationWindow {
     title: "OmaChat — test fixture"
     property alias backend: mock
     QtObject {
+        id: setupMock
+        property bool busy: false
+        property string error: ""
+        property string path: "/tmp/omachat-test-config.json"
+        property string configRevision: "test"
+        property var dmRelays: []
+        property var roomRelays: []
+        property string backup: ""
+        property bool restartRequired: false
+        signal loaded()
+        function read(path) { loaded() }
+        function save(dm, rooms) { dmRelays = dm; roomRelays = rooms; restartRequired = true; loaded() }
+    }
+    QtObject {
         id: mock
+        property var setup: setupMock
+        function settingsEdited(dirty) { state.settingsDirty = dirty; revision++ }
         property var state: State.create()
         property int revision: 0
         property var theme: ({})
@@ -49,7 +65,7 @@ ApplicationWindow {
         }
         function dirtyFixture() { savedFixture(); Drafts.edit(State.current(state), "waiting to save"); revision++ }
         function pendingFixture() { State.current(state).busy = true; revision++ }
-        function clearFixture() { state.chats.forEach(function(c) { c.draft = ""; c.busy = false; c.uncertain = false; c.savedDraft = undefined }); revision++ }
+        function clearFixture() { state.settingsDirty = false; state.configBusy = false; state.chats.forEach(function(c) { c.draft = ""; c.busy = false; c.uncertain = false; c.savedDraft = undefined }); revision++ }
         property var rooms: []
         property bool actionBusy: false
         property string actionError: ""
