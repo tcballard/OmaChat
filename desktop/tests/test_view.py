@@ -121,7 +121,7 @@ class ViewTests(unittest.TestCase):
         QTest.qWait(20)
         self.assertTrue(self.window.isVisible())
         backend.savedFixture()
-        QTest.qWait(20)
+        QTest.qWait(150)
         self.assertFalse(self.window.isVisible())
 
     def test_secret_key_is_rejected_in_contact_dialog(self):

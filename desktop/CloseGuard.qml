@@ -6,11 +6,13 @@ import "ExitState.js" as ExitState
 
 Item {
     id: guard
+    objectName: "closeGuard"
     required property var service
     property bool allowClose: false
     property bool waiting: false
     property string failure: ""
     readonly property var hostWindow: guard.Window.window
+    readonly property bool supportsSave: { service.revision; return service.ready && service.state.status.drafts_version === 1 }
     readonly property var work: { service.revision; return ExitState.inspect(service.state) }
 
     function finish() {
@@ -27,7 +29,7 @@ Item {
         service.pumpDrafts()
         check()
     }
-    function check() { if (waiting && work.safe) finish() }
+    function check() { if (waiting && ExitState.inspect(service.state).safe) finish() }
     onWorkChanged: check()
 
     Connections {
@@ -69,7 +71,7 @@ Item {
             Button {
                 objectName: "saveAndClose"
                 text: guard.waiting ? "Waiting for saved changes…" : "Save and close"
-                enabled: !guard.waiting && guard.service.ready && guard.service.state.status.drafts_version === 1 && !guard.work.conflicts && !guard.work.unknown
+                enabled: !guard.waiting && guard.supportsSave && !guard.work.conflicts && !guard.work.unknown
                 onClicked: guard.saveAndClose()
             }
             Button {
