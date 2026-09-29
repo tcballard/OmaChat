@@ -18,6 +18,7 @@ Item {
     function run(request, selectedPath) {
         if (busy) return
         busy = true; error = ""; response = null
+        if (request.method === "read") { configRevision = ""; restartRequired = false; backup = "" }
         var command = ["/usr/bin/python3", Quickshell.shellPath("setup.py"), "--request", JSON.stringify(request)]
         var config = selectedPath || Quickshell.env("OMACHAT_CONFIG")
         if (config) command.push("--config", config)

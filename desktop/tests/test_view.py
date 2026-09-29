@@ -140,6 +140,20 @@ class ViewTests(unittest.TestCase):
         backend = self.window.property("backend")
         self.assertFalse(backend.property("state").toVariant().get("settingsDirty"))
 
+    def test_close_save_timeout_keeps_text_and_window(self):
+        backend = self.window.property("backend")
+        backend.dirtyFixture()
+        self.window.close()
+        QTest.qWait(20)
+        self.window.findChild(QObject, "closeDeadline").setProperty("interval", 30)
+        self.window.findChild(QObject, "saveAndClose").click()
+        QTest.qWait(80)
+        self.assertTrue(self.window.isVisible())
+        guard = self.window.findChild(QObject, "closeGuard")
+        self.assertFalse(guard.property("waiting"))
+        self.assertIn("could be saved", guard.property("failure"))
+        self.assertEqual(self.window.findChild(QObject, "composer").property("text"), "waiting to save")
+
     def test_secret_key_is_rejected_in_contact_dialog(self):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)

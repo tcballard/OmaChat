@@ -46,6 +46,7 @@ Item {
     }
     Timer {
         id: deadline
+        objectName: "closeDeadline"
         interval: 10000
         onTriggered: {
             guard.waiting = false
