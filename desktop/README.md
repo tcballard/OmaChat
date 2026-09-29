@@ -21,6 +21,12 @@ desktop client yet. PR #230's XPS evidence applies to its daemon/TUI only.
   of recipient delivery or reading. No typing indicators or read receipts.
 - Reconnect with a 1–30 second backoff and a fresh recent-history snapshot.
   A send whose outcome is unknown requires the user to check before resending.
+  The daemon answers one window's requests in order and a send waits for its
+  relay round trip, so the adapter allows 30 seconds for a send or room join
+  and 5 seconds for local requests. A request that misses its deadline is
+  reported once as an unknown outcome; the window stays connected and any
+  resulting message or delivery change still arrives through the subscription.
+  A draft request with an unknown outcome is reread, never retried blind.
 - Joining a room on an already configured NIP-29 relay. Admission remains relay
   policy; NIP-29 room messages are **not end-to-end encrypted DMs**.
 - Identity/connection panel; Ctrl+N for a DM and Ctrl+K for conversation search.
@@ -146,6 +152,10 @@ python3 -m venv /tmp/omachat-qt-tests
 /tmp/omachat-qt-tests/bin/pip install PySide6==6.8.3
 QT_QPA_PLATFORM=offscreen /tmp/omachat-qt-tests/bin/python -m unittest discover -s desktop/tests -p 'test_view.py' -v
 sh -n desktop/omachat-desktop
+# Opt-in: the real daemon binary serves the adapter from an isolated temporary
+# state (drafts, two-client conflicts, restart persistence, sealed storage):
+cargo build --workspace --bins --release --locked
+python3 scripts/test-desktop-bridge.py
 ```
 
 The bridge suite deliberately fails if the environment denies Unix sockets.
@@ -180,5 +190,9 @@ text and offer recovery retry. Draft bodies are fetched only for opened chats;
 the startup list contains metadata only. See [storage limits and protocol](../docs/draft-storage.md).
 
 The close guard handles normal Qt window-close requests, including compositor
-close shortcuts. Forced termination, power loss, and runtime hot reload can still
-lose unsaved/offline edits. A live Quickshell/reboot test is required before release.
+close shortcuts. Forced termination and power loss can still lose unsaved or
+offline edits. The launcher disables Quickshell's file watching so that editing
+or checking out sources under `desktop/` cannot hot-reload a live window; an
+explicit reload still discards memory-only edits and forgets in-flight sends.
+A live Quickshell/reboot test is required before release; see
+[XPS live testing](../docs/xps-live-testing.md).

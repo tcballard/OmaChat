@@ -68,4 +68,6 @@ Release-binary terminal and local-relay smoke checks:
 python3 scripts/test-tui-pty.py
 # Requires the localhost Grain test relay on port 18181:
 python3 scripts/test-local-dm.py
+# The release daemon serving the desktop IPC adapter from a temporary state:
+python3 scripts/test-desktop-bridge.py
 ```
