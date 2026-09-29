@@ -51,6 +51,8 @@ pub enum CoreError {
     InvalidHandle,
     InvalidPublicKey,
     InvalidMessage,
+    InvalidDraft,
+    DraftCapacity,
     NotJoined,
     Nostr,
     Encoding,
@@ -75,8 +77,10 @@ impl CoreError {
             | Self::InvalidGeohash
             | Self::InvalidHandle
             | Self::InvalidPublicKey
+            | Self::InvalidDraft
             | Self::InvalidMessage => ErrorCode::InvalidRequest,
-            Self::ConfirmationRequired
+            Self::DraftCapacity
+            | Self::ConfirmationRequired
             | Self::ConfirmationExpired
             | Self::RegistryClaimConfirmationRequired
             | Self::RegistryHandleConflict
@@ -231,6 +235,8 @@ impl fmt::Display for CoreError {
             Self::InvalidGeohash => formatter.write_str("geohash is invalid"),
             Self::InvalidHandle => formatter.write_str("global handle is invalid"),
             Self::InvalidPublicKey => formatter.write_str("Nostr public key is invalid"),
+            Self::InvalidDraft => formatter.write_str("invalid draft conversation or text"),
+            Self::DraftCapacity => formatter.write_str("sealed draft storage limit reached"),
             Self::InvalidMessage => formatter.write_str("message is empty or too large"),
             Self::NotJoined => formatter.write_str("geohash is not joined"),
             Self::Nostr => formatter.write_str("Nostr event creation failed"),
@@ -285,3 +291,4 @@ impl Error for CoreError {
         }
     }
 }
+

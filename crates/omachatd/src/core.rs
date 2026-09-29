@@ -259,6 +259,7 @@ struct DaemonStatus<'a> {
     joined_geohashes: Vec<String>,
     relay_count: usize,
     dm_relay_count: usize,
+    drafts_version: u8,
     room_relay_count: usize,
     profile_publication_state: &'static str,
     profile_publication_acknowledged_relays: usize,
@@ -1550,6 +1551,15 @@ impl DaemonCore {
             Command::Join { geohash } => self.join(geohash).await,
             Command::Leave { geohash } => self.leave(geohash).await,
             Command::Send { conversation, text } => self.send(&conversation, &text).await,
+            Command::ListDrafts | Command::GetDraft { .. } | Command::SaveDraft { .. } => {
+                let _storage = self
+                    .inner
+                    .storage_transaction
+                    .lock()
+                    .expect("storage transaction mutex poisoned");
+                self.ensure_active()?;
+                crate::drafts::dispatch(&self.inner.store, command)
+            }
             Command::DiscoverDmRelays { public_key } => {
                 let recipient = decode_xonly(&public_key)?;
                 let mutation = self
@@ -1970,6 +1980,7 @@ impl DaemonCore {
             joined_geohashes: state.joined.iter().cloned().collect(),
             relay_count: config.relays.len(),
             dm_relay_count: config.dm_relays.len(),
+            drafts_version: 1,
             room_relay_count: config.rooms.as_ref().map_or(0, |rooms| rooms.relays.len()),
             profile_publication_state,
             profile_publication_acknowledged_relays,
@@ -3547,3 +3558,4 @@ mod tests {
         assert_eq!(lifecycle.state(), PanicState::Erasing);
     }
 }
+

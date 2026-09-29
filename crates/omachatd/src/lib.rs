@@ -9,6 +9,7 @@ mod core_error;
 mod dm_delivery_service;
 mod dm_inbox_service;
 mod dm_relay_cache_store;
+mod drafts;
 mod geo_relay_service;
 mod ipc_server;
 mod nostr_service;
@@ -105,3 +106,4 @@ pub use room_service::{
     RoomServiceError, RoomServiceOptions, RoomsHandle, parse_room_conversation,
     room_conversation_id,
 };
+

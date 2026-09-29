@@ -39,6 +39,15 @@ pub enum Command {
         conversation: String,
         text: String,
     },
+    ListDrafts,
+    GetDraft {
+        conversation: String,
+    },
+    SaveDraft {
+        conversation: String,
+        text: String,
+        expected_revision: u64,
+    },
     DiscoverDmRelays {
         public_key: String,
     },
@@ -173,6 +182,20 @@ enum StrictRequestWire {
         id: String,
         params: SendParams,
     },
+    ListDrafts {
+        version: u16,
+        id: String,
+    },
+    GetDraft {
+        version: u16,
+        id: String,
+        params: DraftParams,
+    },
+    SaveDraft {
+        version: u16,
+        id: String,
+        params: SaveDraftParams,
+    },
     DiscoverDmRelays {
         version: u16,
         id: String,
@@ -293,6 +316,20 @@ struct SendParams {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct DraftParams {
+    conversation: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SaveDraftParams {
+    conversation: String,
+    text: String,
+    expected_revision: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PublicKeyParams {
     public_key: String,
 }
@@ -374,6 +411,29 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: SendParams { conversation, text },
             } => (version, id, Command::Send { conversation, text }),
+            StrictRequestWire::ListDrafts { version, id } => (version, id, Command::ListDrafts),
+            StrictRequestWire::GetDraft {
+                version,
+                id,
+                params: DraftParams { conversation },
+            } => (version, id, Command::GetDraft { conversation }),
+            StrictRequestWire::SaveDraft {
+                version,
+                id,
+                params: SaveDraftParams {
+                    conversation,
+                    text,
+                    expected_revision,
+                },
+            } => (
+                version,
+                id,
+                Command::SaveDraft {
+                    conversation,
+                    text,
+                    expected_revision,
+                },
+            ),
             StrictRequestWire::DiscoverDmRelays {
                 version,
                 id,
@@ -772,3 +832,4 @@ impl fmt::Display for IpcError {
 }
 
 impl Error for IpcError {}
+
