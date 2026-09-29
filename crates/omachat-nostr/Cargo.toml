@@ -14,7 +14,7 @@ hex = "=0.4.3"
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
 omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
-rustls = { version = "=0.23.35", default-features = false, features = ["ring", "std"] }
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std"] }
 rustls-native-certs = "=0.8.4"
 rustls-pki-types = "=1.15.1"
 serde = { version = "=1.0.229", features = ["derive"] }
