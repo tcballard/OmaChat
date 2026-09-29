@@ -22,7 +22,9 @@ advertising must remain disabled until its live health gate succeeds.
 
 A standalone conversation window is now available on this development branch.
 It builds on the live IPC v2 trial in PR #230: DMs, recent history, delivery
-updates, per-chat session drafts, reconnect recovery and configured-room joining.
+updates, Nostr contact links, sealed per-chat drafts, reconnect recovery and
+configured-room joining. Draft persistence requires the matching daemon capability;
+wait for saved status before closing.
 See [Desktop setup and limits](desktop/README.md), the
 [product roadmap](docs/desktop-roadmap.md), and [test evidence](docs/desktop-evidence.md).
 This is a source-run preview, not an official Omarchy default or a release.

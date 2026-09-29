@@ -35,7 +35,12 @@ Item {
     function resolveDraft(keepMine) { var c = State.current(state); if (c) Drafts.resolve(c, keepMine); revision++ }
     function reviewDraft() { var c = State.current(state); if (c) Drafts.meta(c).recovered = false; revision++ }
     function retryDraft() { var c = State.current(state); if (c) { var d = Drafts.meta(c); d.loaded = false; d.error = "" }; revision++ }
-    function pumpDrafts() { var request = Drafts.next(state); if (request) helper.write(JSON.stringify(request) + "\n"); revision++ }
+    function pumpDrafts() {
+        var before = Drafts.label(state, State.current(state))
+        var request = Drafts.next(state)
+        if (request) helper.write(JSON.stringify(request) + "\n")
+        if (request || before !== Drafts.label(state, State.current(state))) revision++
+    }
     function reviewedUnknown() { var c = State.current(state); if (c) { c.uncertain = false; c.error = ""; revision++ } }
     function markViewed() { var c = State.current(state); if (c && focused && c.unread) { c.unread = 0; revision++ } }
     onFocusedChanged: markViewed()
