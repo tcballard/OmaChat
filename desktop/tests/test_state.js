@@ -49,4 +49,8 @@ assert.equal(state.beginSend(s),null);
 s.status.nostr_public_key = key;
 state.snapshot(s,{status:{nostr_public_key:other,dm_relay_count:1},messages:[]});
 assert.equal(s.chats.length,0,'new daemon identity must not inherit old plaintext/drafts');
+for(let i=0;i<128;i++) state.ensure(s,'chat-'+i);
+state.select(s,'chat-0');
+assert.equal(state.select(s,'new-chat'),false,'a refused open must not focus the previous recipient as if successful');
+assert.equal(s.active,'chat-0');
 console.log('PASS: draft ownership, duplicate suppression, UTF-8 limits, unknown/rejected sends, unread, deletion and bounds');

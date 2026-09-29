@@ -35,7 +35,8 @@ Item {
     function newDm(key) {
         var parsed = State.dmKey(key)
         if (!parsed) { actionError = "Paste a 64-character Nostr public key. Handles and npub links are not supported in this preview."; return false }
-        State.select(state, "dm:" + parsed); actionError = ""; revision++; return true
+        if (!State.select(state, "dm:" + parsed)) { actionError = state.notice; revision++; return false }
+        actionError = ""; revision++; return true
     }
     function request(method, params) {
         if (!ready || actionBusy) return

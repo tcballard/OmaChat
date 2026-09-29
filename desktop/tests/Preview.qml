@@ -28,7 +28,7 @@ ApplicationWindow {
         function reviewedUnknown() { var c = State.current(state); c.uncertain = false; c.error = ""; revision++ }
         function request(method) {}
         function joinRoom(relay, group, code) {}
-        function newDm(key) { var k = State.dmKey(key); if (!k) { actionError = "Invalid public key"; return false }; select("dm:" + k); return true }
+        function newDm(key) { var k = State.dmKey(key); if (!k) { actionError = "Invalid public key"; return false }; var opened = State.select(state, "dm:" + k); revision++; return opened }
         function send() {
             var req = State.beginSend(state)
             if (req) State.response(state, { id: req.id, ok: true, data: { id: "sent-" + state.serial, delivery: "stored" } })

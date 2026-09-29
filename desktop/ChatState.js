@@ -14,8 +14,9 @@ function ensure(s, id) {
 }
 function select(s, id) {
     var chat = ensure(s, id);
-    if (!chat) { s.notice = "This session has reached its 128-conversation limit."; return; }
+    if (!chat) { s.notice = "This session has reached its 128-conversation limit."; return false; }
     s.active = id; chat.unread = 0;
+    return true;
 }
 function current(s) { return s.chats.find(function(c) { return c.id === s.active; }) || null; }
 function applyMessage(s, p, historical, focused) {
