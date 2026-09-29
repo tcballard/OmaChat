@@ -3558,4 +3558,3 @@ mod tests {
         assert_eq!(lifecycle.state(), PanicState::Erasing);
     }
 }
-

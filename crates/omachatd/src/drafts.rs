@@ -206,15 +206,17 @@ mod tests {
         ] {
             store.write(RECORD, bytes).unwrap();
             assert!(Drafts::load(&store).is_err());
-            assert!(dispatch(
-                &store,
-                Command::SaveDraft {
-                    conversation: "#gcpvj".into(),
-                    text: "replacement".into(),
-                    expected_revision: 0,
-                },
-            )
-            .is_err());
+            assert!(
+                dispatch(
+                    &store,
+                    Command::SaveDraft {
+                        conversation: "#gcpvj".into(),
+                        text: "replacement".into(),
+                        expected_revision: 0,
+                    },
+                )
+                .is_err()
+            );
             assert_eq!(store.read(RECORD).unwrap(), bytes);
         }
     }
@@ -223,23 +225,31 @@ mod tests {
     async fn capacity_and_utf8_bounds_preserve_existing_drafts() {
         let (_dir, store) = fixture().await;
         for n in 0..MAX_DRAFTS {
-            assert_eq!(save(&store, &format!("dm:{n}"), "hello", n as u64)["saved"], true);
+            assert_eq!(
+                save(&store, &format!("dm:{n}"), "hello", n as u64)["saved"],
+                true
+            );
         }
         let before = store.read(RECORD).unwrap();
         for (text, id) in [("more".into(), "dm:extra"), ("🙂".repeat(1025), "dm:0")] {
-            assert!(dispatch(
-                &store,
-                Command::SaveDraft {
-                    conversation: id.into(),
-                    text,
-                    expected_revision: if id == "dm:0" { 1 } else { MAX_DRAFTS as u64 },
-                },
-            )
-            .is_err());
+            assert!(
+                dispatch(
+                    &store,
+                    Command::SaveDraft {
+                        conversation: id.into(),
+                        text,
+                        expected_revision: if id == "dm:0" { 1 } else { MAX_DRAFTS as u64 },
+                    },
+                )
+                .is_err()
+            );
             assert_eq!(store.read(RECORD).unwrap(), before);
         }
         save(&store, "dm:0", "", 1);
-        assert_eq!(save(&store, "dm:extra", "🙂".repeat(1024).as_str(), 65)["saved"], true);
+        assert_eq!(
+            save(&store, "dm:extra", "🙂".repeat(1024).as_str(), 65)["saved"],
+            true
+        );
         let listing = dispatch(&store, Command::ListDrafts).unwrap();
         assert!(serde_json::to_vec(&listing).unwrap().len() < 65536);
         assert!(!listing.to_string().contains("hello"));

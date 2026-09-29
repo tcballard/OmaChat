@@ -420,11 +420,12 @@ impl From<StrictRequestWire> for Request {
             StrictRequestWire::SaveDraft {
                 version,
                 id,
-                params: SaveDraftParams {
-                    conversation,
-                    text,
-                    expected_revision,
-                },
+                params:
+                    SaveDraftParams {
+                        conversation,
+                        text,
+                        expected_revision,
+                    },
             } => (
                 version,
                 id,
@@ -832,4 +833,3 @@ impl fmt::Display for IpcError {
 }
 
 impl Error for IpcError {}
-

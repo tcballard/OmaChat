@@ -680,7 +680,6 @@ async fn reconnect_drains_a_queued_private_message_once() {
     server.await.unwrap();
 }
 
-
 #[tokio::test]
 async fn draft_ipc_survives_restart_and_refuses_stale_client() {
     let directory = tempdir().unwrap();
@@ -706,12 +705,30 @@ async fn draft_ipc_survives_restart_and_refuses_stale_client() {
     let core = DaemonCore::open(directory.path(), config, EventHub::default())
         .await
         .unwrap();
-    assert_eq!(command(&core, Command::ListDrafts).await["drafts"].as_array().unwrap().len(), 1);
-    let current = command(&core, Command::GetDraft { conversation: "#gcpvj".into() }).await;
+    assert_eq!(
+        command(&core, Command::ListDrafts).await["drafts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let current = command(
+        &core,
+        Command::GetDraft {
+            conversation: "#gcpvj".into(),
+        },
+    )
+    .await;
     assert_eq!(current["text"], "restart draft");
-    let conflict = command(&core, Command::SaveDraft {
-        conversation: "#gcpvj".into(), text: "stale text".into(), expected_revision: 0,
-    }).await;
+    let conflict = command(
+        &core,
+        Command::SaveDraft {
+            conversation: "#gcpvj".into(),
+            text: "stale text".into(),
+            expected_revision: 0,
+        },
+    )
+    .await;
     assert_eq!(conflict["saved"], false);
     assert_eq!(conflict["text"], "restart draft");
 }
