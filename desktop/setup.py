@@ -8,6 +8,7 @@ import json
 import os
 import re
 from pathlib import Path
+import signal
 import stat
 import tempfile
 from urllib.parse import urlsplit, urlunsplit
@@ -160,7 +161,14 @@ def apply(path, request):
     return {**snapshot(path), "backup": backup, "restart_required": True}
 
 
+def interrupted(signum, _frame):
+    # The desktop terminates a helper that misses its deadline; unwind so the
+    # temporary file is removed. A replacement already committed stays in place.
+    raise SystemExit(128 + signum)
+
+
 def main():
+    signal.signal(signal.SIGTERM, interrupted)
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=os.environ.get("OMACHAT_CONFIG") or str(default_path()))
     parser.add_argument("--request", required=True)

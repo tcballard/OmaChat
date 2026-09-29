@@ -75,6 +75,9 @@ class SetupTests(unittest.TestCase):
         self.assertEqual(setup.relays(["ws://127.0.0.1:8080", "ws://[::1]:8081"]), ["ws://127.0.0.1:8080/", "ws://[::1]:8081/"])
         with self.assertRaises(ValueError): setup.relays(["wss://relay.test"] * 17)
 
+    def test_termination_unwinds_for_cleanup(self):
+        with self.assertRaises(SystemExit): setup.interrupted(15, None)
+
     def test_relative_xdg_is_ignored(self):
         with patch.dict(os.environ, {"XDG_CONFIG_HOME": "relative"}):
             self.assertEqual(setup.default_path(), Path.home() / ".config/omachat/config.json")

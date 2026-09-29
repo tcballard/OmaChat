@@ -3,6 +3,9 @@ import QtQuick.Window
 import Quickshell
 
 ShellRoot {
+    // A source edit or checkout must not hot-reload a live chat window: reload
+    // discards memory-only edits and forgets in-flight sends. Reload explicitly.
+    Component.onCompleted: Quickshell.watchFiles = false
     ChatService { id: chatService; focused: window.contentItem.Window.active }
     FloatingWindow {
         id: window
