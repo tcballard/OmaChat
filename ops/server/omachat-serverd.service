@@ -1,0 +1,46 @@
+[Unit]
+Description=OmaChat hosted chat server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=omachat-server
+Group=omachat-server
+ExecStart=/usr/local/bin/omachat-serverd \
+  --data-dir /var/lib/omachat-server \
+  --server-key-file /etc/omachat-server/server.key \
+  --storage-key-file /etc/omachat-server/storage.key \
+  --registration invite \
+  --invite-code-file /etc/omachat-server/invites \
+  --listen 127.0.0.1:7448
+Restart=on-failure
+RestartSec=3s
+StateDirectory=omachat-server
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/omachat-server
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

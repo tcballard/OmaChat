@@ -1,0 +1,28 @@
+# Reverse proxy for omachat-serverd. Replace chat.example.invalid with the
+# public name; Caddy obtains and renews the certificate. The server itself
+# listens on loopback only and never terminates TLS.
+chat.example.invalid {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		-Server
+	}
+	@websocket {
+		header Connection *Upgrade*
+		header Upgrade websocket
+	}
+	handle @websocket {
+		reverse_proxy 127.0.0.1:7448 {
+			# Long-lived connections; the server enforces its own idle timeout.
+			transport http {
+				read_timeout 0
+				write_timeout 0
+			}
+		}
+	}
+	handle {
+		respond "omachat-serverd accepts WebSocket connections only" 426
+	}
+}
