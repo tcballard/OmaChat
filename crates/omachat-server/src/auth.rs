@@ -17,10 +17,9 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub const AUTH_DOMAIN: &[u8] = b"omachat-server-auth-v1\0";
-pub const HELLO_DOMAIN: &[u8] = b"omachat-server-hello-v1\0";
-pub const KEY_BYTES: usize = 32;
-pub const SIGNATURE_BYTES: usize = 64;
+pub use omachat_proto::hosted::{
+    AUTH_DOMAIN, HELLO_DOMAIN, KEY_BYTES, SIGNATURE_BYTES, auth_transcript, hello_transcript,
+};
 
 pub struct ServerIdentity {
     signing_key: SigningKey,
@@ -50,32 +49,6 @@ impl ServerIdentity {
             .sign(&hello_transcript(challenge, device_public_key))
             .to_bytes()
     }
-}
-
-#[must_use]
-pub fn hello_transcript(
-    challenge: &[u8; KEY_BYTES],
-    device_public_key: &[u8; KEY_BYTES],
-) -> Vec<u8> {
-    let mut transcript = Vec::with_capacity(HELLO_DOMAIN.len() + 2 * KEY_BYTES);
-    transcript.extend_from_slice(HELLO_DOMAIN);
-    transcript.extend_from_slice(challenge);
-    transcript.extend_from_slice(device_public_key);
-    transcript
-}
-
-#[must_use]
-pub fn auth_transcript(
-    server_public_key: &[u8; KEY_BYTES],
-    challenge: &[u8; KEY_BYTES],
-    device_public_key: &[u8; KEY_BYTES],
-) -> Vec<u8> {
-    let mut transcript = Vec::with_capacity(AUTH_DOMAIN.len() + 3 * KEY_BYTES);
-    transcript.extend_from_slice(AUTH_DOMAIN);
-    transcript.extend_from_slice(server_public_key);
-    transcript.extend_from_slice(challenge);
-    transcript.extend_from_slice(device_public_key);
-    transcript
 }
 
 pub fn verify_hello_signature(

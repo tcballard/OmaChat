@@ -65,6 +65,12 @@ pub enum CoreError {
     RoomService(crate::RoomServiceError),
     RoomsUnconfigured,
     RoomRelayUnknown,
+    /// The hosted server refused a request; the code is the server's.
+    Hosted(omachat_proto::hosted::ServerError),
+    HostedUnavailable,
+    HostedUnconfigured,
+    HostedService(crate::HostedServiceError),
+    InvalidConversation,
 }
 impl CoreError {
     pub(crate) fn code(&self) -> ErrorCode {
@@ -74,7 +80,30 @@ impl CoreError {
             | Self::InvalidGeohash
             | Self::InvalidHandle
             | Self::InvalidPublicKey
-            | Self::InvalidMessage => ErrorCode::InvalidRequest,
+            | Self::InvalidMessage
+            | Self::InvalidConversation => ErrorCode::InvalidRequest,
+            Self::Hosted(error) => match error.code {
+                omachat_proto::hosted::ErrorCode::InvalidRequest
+                | omachat_proto::hosted::ErrorCode::InvalidHandle
+                | omachat_proto::hosted::ErrorCode::InvalidName
+                | omachat_proto::hosted::ErrorCode::TooLarge
+                | omachat_proto::hosted::ErrorCode::UnsupportedVersion => ErrorCode::InvalidRequest,
+                omachat_proto::hosted::ErrorCode::HandleTaken
+                | omachat_proto::hosted::ErrorCode::HandleAlreadySet
+                | omachat_proto::hosted::ErrorCode::NameTaken
+                | omachat_proto::hosted::ErrorCode::Forbidden
+                | omachat_proto::hosted::ErrorCode::AlreadyAuthenticated => ErrorCode::Conflict,
+                omachat_proto::hosted::ErrorCode::NotFound => ErrorCode::NotFound,
+                omachat_proto::hosted::ErrorCode::RateLimited
+                | omachat_proto::hosted::ErrorCode::Storage
+                | omachat_proto::hosted::ErrorCode::RegistrationClosed
+                | omachat_proto::hosted::ErrorCode::InvalidInvite
+                | omachat_proto::hosted::ErrorCode::InvalidSignature
+                | omachat_proto::hosted::ErrorCode::NotAuthenticated => ErrorCode::Unavailable,
+                omachat_proto::hosted::ErrorCode::Internal => ErrorCode::Internal,
+            },
+            Self::HostedUnavailable | Self::HostedUnconfigured => ErrorCode::Unavailable,
+            Self::HostedService(_) => ErrorCode::Internal,
             Self::ConfirmationRequired
             | Self::RegistryClaimConfirmationRequired
             | Self::RegistryHandleConflict
@@ -147,6 +176,13 @@ impl fmt::Display for CoreError {
             Self::RoomsUnconfigured => formatter.write_str("no NIP-29 room relays are configured"),
             Self::RoomRelayUnknown => formatter
                 .write_str("room relay is not configured or its identity is not yet verified"),
+            Self::Hosted(error) => write!(formatter, "hosted server refused: {}", error.message),
+            Self::HostedUnavailable => formatter.write_str(
+                "hosted server is unreachable; the request was not confirmed and may be repeated safely",
+            ),
+            Self::HostedUnconfigured => formatter.write_str("hosted server is not configured"),
+            Self::HostedService(error) => write!(formatter, "hosted transport failed: {error}"),
+            Self::InvalidConversation => formatter.write_str("conversation identifier is invalid"),
             Self::Store(error) => write!(formatter, "sealed store failed: {error}"),
             Self::IdentityStore(error) => write!(formatter, "identity store failed: {error}"),
             Self::AccountVault(error) => write!(formatter, "account store failed: {error}"),
@@ -276,6 +312,8 @@ impl Error for CoreError {
             Self::PrincipalRegistryClaimIntent(error) => Some(error),
             Self::PrincipalRegistryProof(error) => Some(error),
             Self::ProofBearingRegistryClaim(error) => Some(error),
+            Self::Hosted(error) => Some(error),
+            Self::HostedService(error) => Some(error),
             _ => None,
         }
     }

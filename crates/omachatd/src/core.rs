@@ -2,6 +2,11 @@ use crate::{
     config::{DaemonConfig, RegistryClientConfig, RegistryProtocol},
     core_error::CoreError,
     dm_inbox_service::{DmInboxHandle, DmInboxService},
+    hosted_service::{
+        DeviceSigner, HostedAccount, HostedError, HostedEvent, HostedHandle, HostedService,
+        HostedServiceConfig, HostedState, HostedTimeouts, hosted_conversation_id,
+        parse_hosted_conversation,
+    },
     ipc_server::{EventHub, RequestHandler},
     nostr_service::NostrHandle,
     principal_registry_evidence_service::PrincipalRegistryEvidenceService,
@@ -38,7 +43,7 @@ use omachat_store::{
 use serde::Serialize;
 use serde_json::to_value;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     future::Future,
     path::Path,
     pin::Pin,
@@ -212,6 +217,17 @@ struct CoreInner {
     geo_relays: Mutex<Option<crate::GeoRelayHandle>>,
     rooms: Mutex<Option<crate::RoomsHandle>>,
     dm_inbox: Mutex<Option<DmInboxHandle>>,
+    hosted: Mutex<Option<HostedHandle>>,
+    /// Last account the hosted server authenticated; kept across
+    /// reconnects so status stays truthful while disconnected.
+    hosted_account: Mutex<Option<HostedAccount>>,
+    /// Conversation summaries by server conversation id, refreshed on every
+    /// connect and by `conversation` events. Used for member names and
+    /// receipt bookkeeping only; the server remains the source of truth.
+    hosted_conversations: Mutex<BTreeMap<String, serde_json::Value>>,
+    /// Sends whose outcome is unknown, so a repeat of the same text to the
+    /// same conversation reuses its client identifier and cannot duplicate.
+    hosted_unacknowledged: Mutex<Vec<UnacknowledgedSend>>,
     profile_publication: Mutex<Option<crate::ProfilePublicationCoordinator>>,
     relay_list_publication: tokio::sync::Mutex<Option<crate::RelayListPublicationRuntime>>,
     registry: Option<RegistryEvidenceBoundary>,
@@ -268,7 +284,35 @@ struct DaemonStatus<'a> {
     outbox_pending: usize,
     outbox_failed: usize,
     account: AccountStatus,
+    hosted: HostedStatus,
 }
+
+/// Hosted transport state for `status`. `disabled` means no `hosted`
+/// configuration; every other state describes the live connection.
+#[derive(Serialize)]
+struct HostedStatus {
+    state: &'static str,
+    url: Option<String>,
+    server_public_key: Option<String>,
+    account_id: Option<String>,
+    handle: Option<String>,
+    display_name: Option<String>,
+    reason: Option<String>,
+}
+
+struct UnacknowledgedSend {
+    conversation_id: String,
+    text: String,
+    client_id: String,
+    recorded_at: u64,
+}
+
+const HOSTED_UNACKNOWLEDGED_TTL_SECONDS: u64 = 10 * 60;
+const HOSTED_UNACKNOWLEDGED_LIMIT: usize = 64;
+const HOSTED_MEMBERS_PER_CONVERSATION: usize = 32;
+/// Budget for one IPC response body, leaving room for the envelope under
+/// [`omachat_proto::ipc::MAX_LINE_BYTES`].
+const HOSTED_IPC_BUDGET_BYTES: usize = 48 * 1024;
 
 #[derive(Serialize)]
 struct AccountStatus {
@@ -381,6 +425,10 @@ impl DaemonCore {
                 geo_relays: Mutex::new(None),
                 rooms: Mutex::new(None),
                 dm_inbox: Mutex::new(None),
+                hosted: Mutex::new(None),
+                hosted_account: Mutex::new(None),
+                hosted_conversations: Mutex::new(BTreeMap::new()),
+                hosted_unacknowledged: Mutex::new(Vec::new()),
                 profile_publication: Mutex::new(profile_publication),
                 relay_list_publication: tokio::sync::Mutex::new(relay_list_publication),
                 registry,
@@ -1434,6 +1482,7 @@ impl DaemonCore {
                 || current.relay_list_publication != replacement.relay_list_publication
                 || current.registry != replacement.registry
                 || current.rooms != replacement.rooms
+                || current.hosted != replacement.hosted
         };
         if relay_change_requires_restart {
             return Err(CoreError::RestartRequired);
@@ -1794,6 +1843,42 @@ impl DaemonCore {
             Command::ListRooms => self.list_rooms().await,
             Command::RoomMembers { relay, group_id } => self.room_members(&relay, group_id).await,
             Command::Subscribe { topics } => Ok(serde_json::json!({"topics": topics})),
+            Command::HostedConversations => self.hosted_conversations().await,
+            Command::HostedHistory {
+                conversation,
+                before_sequence,
+                limit,
+            } => {
+                self.hosted_history(&conversation, before_sequence, limit)
+                    .await
+            }
+            Command::HostedMarkRead {
+                conversation,
+                sequence,
+            } => self.hosted_mark_read(&conversation, sequence).await,
+            Command::HostedOpenDm { handle } => self.hosted_open_dm(&handle).await,
+            Command::HostedClaimHandle { handle } => self.hosted_claim_handle(&handle).await,
+            Command::HostedResolveHandle { handle } => {
+                self.hosted_call("resolve-handle", serde_json::json!({"handle": handle}))
+                    .await
+            }
+            Command::HostedCreateWorkspace { name } => {
+                self.hosted_call("create-workspace", serde_json::json!({"name": name}))
+                    .await
+            }
+            Command::HostedCreateChannel { workspace_id, name } => {
+                self.hosted_create_channel(&workspace_id, &name).await
+            }
+            Command::HostedAddMember {
+                workspace_id,
+                handle,
+            } => {
+                self.hosted_call(
+                    "add-member",
+                    serde_json::json!({"workspace_id": workspace_id, "handle": handle}),
+                )
+                .await
+            }
             Command::Panic { .. } | Command::Hello { .. } => Err(CoreError::InvalidCommand),
         }
     }
@@ -1808,6 +1893,7 @@ impl DaemonCore {
             .map_err(CoreError::Identity)?;
         let now = unix_time()?;
         let account = self.account_status(now)?;
+        let hosted = self.hosted_status();
         let state = self
             .inner
             .state
@@ -1932,6 +2018,7 @@ impl DaemonCore {
             outbox_pending: pending,
             outbox_failed: failed,
             account,
+            hosted,
         })
         .map_err(|_| CoreError::Encoding)
     }
@@ -2079,6 +2166,11 @@ impl DaemonCore {
             return Err(CoreError::InvalidMessage);
         }
         let now = unix_time()?;
+        if conversation.starts_with(crate::HOSTED_CONVERSATION_PREFIX) {
+            let conversation_id =
+                parse_hosted_conversation(conversation).ok_or(CoreError::InvalidConversation)?;
+            return self.send_hosted(conversation_id, text, now).await;
+        }
         if let Some((relay_pubkey, group_id)) = crate::parse_room_conversation(conversation) {
             return self
                 .send_room_message(relay_pubkey, group_id, text, now)
@@ -3080,6 +3172,785 @@ mod relay_list_publication_lifecycle_tests {
     }
 }
 
+/// Hosted server transport (ADR 0007).
+impl DaemonCore {
+    /// Start the hosted transport when `hosted` is configured. The returned
+    /// service must be shut down before the runtime is dismantled.
+    pub fn start_hosted(&self) -> Result<Option<HostedService>, CoreError> {
+        self.start_hosted_with(HostedTimeouts::default())
+    }
+
+    pub fn start_hosted_with(
+        &self,
+        timeouts: HostedTimeouts,
+    ) -> Result<Option<HostedService>, CoreError> {
+        let (hosted, account_display_name) = {
+            let config = self.inner.config.lock().expect("config mutex poisoned");
+            (config.hosted.clone(), config.account_display_name.clone())
+        };
+        let Some(hosted) = hosted else {
+            return Ok(None);
+        };
+        let device_public_key = {
+            let identity = self.identity()?;
+            identity
+                .as_ref()
+                .expect("checked identity")
+                .public_identity()
+                .signing_public_key
+        };
+        let config = HostedServiceConfig {
+            url: hosted.canonical_url()?,
+            pinned_server_public_key: hosted.pinned_server_public_key_bytes()?,
+            device_public_key,
+            display_name: hosted
+                .display_name
+                .clone()
+                .or(account_display_name)
+                .filter(|name| omachat_proto::hosted::validate_name(name).is_ok()),
+            invite_code: hosted.invite_code.clone(),
+            timeouts,
+        };
+        let signer_core = self.clone();
+        let signer: DeviceSigner =
+            Arc::new(move |transcript| signer_core.sign_with_device_key(transcript));
+        let (event_sender, mut event_receiver) = tokio::sync::mpsc::channel(256);
+        let service =
+            HostedService::spawn(config, signer, event_sender).map_err(CoreError::HostedService)?;
+        *self
+            .inner
+            .hosted
+            .lock()
+            .expect("hosted handle mutex poisoned") = Some(service.handle());
+        let consumer = self.clone();
+        tokio::spawn(async move {
+            while let Some(event) = event_receiver.recv().await {
+                consumer.receive_hosted_event(event).await;
+            }
+        });
+        Ok(Some(service))
+    }
+
+    /// Sign the hosted authentication transcript with the device signing
+    /// key. Returns `None` once the identity has been erased, which stops
+    /// the transport instead of letting it reconnect as nobody.
+    fn sign_with_device_key(&self, transcript: &[u8]) -> Option<[u8; 64]> {
+        let guard = self.inner.identity.lock().expect("identity mutex poisoned");
+        guard.as_ref().map(|identity| identity.sign(transcript))
+    }
+
+    fn hosted_handle(&self) -> Result<HostedHandle, CoreError> {
+        self.inner
+            .hosted
+            .lock()
+            .expect("hosted handle mutex poisoned")
+            .clone()
+            .ok_or(CoreError::HostedUnconfigured)
+    }
+
+    fn hosted_account_id(&self) -> Option<String> {
+        self.inner
+            .hosted_account
+            .lock()
+            .expect("hosted account mutex poisoned")
+            .as_ref()
+            .map(|account| account.account_id.clone())
+    }
+
+    fn hosted_status(&self) -> HostedStatus {
+        let hosted = self
+            .inner
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .hosted
+            .clone();
+        let Some(hosted) = hosted else {
+            return HostedStatus {
+                state: "disabled",
+                url: None,
+                server_public_key: None,
+                account_id: None,
+                handle: None,
+                display_name: None,
+                reason: None,
+            };
+        };
+        let state = self
+            .inner
+            .hosted
+            .lock()
+            .expect("hosted handle mutex poisoned")
+            .as_ref()
+            .map(HostedHandle::state);
+        let account = self
+            .inner
+            .hosted_account
+            .lock()
+            .expect("hosted account mutex poisoned")
+            .clone();
+        let (state, reason) = match state {
+            None => ("starting", None),
+            Some(HostedState::Disconnected { reason }) => ("disconnected", Some(reason)),
+            Some(other) => (other.label(), None),
+        };
+        HostedStatus {
+            state,
+            url: Some(hosted.url),
+            server_public_key: Some(hosted.pinned_server_public_key),
+            account_id: account.as_ref().map(|account| account.account_id.clone()),
+            handle: account.as_ref().and_then(|account| account.handle.clone()),
+            display_name: account.and_then(|account| account.display_name),
+            reason,
+        }
+    }
+
+    async fn receive_hosted_event(&self, event: HostedEvent) {
+        match event {
+            HostedEvent::State(state) => {
+                let connected = state.account().cloned();
+                if let Some(account) = connected.clone() {
+                    *self
+                        .inner
+                        .hosted_account
+                        .lock()
+                        .expect("hosted account mutex poisoned") = Some(account);
+                }
+                self.publish_status_event();
+                if connected.is_some() {
+                    // Off the event path: a round trip here would stall the
+                    // session loop that has to deliver the reply.
+                    let core = self.clone();
+                    tokio::spawn(async move { core.resync_hosted().await });
+                }
+            }
+            HostedEvent::Server { kind, data } => match kind.as_str() {
+                omachat_proto::hosted::EVENT_MESSAGE => self.receive_hosted_message(data).await,
+                omachat_proto::hosted::EVENT_RECEIPT => self.receive_hosted_receipt(&data),
+                omachat_proto::hosted::EVENT_CONVERSATION => {
+                    self.receive_hosted_conversation(data);
+                }
+                // `lagged`: the server closes the session next; the
+                // reconnect resynchronises from the server's copy.
+                _ => {}
+            },
+        }
+    }
+
+    /// Reload the conversation list after (re)connecting and announce every
+    /// conversation, so a subscribed client sees the full set again.
+    async fn resync_hosted(&self) {
+        let Ok(handle) = self.hosted_handle() else {
+            return;
+        };
+        let Ok(list) = handle
+            .call("list-conversations", serde_json::Value::Null)
+            .await
+        else {
+            return;
+        };
+        let summaries = self.replace_hosted_conversations(&list);
+        for summary in summaries {
+            self.publish_topic_event(
+                omachat_proto::ipc::Topic::Conversations,
+                self.hosted_conversation_value(&summary),
+            );
+        }
+    }
+
+    fn replace_hosted_conversations(&self, list: &serde_json::Value) -> Vec<serde_json::Value> {
+        let Some(conversations) = list
+            .get("conversations")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return Vec::new();
+        };
+        let mut cache = self
+            .inner
+            .hosted_conversations
+            .lock()
+            .expect("hosted conversations mutex poisoned");
+        cache.clear();
+        for summary in conversations {
+            if let Some(id) = summary
+                .get("conversation_id")
+                .and_then(serde_json::Value::as_str)
+            {
+                cache.insert(id.to_owned(), summary.clone());
+            }
+        }
+        cache.values().cloned().collect()
+    }
+
+    /// IPC shape of a server conversation summary. Direct conversations are
+    /// named after the other member; channels keep their name. At most
+    /// [`HOSTED_MEMBERS_PER_CONVERSATION`] members are listed so one
+    /// conversation can never exceed an IPC line; `member_count` is exact.
+    fn hosted_conversation_value(&self, summary: &serde_json::Value) -> serde_json::Value {
+        let id = summary
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let own_account = self.hosted_account_id();
+        let members = summary
+            .get("members")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let name = summary
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                members
+                    .iter()
+                    .find(|member| {
+                        member.get("account_id").and_then(serde_json::Value::as_str)
+                            != own_account.as_deref()
+                    })
+                    .map(member_display)
+            });
+        serde_json::json!({
+            "conversation": hosted_conversation_id(id),
+            "transport": "hosted",
+            "kind": summary.get("kind").cloned().unwrap_or(serde_json::Value::Null),
+            "name": name,
+            "workspace_id": summary.get("workspace_id").cloned().unwrap_or(serde_json::Value::Null),
+            "last_sequence": summary.get("last_sequence").cloned().unwrap_or(serde_json::Value::Null),
+            "delivered_sequence": summary.get("delivered_sequence").cloned().unwrap_or(serde_json::Value::Null),
+            "read_sequence": summary.get("read_sequence").cloned().unwrap_or(serde_json::Value::Null),
+            "member_count": members.len(),
+            "members": members.iter().take(HOSTED_MEMBERS_PER_CONVERSATION).cloned().collect::<Vec<_>>(),
+        })
+    }
+
+    /// IPC shape of a stored message. Own messages are `outgoing` with the
+    /// `stored` delivery state; everything else is `received`.
+    fn hosted_message_value(&self, message: &serde_json::Value) -> Option<serde_json::Value> {
+        let conversation_id = message
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)?;
+        let id = message.get("id").and_then(serde_json::Value::as_str)?;
+        let text = message.get("text").and_then(serde_json::Value::as_str)?;
+        let sender_account_id = message
+            .get("sender_account_id")
+            .and_then(serde_json::Value::as_str)?;
+        let outgoing = self.hosted_account_id().as_deref() == Some(sender_account_id);
+        let sender = if outgoing {
+            "You".to_owned()
+        } else {
+            self.hosted_member_name(conversation_id, sender_account_id)
+        };
+        Some(serde_json::json!({
+            "id": id,
+            "conversation": hosted_conversation_id(conversation_id),
+            "transport": "hosted",
+            "text": text,
+            "sender": sender,
+            "sender_account_id": sender_account_id,
+            "outgoing": outgoing,
+            "delivery": if outgoing { "stored" } else { "received" },
+            "sequence": message.get("sequence").cloned().unwrap_or(serde_json::Value::Null),
+            "sent_at": message.get("sent_at").cloned().unwrap_or(serde_json::Value::Null),
+        }))
+    }
+
+    fn hosted_member_name(&self, conversation_id: &str, account_id: &str) -> String {
+        self.inner
+            .hosted_conversations
+            .lock()
+            .expect("hosted conversations mutex poisoned")
+            .get(conversation_id)
+            .and_then(|summary| summary.get("members")?.as_array().cloned())
+            .and_then(|members| {
+                members
+                    .iter()
+                    .find(|member| {
+                        member.get("account_id").and_then(serde_json::Value::as_str)
+                            == Some(account_id)
+                    })
+                    .map(member_display)
+            })
+            .unwrap_or_else(|| account_id.to_owned())
+    }
+
+    async fn receive_hosted_message(&self, data: serde_json::Value) {
+        let Some(payload) = self.hosted_message_value(&data) else {
+            return;
+        };
+        let outgoing = payload.get("outgoing").and_then(serde_json::Value::as_bool) == Some(true);
+        let conversation_id = data
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let sequence = data
+            .get("sequence")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        {
+            let mut cache = self
+                .inner
+                .hosted_conversations
+                .lock()
+                .expect("hosted conversations mutex poisoned");
+            if let Some(summary) = cache.get_mut(&conversation_id) {
+                summary["last_sequence"] = serde_json::json!(sequence);
+                if outgoing {
+                    summary["delivered_sequence"] = serde_json::json!(sequence);
+                    summary["read_sequence"] = serde_json::json!(sequence);
+                }
+            }
+        }
+        self.publish_topic_event(omachat_proto::ipc::Topic::Messages, payload);
+        if !outgoing {
+            let core = self.clone();
+            tokio::spawn(async move {
+                core.mark_hosted_delivered(&conversation_id, sequence).await;
+            });
+        }
+    }
+
+    /// Tell the server a message reached this device. Only ever called for
+    /// messages the daemon has actually received.
+    async fn mark_hosted_delivered(&self, conversation_id: &str, sequence: u64) {
+        let already = self
+            .inner
+            .hosted_conversations
+            .lock()
+            .expect("hosted conversations mutex poisoned")
+            .get(conversation_id)
+            .and_then(|summary| summary.get("delivered_sequence")?.as_u64())
+            .unwrap_or_default();
+        if sequence == 0 || sequence <= already {
+            return;
+        }
+        let Ok(handle) = self.hosted_handle() else {
+            return;
+        };
+        if handle
+            .call(
+                "mark-delivered",
+                serde_json::json!({"conversation_id": conversation_id, "sequence": sequence}),
+            )
+            .await
+            .is_ok()
+            && let Some(summary) = self
+                .inner
+                .hosted_conversations
+                .lock()
+                .expect("hosted conversations mutex poisoned")
+                .get_mut(conversation_id)
+            && summary
+                .get("delivered_sequence")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or_default()
+                < sequence
+        {
+            summary["delivered_sequence"] = serde_json::json!(sequence);
+        }
+    }
+
+    fn receive_hosted_receipt(&self, data: &serde_json::Value) {
+        let Some(conversation_id) = data
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return;
+        };
+        let account_id = data
+            .get("account_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        if self.hosted_account_id().as_deref() == Some(account_id)
+            && let Some(summary) = self
+                .inner
+                .hosted_conversations
+                .lock()
+                .expect("hosted conversations mutex poisoned")
+                .get_mut(conversation_id)
+        {
+            for field in ["delivered_sequence", "read_sequence"] {
+                if let Some(value) = data.get(field).and_then(serde_json::Value::as_u64) {
+                    summary[field] = serde_json::json!(value);
+                }
+            }
+        }
+        self.publish_topic_event(
+            omachat_proto::ipc::Topic::Delivery,
+            hosted_receipt_value(data),
+        );
+    }
+
+    fn receive_hosted_conversation(&self, data: serde_json::Value) {
+        if let Some(id) = data
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+        {
+            self.inner
+                .hosted_conversations
+                .lock()
+                .expect("hosted conversations mutex poisoned")
+                .insert(id.to_owned(), data.clone());
+        }
+        self.publish_topic_event(
+            omachat_proto::ipc::Topic::Conversations,
+            self.hosted_conversation_value(&data),
+        );
+    }
+
+    /// Send to a hosted conversation with a definite outcome: the server's
+    /// sequence, a server refusal, or `HostedUnavailable` once the send
+    /// deadline passes. Retries reuse the client identifier, so a repeat can
+    /// never store the message twice.
+    async fn send_hosted(
+        &self,
+        conversation_id: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<serde_json::Value, CoreError> {
+        let handle = self.hosted_handle()?;
+        let client_id = self.hosted_client_id(conversation_id, text, now)?;
+        let deadline = tokio::time::Instant::now() + handle.timeouts().send;
+        loop {
+            let attempt = tokio::time::timeout_at(
+                deadline,
+                handle.call(
+                    "send",
+                    serde_json::json!({
+                        "conversation_id": conversation_id,
+                        "client_id": client_id,
+                        "text": text,
+                    }),
+                ),
+            )
+            .await
+            .unwrap_or(Err(HostedError::Timeout));
+            match attempt {
+                Ok(result) => {
+                    self.forget_unacknowledged(&client_id);
+                    let id = result
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or(&client_id)
+                        .to_owned();
+                    return Ok(serde_json::json!({
+                        "id": id,
+                        "delivery": "stored",
+                        "conversation": hosted_conversation_id(conversation_id),
+                        "sequence": result.get("sequence").cloned().unwrap_or(serde_json::Value::Null),
+                        "duplicate": result.get("duplicate").cloned().unwrap_or(serde_json::Value::Bool(false)),
+                    }));
+                }
+                Err(HostedError::Server(error)) => {
+                    self.forget_unacknowledged(&client_id);
+                    return Err(CoreError::Hosted(error));
+                }
+                Err(
+                    HostedError::Disconnected
+                    | HostedError::Timeout
+                    | HostedError::Stopped
+                    | HostedError::Protocol(_),
+                ) => {
+                    if tokio::time::Instant::now() >= deadline
+                        || handle.wait_connected(deadline).await.is_err()
+                    {
+                        self.remember_unacknowledged(conversation_id, text, &client_id, now);
+                        return Err(CoreError::HostedUnavailable);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Reuse the identifier of an unacknowledged send with the same text,
+    /// otherwise mint a fresh random one.
+    fn hosted_client_id(
+        &self,
+        conversation_id: &str,
+        text: &str,
+        now: u64,
+    ) -> Result<String, CoreError> {
+        let mut pending = self
+            .inner
+            .hosted_unacknowledged
+            .lock()
+            .expect("hosted unacknowledged mutex poisoned");
+        pending.retain(|entry| {
+            now.saturating_sub(entry.recorded_at) < HOSTED_UNACKNOWLEDGED_TTL_SECONDS
+        });
+        if let Some(entry) = pending
+            .iter()
+            .find(|entry| entry.conversation_id == conversation_id && entry.text == text)
+        {
+            return Ok(entry.client_id.clone());
+        }
+        let bytes: [u8; 16] = random_bytes()?;
+        Ok(format!("d-{}", hex::encode(bytes)))
+    }
+
+    fn remember_unacknowledged(
+        &self,
+        conversation_id: &str,
+        text: &str,
+        client_id: &str,
+        now: u64,
+    ) {
+        let mut pending = self
+            .inner
+            .hosted_unacknowledged
+            .lock()
+            .expect("hosted unacknowledged mutex poisoned");
+        if let Some(entry) = pending
+            .iter_mut()
+            .find(|entry| entry.client_id == client_id)
+        {
+            entry.recorded_at = now;
+            return;
+        }
+        pending.push(UnacknowledgedSend {
+            conversation_id: conversation_id.to_owned(),
+            text: text.to_owned(),
+            client_id: client_id.to_owned(),
+            recorded_at: now,
+        });
+        while pending.len() > HOSTED_UNACKNOWLEDGED_LIMIT {
+            pending.remove(0);
+        }
+    }
+
+    fn forget_unacknowledged(&self, client_id: &str) {
+        self.inner
+            .hosted_unacknowledged
+            .lock()
+            .expect("hosted unacknowledged mutex poisoned")
+            .retain(|entry| entry.client_id != client_id);
+    }
+
+    async fn hosted_call(
+        &self,
+        method: &'static str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, CoreError> {
+        self.hosted_handle()?
+            .call(method, params)
+            .await
+            .map_err(hosted_error)
+    }
+
+    async fn hosted_conversations(&self) -> Result<serde_json::Value, CoreError> {
+        let list = self
+            .hosted_call("list-conversations", serde_json::Value::Null)
+            .await?;
+        let conversations = self
+            .replace_hosted_conversations(&list)
+            .iter()
+            .map(|summary| self.hosted_conversation_value(summary))
+            .collect::<Vec<_>>();
+        let (conversations, truncated) = fit_ipc_budget(conversations, false);
+        Ok(serde_json::json!({"conversations": conversations, "truncated": truncated}))
+    }
+
+    async fn hosted_history(
+        &self,
+        conversation: &str,
+        before_sequence: Option<u64>,
+        limit: Option<u32>,
+    ) -> Result<serde_json::Value, CoreError> {
+        let conversation_id =
+            parse_hosted_conversation(conversation).ok_or(CoreError::InvalidConversation)?;
+        let result = self
+            .hosted_call(
+                "history",
+                serde_json::json!({
+                    "conversation_id": conversation_id,
+                    "before_sequence": before_sequence,
+                    "limit": limit,
+                }),
+            )
+            .await?;
+        let mut messages = Vec::new();
+        let mut newest_received = 0;
+        for message in result
+            .get("messages")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(value) = self.hosted_message_value(message) {
+                if value.get("outgoing").and_then(serde_json::Value::as_bool) != Some(true) {
+                    newest_received = newest_received.max(
+                        message
+                            .get("sequence")
+                            .and_then(serde_json::Value::as_u64)
+                            .unwrap_or_default(),
+                    );
+                }
+                messages.push(value);
+            }
+        }
+        self.mark_hosted_delivered(conversation_id, newest_received)
+            .await;
+        // History arrives oldest first; keep the newest messages when a page
+        // would not fit one IPC line. The client pages again from the oldest
+        // sequence it received.
+        let (messages, truncated) = fit_ipc_budget(messages, true);
+        Ok(serde_json::json!({
+            "conversation": conversation,
+            "messages": messages,
+            "truncated": truncated,
+        }))
+    }
+
+    async fn hosted_mark_read(
+        &self,
+        conversation: &str,
+        sequence: u64,
+    ) -> Result<serde_json::Value, CoreError> {
+        let conversation_id =
+            parse_hosted_conversation(conversation).ok_or(CoreError::InvalidConversation)?;
+        let receipt = self
+            .hosted_call(
+                "mark-read",
+                serde_json::json!({"conversation_id": conversation_id, "sequence": sequence}),
+            )
+            .await?;
+        self.receive_hosted_receipt(&receipt);
+        Ok(hosted_receipt_value(&receipt))
+    }
+
+    async fn hosted_open_dm(&self, handle: &str) -> Result<serde_json::Value, CoreError> {
+        let summary = self
+            .hosted_call("open-dm", serde_json::json!({"handle": handle}))
+            .await?;
+        if let Some(id) = summary
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+        {
+            self.inner
+                .hosted_conversations
+                .lock()
+                .expect("hosted conversations mutex poisoned")
+                .insert(id.to_owned(), summary.clone());
+        }
+        Ok(self.hosted_conversation_value(&summary))
+    }
+
+    async fn hosted_claim_handle(&self, handle: &str) -> Result<serde_json::Value, CoreError> {
+        let result = self
+            .hosted_call("claim-handle", serde_json::json!({"handle": handle}))
+            .await?;
+        if let Some(claimed) = result.get("handle").and_then(serde_json::Value::as_str)
+            && let Some(account) = self
+                .inner
+                .hosted_account
+                .lock()
+                .expect("hosted account mutex poisoned")
+                .as_mut()
+        {
+            account.handle = Some(claimed.to_owned());
+        }
+        self.publish_status_event();
+        Ok(result)
+    }
+
+    async fn hosted_create_channel(
+        &self,
+        workspace_id: &str,
+        name: &str,
+    ) -> Result<serde_json::Value, CoreError> {
+        let mut result = self
+            .hosted_call(
+                "create-channel",
+                serde_json::json!({"workspace_id": workspace_id, "name": name}),
+            )
+            .await?;
+        if let Some(id) = result
+            .get("conversation_id")
+            .and_then(serde_json::Value::as_str)
+            .map(hosted_conversation_id)
+        {
+            result["conversation"] = serde_json::Value::String(id);
+        }
+        Ok(result)
+    }
+}
+
+fn hosted_error(error: HostedError) -> CoreError {
+    match error {
+        HostedError::Server(error) => CoreError::Hosted(error),
+        HostedError::Disconnected
+        | HostedError::Timeout
+        | HostedError::Stopped
+        | HostedError::Protocol(_) => CoreError::HostedUnavailable,
+    }
+}
+
+/// Keep as many values as fit the IPC budget. With `keep_newest`, values
+/// are dropped from the front (oldest first); otherwise from the back.
+fn fit_ipc_budget(
+    values: Vec<serde_json::Value>,
+    keep_newest: bool,
+) -> (Vec<serde_json::Value>, bool) {
+    let mut kept = Vec::with_capacity(values.len());
+    let mut used: usize = 0;
+    let mut truncated = false;
+    let ordered: Box<dyn Iterator<Item = serde_json::Value>> = if keep_newest {
+        Box::new(values.into_iter().rev())
+    } else {
+        Box::new(values.into_iter())
+    };
+    for value in ordered {
+        let size = serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len() + 1);
+        if used.saturating_add(size) > HOSTED_IPC_BUDGET_BYTES {
+            truncated = true;
+            break;
+        }
+        used += size;
+        kept.push(value);
+    }
+    if keep_newest {
+        kept.reverse();
+    }
+    (kept, truncated)
+}
+
+fn member_display(member: &serde_json::Value) -> String {
+    member
+        .get("handle")
+        .and_then(serde_json::Value::as_str)
+        .map(|handle| format!("@{handle}"))
+        .or_else(|| {
+            member
+                .get("display_name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            member
+                .get("account_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default()
+}
+
+/// IPC shape of a receipt. It names sequences, not message ids, because the
+/// server tracks receipts per member and conversation.
+fn hosted_receipt_value(receipt: &serde_json::Value) -> serde_json::Value {
+    let conversation_id = receipt
+        .get("conversation_id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    serde_json::json!({
+        "conversation": hosted_conversation_id(conversation_id),
+        "transport": "hosted",
+        "account_id": receipt.get("account_id").cloned().unwrap_or(serde_json::Value::Null),
+        "delivered_sequence": receipt.get("delivered_sequence").cloned().unwrap_or(serde_json::Value::Null),
+        "read_sequence": receipt.get("read_sequence").cloned().unwrap_or(serde_json::Value::Null),
+    })
+}
+
 impl RequestHandler for DaemonCore {
     fn handle(
         &self,
@@ -3263,10 +4134,32 @@ fn decode_xonly(value: &str) -> Result<[u8; 32], CoreError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{DaemonCore, PanicLifecycle, PanicState};
+    use super::{DaemonCore, PanicLifecycle, PanicState, fit_ipc_budget};
     use crate::{DaemonConfig, EventHub, StorageProviderConfig};
     use std::{sync::Arc, time::Duration};
     use tempfile::tempdir;
+
+    #[test]
+    fn ipc_budget_keeps_the_newest_history_and_the_first_conversations() {
+        let big = serde_json::json!({"text": "x".repeat(20 * 1024)});
+        let values = vec![
+            serde_json::json!({"n": 1}),
+            big.clone(),
+            big.clone(),
+            big,
+            serde_json::json!({"n": 5}),
+        ];
+        let (newest, truncated) = fit_ipc_budget(values.clone(), true);
+        assert!(truncated);
+        assert_eq!(newest.len(), 3);
+        assert_eq!(newest[2], serde_json::json!({"n": 5}));
+        let (first, truncated) = fit_ipc_budget(values, false);
+        assert!(truncated);
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[0], serde_json::json!({"n": 1}));
+        let small = vec![serde_json::json!(1), serde_json::json!(2)];
+        assert_eq!(fit_ipc_budget(small.clone(), true), (small, false));
+    }
 
     #[tokio::test]
     async fn terminal_wait_does_not_complete_when_erasure_only_started() {

@@ -26,7 +26,11 @@ Leave a public geohash conversation.
 .TP
 .B send CONVERSATION TEXT
 Queue a public or private message. A room conversation is addressed as
-\fBroom:\fIRELAY_PUBKEY\fB:\fIGROUP\fR, as reported by \fBrooms\fR.
+\fBroom:\fIRELAY_PUBKEY\fB:\fIGROUP\fR, as reported by \fBrooms\fR; a hosted
+conversation as \fBhosted:\fICONVERSATION_ID\fR, as reported by
+\fBhosted-conversations\fR. A hosted send either returns the server's sequence,
+is refused, or reports the server unreachable after 25 seconds; it may then be
+repeated safely because the daemon reuses the same client identifier.
 .TP
 .B join-room RELAY GROUP [--invite CODE]
 Subscribe to a NIP-29 room on a configured room relay and send a join request.
@@ -45,6 +49,38 @@ relay-published metadata.
 Show the relay-published membership view, role labels, relay-admin state, and
 moderation provenance for a room. This view may be partial and does not grant
 client-side authorization; relay policy remains authoritative.
+.TP
+.B hosted-conversations [--json]
+List every channel and direct conversation of the hosted-server account
+(ADR 0007), each addressed as \fBhosted:\fICONVERSATION_ID\fR with its name,
+kind, workspace, last, delivered and read sequences, and members. Requires a
+\fBhosted\fR configuration; see \fBomachatd\fR(8).
+.TP
+.B hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT] [--json]
+Page backwards through a hosted conversation, at most 200 messages per page.
+Messages the daemon fetches for the first time are reported to the server as
+delivered.
+.TP
+.B hosted-mark-read CONVERSATION SEQUENCE
+Advance this account's read receipt; every member receives it.
+.TP
+.B hosted-open-dm HANDLE [--json]
+Open, or find, the direct conversation with another account by handle.
+.TP
+.B hosted-claim-handle HANDLE
+Claim a server-wide unique handle for the hosted account, once.
+.TP
+.B hosted-resolve-handle HANDLE [--json]
+Look up the account behind a handle.
+.TP
+.B hosted-create-workspace NAME
+Create a workspace; the caller becomes its owner.
+.TP
+.B hosted-create-channel WORKSPACE_ID NAME
+Create a channel in a workspace the caller owns; every member joins it.
+.TP
+.B hosted-add-member WORKSPACE_ID HANDLE
+Add an account to a workspace the caller owns and to all of its channels.
 .TP
 .B panic --confirm ERASE
 Cryptographically erase local state and stop the daemon.

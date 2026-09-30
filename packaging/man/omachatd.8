@@ -47,6 +47,18 @@ message events signed by the device Nostr identity. Room state is sealed per
 relay identity and its generation is anchored outside the state directory
 (--anchors, default <state>-anchors) so a state directory restored from backup
 is refused instead of silently rewound. Relay changes require a daemon restart.
+.SH HOSTED SERVER
+The optional hosted JSON object connects the daemon to an omachat-serverd
+instance (ADR 0007): hosted.url is the wss:// endpoint (numeric-loopback ws://
+for tests), hosted.pinned_server_public_key is the server's Ed25519 key in hex
+obtained out of band and verified on every connection before the device signs
+anything, hosted.display_name is sent only when this device first registers,
+and hosted.invite_code is required by invite-only servers. The device
+credential is the daemon's Ed25519 signing key; no new secret is stored.
+Conversations are addressed as hosted:CONVERSATION_ID. The transport
+reconnects with backoff from one to thirty seconds and status reports its
+state. The server's operator can read every message; this transport is not
+end-to-end encrypted. Changes require a daemon restart.
 .SH STORAGE
 Secret Service is preferred. --file-key selects a 0600 master key in the
 0700 state directory. A missing selected key is fatal; it is never silently

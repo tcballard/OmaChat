@@ -84,8 +84,12 @@ Ed25519 device key; the server signs the same challenge so clients can pin its
 identity independently of TLS. The listener is loopback-only behind a TLS
 reverse proxy. Handles, membership, sequences, timestamps and device public
 keys are stored in the clear. There is no account recovery, multi-device,
-message deletion or retention policy in the current slice. The full threat
-model is in `docs/hosted-server.md`.
+message deletion or retention policy in the current slice. The daemon's
+hosted transport verifies the pinned server key before signing anything and
+uses the device's existing Ed25519 signing key under a domain-separated
+transcript, so a hosted-server signature can never stand in for a local
+account binding or the reverse. The full threat model is in
+`docs/hosted-server.md`.
 
 ## Panic erase
 

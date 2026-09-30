@@ -27,8 +27,12 @@ server-ordered history, delivered and read receipts, and idempotent sends.
 **The operator of that server can read every message**; bodies are sealed at
 rest but this is not end-to-end encryption. The protocol, threat model,
 deployment profile and the exact list of verified claims are in
-[docs/hosted-server.md](docs/hosted-server.md). No server is deployed and the
-daemon does not yet speak to it; the desktop is unchanged.
+[docs/hosted-server.md](docs/hosted-server.md). `omachatd` connects to such a
+server when its `hosted` configuration is set, pins the server key, and exposes
+hosted conversations to every IPC client through `send` and the `hosted-*`
+commands. No server is deployed; the desktop does not yet use the hosted
+commands. The remaining work is listed in
+[docs/hosted-server-plan.md](docs/hosted-server-plan.md).
 
 ## Planning
 

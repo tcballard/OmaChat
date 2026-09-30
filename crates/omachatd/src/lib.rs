@@ -8,6 +8,7 @@ mod dm_delivery_service;
 mod dm_inbox_service;
 mod dm_relay_cache_store;
 mod geo_relay_service;
+mod hosted_service;
 mod ipc_server;
 mod nostr_service;
 mod principal_registry_evidence_service;
@@ -30,7 +31,7 @@ pub use agent_lifecycle_store::{
 };
 pub use config::RoomAnchorProviderConfig;
 pub use config::{
-    DaemonConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
+    DaemonConfig, HostedConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
     RelayListPublicationConfig, RelayListPublicationRelayConfig, RoomsConfig,
     StorageProviderConfig,
 };
@@ -47,6 +48,11 @@ pub use dm_relay_cache_store::{
     SealedDmRelayCacheState,
 };
 pub use geo_relay_service::{GeoRelayConfig, GeoRelayHandle, GeoRelayMode, GeoRelayService};
+pub use hosted_service::{
+    HOSTED_CONVERSATION_PREFIX, HostedAccount, HostedError, HostedEvent, HostedHandle,
+    HostedService, HostedServiceConfig, HostedServiceError, HostedState, HostedTimeouts,
+    hosted_conversation_id, parse_hosted_conversation,
+};
 pub use ipc_server::{EventHub, IpcServer, RequestHandler, ServerError};
 pub use nostr_service::{NostrHandle, NostrService};
 pub use principal_registry_evidence_service::PrincipalRegistryEvidenceService;

@@ -1573,6 +1573,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hex",
  "omachat-crypto",
+ "omachat-proto",
  "rusqlite",
  "rustix",
  "serde",
@@ -1628,6 +1629,7 @@ dependencies = [
  "omachat-registry",
  "omachat-registry-host",
  "omachat-registry-transport",
+ "omachat-server",
  "omachat-store",
  "serde",
  "serde_json",
@@ -1635,6 +1637,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "url",
+ "zeroize",
 ]
 
 [[package]]

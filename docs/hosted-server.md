@@ -130,6 +130,59 @@ closed. Nothing is silently dropped: the client reloads conversations and
 history, which are the source of truth. The service actor runs on its own
 operating-system thread; SQLite calls never block the async runtime.
 
+## Daemon transport
+
+`omachatd` speaks this protocol on behalf of every IPC v2 client when its
+`hosted` configuration is set (see `docs/installation.md`). The shared wire
+contract (transcripts, constants, error codes, validators) lives in
+`omachat_proto::hosted`; the daemon does not depend on the server crate, so
+the installed client set does not carry SQLite.
+
+- **Credential.** The daemon signs the authentication transcript with its
+  existing Ed25519 signing key, the same key that signs the local account
+  binding. The two transcripts are domain-separated (`omachat-server-auth-v1`
+  against the local binding domain), so neither signature can be replayed as
+  the other. The hosted account is therefore bound to the `device_id` the
+  daemon already reports, and no new secret is stored. Once the identity is
+  erased by `panic`, the signer refuses and the transport stops rather than
+  reconnecting as nobody.
+- **Pin first, sign second.** The daemon verifies the server's hello signature
+  against `pinned_server_public_key` and refuses to sign anything if the key
+  differs. A wrong pin is reported in `status.hosted.reason`.
+- **Reconnect.** Backoff starts at one second and doubles to thirty; a
+  session that lasted thirty seconds resets it. Every reconnect reloads the
+  conversation list from the server and announces each conversation again on
+  the `conversations` topic, because the server is the source of truth and a
+  `lagged` close means the client must resynchronise.
+- **Sends.** IPC `send` to `hosted:<conversation_id>` returns a definite
+  outcome: the server's `sequence` (`delivery: "stored"`), a server refusal
+  mapped to the IPC error code, or `unavailable` once the 25 s send deadline
+  passes. The daemon mints the `client_id`, retries the same identifier
+  across reconnects until the deadline, and remembers an unacknowledged
+  identifier for the same conversation and text for ten minutes, so a manual
+  repeat after a timeout cannot store the message twice. An acknowledged
+  send is forgotten immediately, so two deliberate identical messages are
+  two messages.
+- **Receipts.** The daemon marks a message delivered only after it has
+  actually received it (live event or history page), never on connect.
+  `hosted-mark-read` is the client's decision.
+- **Bounded lines.** An IPC line is at most 64 KiB, so the daemon lists at
+  most 32 members per conversation (with an exact `member_count`) and trims a
+  history page or conversation list to a 48 KiB budget, reporting
+  `truncated: true`. A trimmed history page keeps the newest messages and the
+  client pages again from the oldest sequence it received.
+- **IPC surface.** Commands `hosted-conversations`, `hosted-history`,
+  `hosted-mark-read`, `hosted-open-dm`, `hosted-claim-handle`,
+  `hosted-resolve-handle`, `hosted-create-workspace`,
+  `hosted-create-channel`, `hosted-add-member`; topics `messages` (own
+  messages `outgoing: true`, `delivery: "stored"`; others `received`),
+  `delivery` (a receipt: `account_id`, `delivered_sequence`,
+  `read_sequence`, keyed by conversation rather than message id),
+  `conversations` and `status`; a `hosted` block in `status` with `state`
+  (`disabled`, `starting`, `connecting`, `connected`, `disconnected`,
+  `stopped`), `url`, `server_public_key`, `account_id`, `handle`,
+  `display_name` and `reason`.
+
 ## Storage
 
 SQLite in WAL mode with `synchronous = FULL` and foreign keys on, in a
@@ -207,14 +260,23 @@ through `tokio-tungstenite`.
 | Non-loopback listen and inconsistent limits are refused at argument parsing | `process::tests::rejects_incomplete_or_unsafe_configurations` |
 | Graceful shutdown closes clients and reports counts | `shutdown_closes_clients_gracefully` |
 | Dependency policy: the SQLite tree adds only MIT, Apache-2.0 and one Zlib crate (`foldhash`, scoped by an exception in `deny.toml`); advisories clean with Rustls 0.23.45 | `cargo deny check` 0.20.2, local run on 2026-09-30 |
+| The daemon verifies the pin before signing: a correctly pinned daemon authenticates, a wrongly pinned one reports `disconnected` with the reason, sends nothing after hello, and the server counts exactly one authenticated session; an unconfigured daemon reports `disabled` | `crates/omachatd/tests/hosted_transport.rs::daemon_pins_the_server_key_and_refuses_an_impostor` |
+| Two daemons: handle claim and conflict, direct conversation announced to the other side by event, a send returns sequence 1, arrives live as `received` with the sender's handle, the recipient's automatic delivered receipt and explicit read receipt reach the sender as `delivery` events, history and the conversation list agree, an acknowledged send is not deduplicated, workspace and channel creation are owner-only, a new member is announced and receives channel messages, malformed and unknown hosted conversation ids map to `invalid-request` and `not-found` | `two_daemons_exchange_messages_receipts_history_and_channels` |
+| A send issued while the server is down completes with the right sequence once the server restarts on the same address; with the server down past the deadline the send fails as `unavailable` with a message saying it may be repeated safely, within the deadline; the repeat after restart stores the text once | `sends_wait_for_a_reconnect_and_give_up_honestly` |
+| Hosted configuration rejects non-`wss` URLs (except loopback `ws`), query strings, bad pins, padded display names, empty invite codes and unknown fields; a `hosted` change on SIGHUP requires a restart | `config::tests::hosted_config_requires_a_secure_url_and_a_valid_pin`, `apply_reload` |
+| Hosted conversation ids and server responses are validated before use | `hosted_service::tests::*` |
 | The real `omachat-serverd` and `omachat-server-cli` binaries perform the full flow: invite refusal, registration, handles, workspace, channel, member addition, live `message` and `receipt` events to a listening client, idempotent resend, history, wrong pin rejected, 0600 database files, refusal of a public bind and of a group-readable key | Manual run on 2026-09-30 in the development container, recorded in the PR description |
 
 ## Not verified
 
 - No deployment behind Caddy or any TLS endpoint has been exercised; the
   Caddyfile and unit are written from documentation, not from a running host.
-- No daemon adapter exists yet: the desktop cannot use this server until the
-  next slice adds a hosted transport to `omachatd` behind IPC v2.
+- The daemon transport has been exercised against an in-process server over
+  loopback `ws://`, not over TLS; the `wss://` path uses the same Rustls
+  stack as the registry client and the Nostr relays but has not been run
+  against a real certificate.
+- The desktop does not call the `hosted-*` commands yet; that is slice 3 in
+  `docs/hosted-server-plan.md`.
 - Load, soak and fuzz testing are absent; the limits above are asserted
   functionally, not under pressure.
 - No external security review has taken place. This document is the input to

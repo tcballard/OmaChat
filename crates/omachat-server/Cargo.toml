@@ -22,6 +22,7 @@ futures-util = "=0.3.34"
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 rustix = { version = "=1.1.4", features = ["fs"] }
 serde = { version = "=1.0.229", features = ["derive"] }

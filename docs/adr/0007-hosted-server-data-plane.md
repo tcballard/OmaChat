@@ -1,6 +1,6 @@
 # ADR 0007: Hosted server data plane alongside Nostr
 
-- Status: Proposed, implementation slice added
+- Status: Proposed; server and daemon transport slices implemented
 - Date: 2026-09-30
 - Depends on: ADR 0002 (account/control-plane separation)
 - Supersedes for the hosted product: the relay data plane described in
@@ -94,5 +94,9 @@ storage, service actor, host limits, `omachat-serverd` and the
 `omachat-server-cli` client, with unit and end-to-end tests over a real
 loopback listener. See `docs/hosted-server.md` for the wire protocol, threat
 model, deployment profile and the exact list of what has and has not been
-verified. No hosted server is deployed and no client transport for the daemon
-exists yet.
+verified. `omachatd` carries the hosted transport behind IPC v2 (`hosted`
+configuration, `send` to `hosted:` conversations, the `hosted-*` commands and
+the `hosted` status block), proved against an in-process server in
+`crates/omachatd/tests/hosted_transport.rs`. No hosted server is deployed and
+the desktop does not use the hosted commands yet; see
+`docs/hosted-server-plan.md`.
