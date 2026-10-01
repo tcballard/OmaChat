@@ -1,5 +1,13 @@
 use omachat_proto::ipc::Command;
-use omachat_tui::{Conversation, DeliveryState, Message, UiModel, parse_input};
+use omachat_tui::{Conversation, DeliveryState, InputMode, Message, UiModel, parse_input};
+use ratatui::{
+    Terminal,
+    backend::TestBackend,
+    buffer::Buffer,
+    layout::{Position, Rect},
+    style::Color,
+    widgets::Widget,
+};
 
 fn model() -> UiModel {
     UiModel {
@@ -9,12 +17,14 @@ fn model() -> UiModel {
             unread: 2,
             messages: vec![
                 Message {
+                    id: String::new(),
                     sender: "alice".into(),
                     text: "hello".into(),
                     outgoing: false,
                     delivery: None,
                 },
                 Message {
+                    id: String::new(),
                     sender: "me".into(),
                     text: "queued".into(),
                     outgoing: true,
@@ -28,16 +38,116 @@ fn model() -> UiModel {
     }
 }
 
+fn draw(width: u16, height: u16) -> Buffer {
+    let mut buffer = Buffer::empty(Rect::new(0, 0, width, height));
+    model().render(buffer.area, &mut buffer);
+    buffer
+}
+
+fn rows(buffer: &Buffer) -> Vec<String> {
+    (buffer.area.top()..buffer.area.bottom())
+        .map(|y| {
+            (buffer.area.left()..buffer.area.right())
+                .filter_map(|x| buffer.cell(Position::new(x, y)))
+                .map(|cell| cell.symbol().to_owned())
+                .collect()
+        })
+        .collect()
+}
+
+/// The sixteen ANSI colours are the whole permitted palette: no truecolor and
+/// no extended-palette index may reach the terminal.
+fn is_ansi16(color: Color) -> bool {
+    !matches!(color, Color::Rgb(..)) && !matches!(color, Color::Indexed(index) if index > 15)
+}
+
 #[test]
 fn eighty_by_twenty_four_and_narrow_layouts_are_bounded_ansi16() {
     for (width, height) in [(80, 24), (24, 10)] {
-        let rendered = model().render(width, height);
-        assert_eq!(rendered.lines().count(), usize::from(height));
-        assert!(!rendered.contains("38;2"));
-        assert!(!rendered.contains("48;2"));
-        assert!(rendered.contains("#gcpvj"));
-        assert!(rendered.contains('○'));
+        let buffer = draw(width, height);
+        let rendered = rows(&buffer);
+        assert_eq!(rendered.len(), usize::from(height));
+        assert!(
+            rendered
+                .iter()
+                .all(|row| row.chars().count() == usize::from(width))
+        );
+        for y in buffer.area.top()..buffer.area.bottom() {
+            for x in buffer.area.left()..buffer.area.right() {
+                let cell = buffer.cell(Position::new(x, y)).expect("cell inside area");
+                assert!(
+                    is_ansi16(cell.fg) && is_ansi16(cell.bg),
+                    "cell ({x},{y}) leaves the ANSI-16 palette: fg={:?} bg={:?}",
+                    cell.fg,
+                    cell.bg
+                );
+            }
+        }
+        assert!(rendered.iter().any(|row| row.contains("#gcpvj")));
+        assert!(rendered.iter().any(|row| row.contains('○')));
     }
+}
+
+#[test]
+fn wide_layout_shows_the_sidebar_and_narrow_layout_drops_it() {
+    let wide = rows(&draw(80, 24));
+    assert!(wide.iter().any(|row| row.contains('│')));
+    assert!(wide.iter().any(|row| row.contains("> #gcpvj (2)")));
+    assert!(wide.iter().any(|row| row.contains("Conversations")));
+
+    let narrow = rows(&draw(24, 10));
+    assert!(narrow.iter().all(|row| !row.contains('│')));
+    assert!(narrow.iter().all(|row| !row.contains("Conversations")));
+}
+
+#[test]
+fn status_bar_reports_mode_and_prompt_holds_input() {
+    let mut model = model();
+    model.input_mode = InputMode::Scroll;
+    model.input = "typing".into();
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
+    (&model).render(buffer.area, &mut buffer);
+    let rendered = rows(&buffer);
+    assert!(
+        rendered
+            .iter()
+            .any(|row| row.contains("connected | Scroll"))
+    );
+    assert!(
+        rendered
+            .last()
+            .is_some_and(|row| row.starts_with("> typing"))
+    );
+}
+
+/// Cooked-mode input echoes at the caret, so the caret has to sit on the prompt
+/// row after the composed text or typing lands in the status bar.
+#[test]
+fn prompt_cursor_tracks_composed_input_on_the_last_row() {
+    let mut model = model();
+    let area = Rect::new(0, 0, 80, 24);
+    assert_eq!(model.prompt_cursor(area), Position::new(2, 23));
+
+    model.input = "/rooms".into();
+    assert_eq!(model.prompt_cursor(area), Position::new(8, 23));
+
+    model.input = "x".repeat(200);
+    assert_eq!(model.prompt_cursor(area), Position::new(79, 23));
+
+    let narrow = Rect::new(0, 0, 24, 10);
+    model.input = "hi".into();
+    assert_eq!(model.prompt_cursor(narrow), Position::new(4, 9));
+}
+
+#[test]
+fn terminal_draw_renders_the_model_through_a_backend() {
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test backend terminal");
+    terminal
+        .draw(|frame| frame.render_widget(&model(), frame.area()))
+        .expect("draw succeeds");
+    let rendered = rows(terminal.backend().buffer());
+    assert_eq!(rendered.len(), 24);
+    assert!(rendered.iter().any(|row| row.contains("#gcpvj")));
 }
 
 #[test]
@@ -52,4 +162,60 @@ fn messaging_commands_map_to_daemon_requests() {
             if conversation == "gcpvj" && text == "hello"
     ));
     assert!(parse_input("hello", None).is_err());
+}
+
+#[test]
+fn live_messages_delivery_deletion_and_reattach_are_consistent() {
+    use omachat_proto::ipc::{Event, Topic, VERSION};
+    use serde_json::json;
+    let mut model = UiModel {
+        input: "unfinished draft".into(),
+        ..UiModel::default()
+    };
+    model.apply_snapshot(&json!({"status": {"joined_geohashes": ["gcpvj"]}, "messages": []}));
+    let mut event = Event {
+        version: VERSION,
+        sequence: 1,
+        topic: Topic::Messages,
+        payload: json!({"id": "1", "conversation": "dm:alice", "sender": "alice", "text": "hi\u{1b}[2J", "delivery": "received"}),
+    };
+    model.apply_event(&event);
+    model.apply_event(&event);
+    assert_eq!(model.conversations[1].messages.len(), 1);
+    assert_eq!(model.conversations[1].unread, 1);
+    assert!(!model.conversations[1].messages[0].text.contains('\u{1b}'));
+    model.select_next(false);
+    assert_eq!(model.conversations[1].unread, 0);
+    event.payload = json!({"id": "2", "conversation": "dm:alice", "sender": "you", "text": "reply", "delivery": "queued"});
+    model.apply_event(&event);
+    event.topic = Topic::Delivery;
+    event.payload = json!({"id": "2", "delivery": "stored"});
+    model.apply_event(&event);
+    assert_eq!(
+        model.conversations[1].messages[1].delivery,
+        Some(DeliveryState::Stored)
+    );
+    event.topic = Topic::Messages;
+    event.payload = json!({"id": "1", "deleted": true});
+    model.apply_event(&event);
+    assert_eq!(model.conversations[1].messages.len(), 1);
+    model.apply_snapshot(&json!({"messages": [{"id": "2", "conversation": "dm:alice", "text": "reply", "delivery": "stored"}]}));
+    assert_eq!(model.input, "unfinished draft");
+    assert_eq!(
+        model.conversations[0].messages[0].delivery,
+        Some(DeliveryState::Stored)
+    );
+}
+
+#[test]
+fn scrolling_reveals_older_messages_and_conversation_selection_clears_unread() {
+    use serde_json::json;
+    let mut model = UiModel::default();
+    model.apply_snapshot(&json!({"messages": (0..30).map(|i| json!({"id": i.to_string(), "conversation": "#gcpvj", "sender": "peer", "text": format!("message {i}")})).collect::<Vec<_>>()}));
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
+    model.render(buffer.area, &mut buffer);
+    assert!(rows(&buffer).iter().any(|r| r.contains("message 29")));
+    model.scroll(true, 20);
+    model.render(buffer.area, &mut buffer);
+    assert!(rows(&buffer).iter().any(|r| r.contains("message 0")));
 }

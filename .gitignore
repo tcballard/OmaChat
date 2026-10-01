@@ -1,3 +1,8 @@
 /target/
 /conformance/probes/arti/target/
 __pycache__/
+
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/Cargo.lock

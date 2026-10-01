@@ -4,7 +4,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 
-pub const VERSION: u16 = 1;
+/// Version 2 changed `Panic` and `ClaimRegistryHandle` incompatibly: their
+/// `confirmation` field is now a daemon-minted single-use token obtained
+/// through `RequestPanicConfirmation` / `RequestRegistryClaimConfirmation`,
+/// not an in-band constant. A version-1 client's destructive flow no longer
+/// works, so negotiation must reject it rather than fail at use time.
+pub const VERSION: u16 = 2;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_CORRELATION_ID_BYTES: usize = 128;
 
@@ -34,6 +39,15 @@ pub enum Command {
         conversation: String,
         text: String,
     },
+    ListDrafts,
+    GetDraft {
+        conversation: String,
+    },
+    SaveDraft {
+        conversation: String,
+        text: String,
+        expected_revision: u64,
+    },
     DiscoverDmRelays {
         public_key: String,
     },
@@ -60,6 +74,15 @@ pub enum Command {
     ClaimRegistryHandle {
         handle: String,
         confirmation: String,
+    },
+    /// Mint a single-use, TTL-bounded confirmation token for `Panic`. The
+    /// token itself travels out of band via a 0600 file in the daemon state
+    /// directory; the response carries only the file path and expiry.
+    RequestPanicConfirmation,
+    /// Mint a single-use, TTL-bounded confirmation token for
+    /// `ClaimRegistryHandle` on exactly this handle.
+    RequestRegistryClaimConfirmation {
+        handle: String,
     },
     Who {
         geohash: String,
@@ -159,6 +182,20 @@ enum StrictRequestWire {
         id: String,
         params: SendParams,
     },
+    ListDrafts {
+        version: u16,
+        id: String,
+    },
+    GetDraft {
+        version: u16,
+        id: String,
+        params: DraftParams,
+    },
+    SaveDraft {
+        version: u16,
+        id: String,
+        params: SaveDraftParams,
+    },
     DiscoverDmRelays {
         version: u16,
         id: String,
@@ -206,6 +243,15 @@ enum StrictRequestWire {
         version: u16,
         id: String,
         params: RegistryClaimParams,
+    },
+    RequestPanicConfirmation {
+        version: u16,
+        id: String,
+    },
+    RequestRegistryClaimConfirmation {
+        version: u16,
+        id: String,
+        params: HandleParams,
     },
     Who {
         version: u16,
@@ -266,6 +312,20 @@ struct GeohashParams {
 struct SendParams {
     conversation: String,
     text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DraftParams {
+    conversation: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SaveDraftParams {
+    conversation: String,
+    text: String,
+    expected_revision: u64,
 }
 
 #[derive(Deserialize)]
@@ -351,6 +411,30 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: SendParams { conversation, text },
             } => (version, id, Command::Send { conversation, text }),
+            StrictRequestWire::ListDrafts { version, id } => (version, id, Command::ListDrafts),
+            StrictRequestWire::GetDraft {
+                version,
+                id,
+                params: DraftParams { conversation },
+            } => (version, id, Command::GetDraft { conversation }),
+            StrictRequestWire::SaveDraft {
+                version,
+                id,
+                params:
+                    SaveDraftParams {
+                        conversation,
+                        text,
+                        expected_revision,
+                    },
+            } => (
+                version,
+                id,
+                Command::SaveDraft {
+                    conversation,
+                    text,
+                    expected_revision,
+                },
+            ),
             StrictRequestWire::DiscoverDmRelays {
                 version,
                 id,
@@ -407,6 +491,18 @@ impl From<StrictRequestWire> for Request {
                     handle,
                     confirmation,
                 },
+            ),
+            StrictRequestWire::RequestPanicConfirmation { version, id } => {
+                (version, id, Command::RequestPanicConfirmation)
+            }
+            StrictRequestWire::RequestRegistryClaimConfirmation {
+                version,
+                id,
+                params: HandleParams { handle },
+            } => (
+                version,
+                id,
+                Command::RequestRegistryClaimConfirmation { handle },
             ),
             StrictRequestWire::Who {
                 version,

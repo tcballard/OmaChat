@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+desktop_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -z "${OMACHAT_SOCKET:-}" ]; then
+    echo 'OmaChat: XDG_RUNTIME_DIR is unset; set OMACHAT_SOCKET to your daemon socket.' >&2
+    exit 1
+fi
+if ! command -v quickshell >/dev/null 2>&1; then
+    echo 'OmaChat Desktop requires the Quickshell runtime.' >&2
+    exit 1
+fi
+export QS_APP_ID=dev.omachat.Desktop
+exec quickshell -p "$desktop_dir/shell.qml"

@@ -51,6 +51,8 @@ pub enum CoreError {
     InvalidHandle,
     InvalidPublicKey,
     InvalidMessage,
+    InvalidDraft,
+    DraftCapacity,
     NotJoined,
     Nostr,
     Encoding,
@@ -58,6 +60,7 @@ pub enum CoreError {
     Random,
     Subscription,
     ConfirmationRequired,
+    ConfirmationExpired,
     PanicErase,
     Panicked,
     RestartRequired,
@@ -74,8 +77,11 @@ impl CoreError {
             | Self::InvalidGeohash
             | Self::InvalidHandle
             | Self::InvalidPublicKey
+            | Self::InvalidDraft
             | Self::InvalidMessage => ErrorCode::InvalidRequest,
-            Self::ConfirmationRequired
+            Self::DraftCapacity
+            | Self::ConfirmationRequired
+            | Self::ConfirmationExpired
             | Self::RegistryClaimConfirmationRequired
             | Self::RegistryHandleConflict
             | Self::RegistryBindingChanged => ErrorCode::Conflict,
@@ -210,9 +216,9 @@ impl fmt::Display for CoreError {
             }
             Self::RegistryClaimPreflightUnusable => formatter
                 .write_str("registry preflight did not return usable current account state"),
-            Self::RegistryClaimConfirmationRequired => {
-                formatter.write_str("registry handle claim requires exact handle confirmation")
-            }
+            Self::RegistryClaimConfirmationRequired => formatter.write_str(
+                "registry handle claim requires a fresh confirmation token; request one with request-registry-claim-confirmation",
+            ),
             Self::RegistryHandleConflict => formatter
                 .write_str("requested handle conflicts with local or authoritative account state"),
             Self::RegistryBindingChanged => {
@@ -229,6 +235,8 @@ impl fmt::Display for CoreError {
             Self::InvalidGeohash => formatter.write_str("geohash is invalid"),
             Self::InvalidHandle => formatter.write_str("global handle is invalid"),
             Self::InvalidPublicKey => formatter.write_str("Nostr public key is invalid"),
+            Self::InvalidDraft => formatter.write_str("invalid draft conversation or text"),
+            Self::DraftCapacity => formatter.write_str("sealed draft storage limit reached"),
             Self::InvalidMessage => formatter.write_str("message is empty or too large"),
             Self::NotJoined => formatter.write_str("geohash is not joined"),
             Self::Nostr => formatter.write_str("Nostr event creation failed"),
@@ -236,9 +244,12 @@ impl fmt::Display for CoreError {
             Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
             Self::Random => formatter.write_str("secure random generation failed"),
             Self::Subscription => formatter.write_str("Nostr subscription refresh failed"),
-            Self::ConfirmationRequired => {
-                formatter.write_str("panic erase requires exact confirmation ERASE")
-            }
+            Self::ConfirmationRequired => formatter.write_str(
+                "panic erase requires a fresh confirmation token; request one with request-panic-confirmation",
+            ),
+            Self::ConfirmationExpired => formatter.write_str(
+                "confirmation token expired or was consumed; request a new one",
+            ),
             Self::PanicErase => {
                 formatter.write_str("panic erase cannot run in this runtime context")
             }

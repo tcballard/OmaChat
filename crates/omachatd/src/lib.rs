@@ -1,12 +1,15 @@
 //! Headless daemon IPC service primitives.
 
 mod agent_lifecycle_store;
+mod chat_history;
 mod config;
+mod confirmation;
 mod core;
 mod core_error;
 mod dm_delivery_service;
 mod dm_inbox_service;
 mod dm_relay_cache_store;
+mod drafts;
 mod geo_relay_service;
 mod ipc_server;
 mod nostr_service;
@@ -33,6 +36,10 @@ pub use config::{
     DaemonConfig, ProfilePublicationConfig, RegistryClientConfig, RegistryProtocol,
     RelayListPublicationConfig, RelayListPublicationRelayConfig, RoomsConfig,
     StorageProviderConfig,
+};
+pub use confirmation::{
+    CONFIRMATION_TTL_SECONDS, ConfirmationAction, ConfirmationError, DestructiveConfirmations,
+    IssuedConfirmation,
 };
 pub use core::{
     DaemonCore, PanicState, RegistryClaimEvidence, RegistryClaimResult, RegistryClaimStatus,
