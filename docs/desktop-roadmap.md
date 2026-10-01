@@ -1,3 +1,5 @@
+> Historical document. Nostr and its compatibility/relay workflows are retired by [ADR 0008](adr/0008-hosted-only.md). See [the hosted plan](hosted-server-plan.md) for current work.
+
 # Make OmaChat useful enough to choose daily
 
 29 September 2026. Product direction for the next development milestones.

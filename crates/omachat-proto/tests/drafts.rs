@@ -28,7 +28,7 @@ fn draft_commands_round_trip_and_refuse_unknown_fields() {
         r##"{"conversation":"#gcpvj","text":"draft","expected_revision":0,"force":true}"##,
     ] {
         let request =
-            format!(r##"{{"version":2,"id":"draft","method":"save-draft","params":{params}}}"##);
+            format!(r##"{{"version":3,"id":"draft","method":"save-draft","params":{params}}}"##);
         assert!(serde_json::from_str::<Request>(&request).is_err());
     }
 }

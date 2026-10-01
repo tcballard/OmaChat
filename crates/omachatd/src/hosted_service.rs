@@ -185,12 +185,23 @@ struct HostedRequest {
 
 #[derive(Clone)]
 pub struct HostedHandle {
+    stop: watch::Sender<bool>,
     requests: mpsc::Sender<HostedRequest>,
     state: watch::Receiver<HostedState>,
     timeouts: HostedTimeouts,
 }
 
 impl HostedHandle {
+    pub async fn quiesce(&self) {
+        let _ = self.stop.send(true);
+        let mut state = self.state.clone();
+        while !matches!(*state.borrow(), HostedState::Stopped) {
+            if state.changed().await.is_err() {
+                break;
+            }
+        }
+    }
+
     #[must_use]
     pub fn state(&self) -> HostedState {
         self.state.borrow().clone()
@@ -279,6 +290,7 @@ impl HostedService {
         ));
         Ok(Self {
             handle: HostedHandle {
+                stop: stop_sender.clone(),
                 requests: request_sender,
                 state: state_receiver,
                 timeouts,

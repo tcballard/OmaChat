@@ -1,3 +1,5 @@
+> Historical document. Nostr and its compatibility/relay workflows are retired by [ADR 0008](adr/0008-hosted-only.md). See [the hosted plan](hosted-server-plan.md) for current work.
+
 # Contact-link slice — 29 September 2026
 
 Stacked on #231 at `7f831b812c2d110826ae490e9ecfc3ed260d1c2b`.

@@ -1,6 +1,6 @@
 //! Single-use, TTL-bounded confirmation tokens for destructive commands.
 //!
-//! A destructive command (`panic`, `claim-registry-handle`) is a two-phase
+//! A destructive command (`panic`) is a two-phase
 //! exchange: the client first requests a confirmation, the daemon mints a
 //! random token and places it in a 0600 file inside the 0700
 //! `<state_dir>/confirmations/` directory, and the client must echo that
@@ -27,7 +27,6 @@ pub const CONFIRMATION_TTL_SECONDS: u64 = 120;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfirmationAction {
     PanicErase,
-    RegistryClaim { handle: String },
 }
 
 impl ConfirmationAction {
@@ -36,7 +35,6 @@ impl ConfirmationAction {
     fn file_name(&self) -> &'static str {
         match self {
             Self::PanicErase => "panic.token",
-            Self::RegistryClaim { .. } => "registry-claim.token",
         }
     }
 }
@@ -216,32 +214,6 @@ mod tests {
                 issued.expires_at + 1
             ),
             Err(ConfirmationError::Expired)
-        );
-    }
-
-    #[test]
-    fn claim_tokens_are_bound_to_their_handle() {
-        let state = tempdir().expect("state directory");
-        let confirmations = DestructiveConfirmations::new(state.path());
-        let issued = confirmations
-            .issue(
-                ConfirmationAction::RegistryClaim {
-                    handle: "tom".into(),
-                },
-                0,
-            )
-            .expect("issue token");
-        let token = std::fs::read_to_string(&issued.token_path).expect("token file");
-        assert_eq!(
-            confirmations.redeem(
-                &ConfirmationAction::RegistryClaim {
-                    handle: "alice".into()
-                },
-                &token,
-                1,
-            ),
-            Err(ConfirmationError::Mismatch),
-            "a token minted for one handle must not confirm another"
         );
     }
 }

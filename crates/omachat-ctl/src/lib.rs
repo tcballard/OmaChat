@@ -161,7 +161,7 @@ impl Drop for Client {
 
 /// Restated at every panic invocation: erasure is local-only.
 pub const PANIC_ERASE_WARNING: &str = "panic erase destroys the local master key and sealed \
-state; it cannot retract messages, keys, or metadata already replicated to relays, peers, or \
+state; it cannot retract messages, keys, or metadata already replicated to servers, peers, or \
 backups";
 
 /// Two-phase orchestration for destructive commands. The typed intent
@@ -187,31 +187,6 @@ pub async fn request_with_confirmation(
             let token = read_confirmation_token(result)?;
             client
                 .request(Command::Panic {
-                    confirmation: token,
-                })
-                .await
-        }
-        Command::ClaimRegistryHandle {
-            handle,
-            confirmation,
-        } => {
-            if confirmation != handle {
-                return Err(ClientError::ConfirmationRefused(
-                    "claim-handle requires --confirm HANDLE to echo the handle exactly".into(),
-                ));
-            }
-            let issued = client
-                .request(Command::RequestRegistryClaimConfirmation {
-                    handle: handle.clone(),
-                })
-                .await?;
-            let ResponseOutcome::Ok { ref result } = issued.outcome else {
-                return Ok(issued);
-            };
-            let token = read_confirmation_token(result)?;
-            client
-                .request(Command::ClaimRegistryHandle {
-                    handle,
                     confirmation: token,
                 })
                 .await

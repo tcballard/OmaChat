@@ -8,8 +8,7 @@ Item {
     property string error: ""
     property string path: ""
     property string configRevision: ""
-    property var dmRelays: []
-    property var roomRelays: []
+    property var hosted: ({})
     property string backup: ""
     property bool restartRequired: false
     property var response: null
@@ -27,9 +26,9 @@ Item {
         deadline.restart()
     }
     function read(selectedPath) { run({ method: "read" }, selectedPath) }
-    function save(dm, rooms) {
+    function save(hosted) {
         if (!configRevision) { error = "Load the configuration before saving."; return }
-        run({ method: "apply", revision: configRevision, dm_relays: dm, room_relays: rooms }, path)
+        run({ method: "apply", revision: configRevision, hosted: hosted }, path)
     }
     Process {
         id: worker
@@ -46,8 +45,7 @@ Item {
                 if (!result || !result.ok) { setup.error = result ? result.error : "Setup stopped without confirmation. Reload to check the file."; return }
                 setup.path = result.data.path
                 setup.configRevision = result.data.revision
-                setup.dmRelays = result.data.dm_relays
-                setup.roomRelays = result.data.room_relays
+                setup.hosted = result.data.hosted
                 setup.backup = result.data.backup || ""
                 if (result.data.restart_required) setup.restartRequired = true
                 setup.loaded()

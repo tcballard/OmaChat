@@ -27,20 +27,7 @@ struct Drafts {
 }
 
 fn valid_conversation(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 256
-        && !value.chars().any(char::is_control)
-        && value.trim() == value
-        && (value.starts_with("dm:")
-            || value.starts_with("room:")
-            || value.starts_with('#')
-            || value.strip_prefix("hosted:").is_some_and(|id| {
-                !id.is_empty()
-                    && id.len() <= 128
-                    && id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-            }))
+    crate::parse_hosted_conversation(value).is_some()
 }
 
 impl Drafts {
@@ -59,7 +46,8 @@ impl Drafts {
         if bytes.len() > MAX_BYTES {
             return Err(CoreError::Encoding);
         }
-        let value: Self = serde_json::from_slice(&bytes).map_err(|_| CoreError::Encoding)?;
+        let mut value: Self = serde_json::from_slice(&bytes).map_err(|_| CoreError::Encoding)?;
+        value.entries.retain(|id, _| valid_conversation(id));
         if value.version != 1
             || value.generation > MAX_REVISION
             || value.entries.len() > MAX_DRAFTS
@@ -188,20 +176,31 @@ mod tests {
     #[tokio::test]
     async fn reopen_conflict_and_delete_do_not_lose_text() {
         let (dir, store) = fixture().await;
-        let first = save(&store, "#gcpvj", "private draft sentinel", 0);
+        let first = save(&store, "hosted:general", "private draft sentinel", 0);
         assert_eq!(first["saved"], true);
-        assert_eq!(save(&store, "#gcpvj", "stale client", 0)["saved"], false);
+        assert_eq!(
+            save(&store, "hosted:general", "stale client", 0)["saved"],
+            false
+        );
         let sealed = std::fs::read(dir.path().join("records").join(RECORD)).unwrap();
         assert!(!sealed.windows(22).any(|w| w == b"private draft sentinel"));
         drop(store);
         let store = SealedStore::open(dir.path(), RequestedProvider::File)
             .await
             .unwrap();
-        let restored = Drafts::load(&store).unwrap().get("#gcpvj");
+        let restored = Drafts::load(&store).unwrap().get("hosted:general");
         assert_eq!(restored["text"], "private draft sentinel");
-        let deleted = save(&store, "#gcpvj", "", restored["revision"].as_u64().unwrap());
+        let deleted = save(
+            &store,
+            "hosted:general",
+            "",
+            restored["revision"].as_u64().unwrap(),
+        );
         assert_eq!(deleted["saved"], true);
-        assert_eq!(save(&store, "#gcpvj", "stale recreate", 0)["saved"], false);
+        assert_eq!(
+            save(&store, "hosted:general", "stale recreate", 0)["saved"],
+            false
+        );
         assert!(Drafts::load(&store).unwrap().entries.is_empty());
     }
 
@@ -219,7 +218,7 @@ mod tests {
                 dispatch(
                     &store,
                     Command::SaveDraft {
-                        conversation: "#gcpvj".into(),
+                        conversation: "hosted:general".into(),
                         text: "replacement".into(),
                         expected_revision: 0,
                     },
@@ -235,28 +234,35 @@ mod tests {
         let (_dir, store) = fixture().await;
         for n in 0..MAX_DRAFTS {
             assert_eq!(
-                save(&store, &format!("dm:{n}"), "hello", n as u64)["saved"],
+                save(&store, &format!("hosted:{n}"), "hello", n as u64)["saved"],
                 true
             );
         }
         let before = store.read(RECORD).unwrap();
-        for (text, id) in [("more".into(), "dm:extra"), ("🙂".repeat(1025), "dm:0")] {
+        for (text, id) in [
+            ("more".into(), "hosted:extra"),
+            ("🙂".repeat(1025), "hosted:0"),
+        ] {
             assert!(
                 dispatch(
                     &store,
                     Command::SaveDraft {
                         conversation: id.into(),
                         text,
-                        expected_revision: if id == "dm:0" { 1 } else { MAX_DRAFTS as u64 },
+                        expected_revision: if id == "hosted:0" {
+                            1
+                        } else {
+                            MAX_DRAFTS as u64
+                        },
                     },
                 )
                 .is_err()
             );
             assert_eq!(store.read(RECORD).unwrap(), before);
         }
-        save(&store, "dm:0", "", 1);
+        save(&store, "hosted:0", "", 1);
         assert_eq!(
-            save(&store, "dm:extra", "🙂".repeat(1024).as_str(), 65)["saved"],
+            save(&store, "hosted:extra", "🙂".repeat(1024).as_str(), 65)["saved"],
             true
         );
         let listing = dispatch(&store, Command::ListDrafts).unwrap();

@@ -1,3 +1,5 @@
+> Historical document. Nostr and its compatibility/relay workflows are retired by [ADR 0008](adr/0008-hosted-only.md). See [the hosted plan](hosted-server-plan.md) for current work.
+
 # Guided relay configuration development evidence
 
 The desktop now reads and edits only DM and room relay lists, preserving other

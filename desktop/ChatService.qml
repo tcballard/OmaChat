@@ -2,7 +2,6 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "ChatState.js" as State
-import "Contact.js" as Contact
 import "Drafts.js" as Drafts
 
 Item {
@@ -13,13 +12,12 @@ Item {
     readonly property string notice: { revision; return state.notice }
     readonly property var chats: { revision; return state.chats.slice() }
     readonly property var activeChat: { revision; return State.current(state) }
-    readonly property string publicKey: { revision; return state.status.nostr_public_key || "" }
+    readonly property string publicKey: { revision; return state.status.device_public_key || "" }
     readonly property var hosted: { revision; return state.status.hosted || {} }
     readonly property bool hostedConnected: ready && hosted.state === "connected"
     readonly property var workspaces: { revision; return state.workspaces || [] }
     property var hostedPending: ({})
     property bool focused: true
-    property var rooms: []
     property var theme: ({})
     property string actionError: ""
     property bool actionBusy: false
@@ -27,10 +25,10 @@ Item {
     property int retryDelay: 1000
     property string socketPath: Quickshell.env("OMACHAT_SOCKET") || ((Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omachat/omachat.sock")
     signal actionFinished(string method)
-    property alias setup: relaySetup
+    property alias setup: serverSetup
     function settingsEdited(dirty) { state.settingsDirty = dirty; revision++ }
     SetupService {
-        id: relaySetup
+        id: serverSetup
         onBusyChanged: { service.state.configBusy = busy; service.revision++ }
     }
 
@@ -90,14 +88,11 @@ Item {
         if (request) helper.write(JSON.stringify(request) + "\n")
         revision++
     }
-    function newDm(key) {
-        if (key.trim().charAt(0) === "@" && hostedConnected) {
-            request("hosted-open-dm", {handle:key.trim().slice(1)}); return false
-        }
-        var contact = Contact.preview(key)
-        if (!contact.key) { actionError = contact.error || "Paste a contact link or public key."; return false }
-        if (!State.select(state, "dm:" + contact.key)) { actionError = state.notice; revision++; return false }
-        actionError = ""; revision++; return true
+    function newDm(handle) {
+        var value = handle.trim().replace(/^@/, "")
+        if (!/^[a-z][a-z0-9_]{2,31}$/.test(value)) { actionError = "Enter a server handle, such as @alice."; return false }
+        if (!hostedConnected) { actionError = "Connect to your server first."; return false }
+        request("hosted-open-dm", {handle:value}); return false
     }
     function request(method, params) {
         if (!ready || actionBusy) return
@@ -106,19 +101,6 @@ Item {
         var value = { id: id, method: method }
         if (params !== undefined) value.params = params
         helper.write(JSON.stringify(value) + "\n")
-    }
-    function joinRoom(relay, group, code) {
-        if (!relay || !group.trim()) { actionError = "Choose a configured relay and enter the room ID."; return }
-        var params = { relay: relay, group_id: group.trim() }
-        if (code.trim()) params.invite_code = code.trim()
-        request("join-room", params)
-    }
-    function updateRooms(value) {
-        rooms = value.relays || []
-        rooms.forEach(function(relay) { (relay.rooms || []).forEach(function(room) {
-            var c = State.ensure(state, room.conversation)
-            if (c && room.name) c.title = room.name
-        }) })
     }
     function receive(value) {
         if (value.kind === "theme") theme = value.data
@@ -141,7 +123,6 @@ Item {
             }
             else if (job.method === "hosted-mark-read") State.hostedReceipt(state, value.data)
         }
-        else if (value.kind === "rooms") updateRooms(value.data)
         else if (value.kind === "disconnected") State.disconnected(state, value.error)
         else if (value.kind === "response" && Drafts.response(state, value, State.ensure)) {}
         else if (value.kind === "response" && state.pending[value.id]) {
@@ -157,16 +138,6 @@ Item {
                 if (method && method.indexOf("hosted-") === 0) {
                     if (value.data && value.data.conversation) { State.hostedConversation(state, value.data); select(value.data.conversation) }
                     refreshHosted()
-                }
-                if (method === "list-rooms") updateRooms(value.data)
-                if (method === "join-room") {
-                    if (value.data && value.data.conversation) {
-                        State.select(state, value.data.conversation)
-                        var c = State.current(state)
-                        if (c && value.data.name) c.title = value.data.name
-                    }
-                    state.notice = "Join requested; room admission is controlled by the relay."
-                    request("list-rooms")
                 }
                 actionFinished(method)
             }

@@ -139,6 +139,7 @@ impl UiModel {
         if let Some(status) = snapshot.get("status") {
             self.apply_status(status);
         }
+        self.apply_hosted_result(snapshot);
         if let Some(messages) = snapshot["messages"].as_array() {
             for message in messages {
                 self.apply_message(message);
@@ -179,10 +180,24 @@ impl UiModel {
         }
     }
 
-    fn apply_status(&mut self, status: &Value) {
-        if let Some(joined) = status["joined_geohashes"].as_array() {
-            for geohash in joined.iter().filter_map(Value::as_str) {
-                self.ensure_conversation(&format!("#{geohash}"));
+    fn apply_status(&mut self, _status: &Value) {}
+
+    pub fn apply_hosted_result(&mut self, result: &Value) {
+        if let Some(conversations) = result["conversations"].as_array() {
+            for conversation in conversations {
+                self.apply_hosted_result(conversation);
+            }
+        }
+        if let Some(id) = result["conversation"].as_str() {
+            let index = self.ensure_conversation(id);
+            if let Some(name) = result["name"].as_str() {
+                self.conversations[index].title = clean(name);
+            }
+            self.selected = index;
+        }
+        if let Some(messages) = result["messages"].as_array() {
+            for message in messages {
+                self.apply_message(message);
             }
         }
     }
@@ -500,18 +515,15 @@ pub fn parse_input(
     if let Some(arguments) = input.strip_prefix('/') {
         let mut parts = arguments.splitn(3, ' ');
         return match (parts.next(), parts.next(), parts.next()) {
-            (Some("join"), Some(geohash), None) => Ok(Some(Command::Join {
-                geohash: geohash.into(),
+            (Some("dm"), Some(handle), None) => Ok(Some(Command::HostedOpenDm {
+                handle: handle.trim_start_matches('@').into(),
             })),
-            (Some("leave"), Some(geohash), None) => Ok(Some(Command::Leave {
-                geohash: geohash.into(),
+            (Some("history"), None, None) => Ok(Some(Command::HostedHistory {
+                conversation: current_conversation.ok_or("select a conversation")?.into(),
+                before_sequence: None,
+                limit: Some(50),
             })),
-            (Some("who"), Some(geohash), None) => Ok(Some(Command::Who {
-                geohash: geohash.into(),
-            })),
-            (Some("block"), Some(public_key), None) => Ok(Some(Command::Block {
-                public_key: public_key.into(),
-            })),
+            (Some("conversations"), None, None) => Ok(Some(Command::HostedConversations)),
             (Some("panic"), Some(confirmation), None) => Ok(Some(Command::Panic {
                 confirmation: confirmation.into(),
             })),
@@ -519,32 +531,6 @@ pub fn parse_input(
                 conversation: conversation.into(),
                 text: text.into(),
             })),
-            (Some("join-room"), Some(relay), Some(rest)) => {
-                let mut parts = rest.split_whitespace();
-                let group_id = parts.next().ok_or("join-room needs RELAY GROUP [CODE]")?;
-                let invite_code = parts.next().map(str::to_owned);
-                if parts.next().is_some() {
-                    return Err("join-room needs RELAY GROUP [CODE]".into());
-                }
-                Ok(Some(Command::JoinRoom {
-                    relay: relay.into(),
-                    group_id: group_id.into(),
-                    invite_code,
-                }))
-            }
-            (Some("leave-room"), Some(relay), Some(group_id)) if !group_id.contains(' ') => {
-                Ok(Some(Command::LeaveRoom {
-                    relay: relay.into(),
-                    group_id: group_id.into(),
-                }))
-            }
-            (Some("rooms"), None, None) => Ok(Some(Command::ListRooms)),
-            (Some("room-members"), Some(relay), Some(group_id)) if !group_id.contains(' ') => {
-                Ok(Some(Command::RoomMembers {
-                    relay: relay.into(),
-                    group_id: group_id.into(),
-                }))
-            }
             (Some("quit" | "detach"), None, None) => Ok(None),
             _ => Err("unknown or incomplete command".into()),
         };
@@ -570,53 +556,5 @@ fn delivery(payload: &Value) -> Option<DeliveryState> {
         "stored" => Some(DeliveryState::Stored),
         "failed" => Some(DeliveryState::Failed),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod room_command_tests {
-    use super::*;
-
-    #[test]
-    fn room_slash_commands_parse() {
-        assert_eq!(
-            parse_input("/join-room wss://r.example omarchy", None),
-            Ok(Some(Command::JoinRoom {
-                relay: "wss://r.example".into(),
-                group_id: "omarchy".into(),
-                invite_code: None,
-            }))
-        );
-        assert_eq!(
-            parse_input("/join-room wss://r.example omarchy welcome", None),
-            Ok(Some(Command::JoinRoom {
-                relay: "wss://r.example".into(),
-                group_id: "omarchy".into(),
-                invite_code: Some("welcome".into()),
-            }))
-        );
-        assert!(parse_input("/join-room wss://r.example omarchy a b", None).is_err());
-        assert_eq!(
-            parse_input("/leave-room wss://r.example omarchy", None),
-            Ok(Some(Command::LeaveRoom {
-                relay: "wss://r.example".into(),
-                group_id: "omarchy".into(),
-            }))
-        );
-        assert_eq!(parse_input("/rooms", None), Ok(Some(Command::ListRooms)));
-        assert_eq!(
-            parse_input("/room-members wss://r.example omarchy", None),
-            Ok(Some(Command::RoomMembers {
-                relay: "wss://r.example".into(),
-                group_id: "omarchy".into(),
-            }))
-        );
-        assert_eq!(
-            parse_input("hello", Some("room:aa:omarchy")),
-            Ok(Some(Command::Send {
-                conversation: "room:aa:omarchy".into(),
-                text: "hello".into(),
-            }))
-        );
     }
 }

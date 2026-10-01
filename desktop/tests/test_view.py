@@ -72,7 +72,7 @@ class ViewTests(unittest.TestCase):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)
         peer = self.window.findChild(QObject, "peerKey")
-        peer.setProperty("text", "nostr:npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6")
+        peer.setProperty("text", "@bob")
         peer.forceActiveFocus()
         QTest.keyClick(self.window, Qt.Key_Return)
         QTest.qWait(20)
@@ -139,21 +139,11 @@ class ViewTests(unittest.TestCase):
         QTest.qWait(150)
         self.assertFalse(self.window.isVisible())
 
-    def test_relay_setup_collects_urls_and_protects_unapplied_edits(self):
-        self.window.findChild(QObject, "openRelaySetup").click()
-        QTest.qWait(30)
-        self.assertTrue(self.window.findChild(QObject, "relaySetupDialog").property("opened"))
-        dm = self.window.findChild(QObject, "dmRelayUrls")
-        dm.setProperty("text", "wss://relay.test\nwss://second.test")
-        self.window.close()
+    def test_server_setup_collects_settings(self):
+        self.window.findChild(QObject, "openServerSetup").click()
         QTest.qWait(20)
-        self.assertTrue(self.window.isVisible())
-        self.window.findChild(QObject, "keepEditing").click()
-        self.window.findChild(QObject, "saveRelaySettings").click()
-        QTest.qWait(20)
-        self.assertEqual(dm.property("text"), "wss://relay.test\nwss://second.test")
-        backend = self.window.property("backend")
-        self.assertFalse(backend.property("state").toVariant().get("settingsDirty"))
+        self.assertTrue(self.window.findChild(QObject, "serverSetupDialog").property("opened"))
+        self.assertIsNotNone(self.window.findChild(QObject, "saveServerSettings"))
 
     def test_close_save_timeout_keeps_text_and_window(self):
         backend = self.window.property("backend")
@@ -189,16 +179,15 @@ class ViewTests(unittest.TestCase):
         self.assertFalse(self.window.findChild(QObject, "allowResend").property("visible"))
         self.assertTrue(button.property("enabled"))
 
-    def test_secret_key_is_rejected_in_contact_dialog(self):
+    def test_invalid_handle_is_rejected(self):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)
         peer = self.window.findChild(QObject, "peerKey")
-        peer.setProperty("text", "nostr:nsec1secret")
+        peer.setProperty("text", "invalid handle")
         peer.forceActiveFocus()
         QTest.keyClick(self.window, Qt.Key_Return)
         QTest.qWait(20)
-        preview = self.window.findChild(QObject, "contactPreview")
-        self.assertIn("private key", preview.property("text"))
+        self.assertIn("Invalid handle", self.window.property("backend").property("actionError"))
         self.assertTrue(peer.property("visible"))
 
 

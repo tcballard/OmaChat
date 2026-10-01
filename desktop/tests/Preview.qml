@@ -3,7 +3,6 @@ import QtQuick
 import QtQuick.Controls
 import ".." as Desktop
 import "../ChatState.js" as State
-import "../Contact.js" as Contact
 import "../Drafts.js" as Drafts
 
 ApplicationWindow {
@@ -17,13 +16,12 @@ ApplicationWindow {
         property string error: ""
         property string path: "/tmp/omachat-test-config.json"
         property string configRevision: "test"
-        property var dmRelays: []
-        property var roomRelays: []
+        property var hosted: ({})
         property string backup: ""
         property bool restartRequired: false
         signal loaded()
         function read(path) { loaded() }
-        function save(dm, rooms) { dmRelays = dm; roomRelays = rooms; restartRequired = true; loaded() }
+        function save(value) { hosted = value; restartRequired = true; loaded() }
     }
     QtObject {
         id: mock
@@ -32,8 +30,8 @@ ApplicationWindow {
         property var state: State.create()
         property int revision: 0
         property var theme: ({})
-        property var hosted: ({state:"unconfigured"})
-        property bool hostedConnected: false
+        property var hosted: ({state:"connected",handle:"alice"})
+        property bool hostedConnected: true
         property var workspaces: []
         function refreshHosted() {}
         function loadHistory(older) {}
@@ -73,7 +71,6 @@ ApplicationWindow {
         function pendingFixture() { State.current(state).busy = true; revision++ }
         function uncertainFixture() { var c = State.current(state); c.uncertain = true; c.error = "Delivery is unknown. Check the conversation before sending again."; revision++ }
         function clearFixture() { state.settingsDirty = false; state.configBusy = false; state.chats.forEach(function(c) { c.draft = ""; c.busy = false; c.uncertain = false; c.savedDraft = undefined }); revision++ }
-        property var rooms: []
         property bool actionBusy: false
         property string actionError: ""
         signal actionFinished(string method)
@@ -81,8 +78,7 @@ ApplicationWindow {
         function draft(text) { var c = State.current(state); if (c && c.draft !== text) { Drafts.edit(c, text); revision++ } }
         function reviewedUnknown() { var c = State.current(state); c.uncertain = false; c.error = ""; revision++ }
         function request(method) {}
-        function joinRoom(relay, group, code) {}
-        function newDm(key) { var contact = Contact.preview(key); if (!contact.key) { actionError = contact.error; return false }; var opened = State.select(state, "dm:" + contact.key); revision++; return opened }
+        function newDm(key) { if (!/^@?[a-z][a-z0-9_]{2,31}$/.test(key)) { actionError = "Invalid handle"; return false }; var opened = State.select(state, "hosted:" + key.replace(/^@/, "")); revision++; return opened }
         function send() {
             var req = State.beginSend(state)
             if (req) State.response(state, { id: req.id, ok: true, data: { id: "sent-" + state.serial, delivery: "stored" } })
@@ -90,13 +86,13 @@ ApplicationWindow {
         }
         function offline() { State.disconnected(state, "Daemon disconnected; reconnecting…"); revision++ }
         Component.onCompleted: {
-            State.snapshot(state, { status: {dm_relay_count:1}, messages: [
-                { id: "1", conversation: "dm:" + "b".repeat(64), sender: "Sam", text: "The desktop preview is ready. Can you try sending a message?", delivery: "received" },
-                { id: "2", conversation: "dm:" + "b".repeat(64), sender: "You", text: "Yes. I want the essentials to feel effortless: open a chat, write, send, and know what happened.", outgoing: true, delivery: "stored" },
-                { id: "3", conversation: "dm:" + "b".repeat(64), sender: "Sam", text: "Agreed. Let’s start there.", delivery: "received" }
+            State.snapshot(state, { status: {hosted:{state:"connected"}}, messages: [
+                { id: "1", conversation: "hosted:" + "b".repeat(64), sender: "Sam", text: "The desktop preview is ready. Can you try sending a message?", delivery: "received" },
+                { id: "2", conversation: "hosted:" + "b".repeat(64), sender: "You", text: "Yes. I want the essentials to feel effortless: open a chat, write, send, and know what happened.", outgoing: true, delivery: "stored" },
+                { id: "3", conversation: "hosted:" + "b".repeat(64), sender: "Sam", text: "Agreed. Let’s start there.", delivery: "received" }
             ] })
             State.current(state).title = "Sam"
-            var room = State.ensure(state, "room:" + "c".repeat(64) + ":omachat"); room.title = "OmaChat development"
+            var room = State.ensure(state, "hosted:channel"); room.title = "OmaChat development"
             revision++
         }
     }

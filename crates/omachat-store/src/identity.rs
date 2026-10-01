@@ -4,7 +4,7 @@ use std::{error::Error, fmt};
 
 const IDENTITY_RECORD: &str = "identity-v1";
 
-/// Persistence boundary for the three long-term identity roots.
+/// Persistence boundary for the device signing credential.
 pub struct IdentityVault;
 
 impl IdentityVault {
