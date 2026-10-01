@@ -66,39 +66,6 @@ async fn panic_confirmation_request_mints_a_private_token_file() {
 }
 
 #[tokio::test]
-async fn claim_confirmation_request_validates_the_handle() {
-    let temporary = tempdir().expect("temporary directory");
-    let core = open_core(temporary.path()).await;
-    let outcome = core
-        .handle(Request {
-            version: VERSION,
-            id: "bad".into(),
-            command: Command::RequestRegistryClaimConfirmation {
-                handle: "NOT A HANDLE".into(),
-            },
-        })
-        .await;
-    assert!(
-        matches!(outcome, ResponseOutcome::Error { .. }),
-        "invalid handles must not mint tokens"
-    );
-    let result = ok_result(
-        &core,
-        "good",
-        Command::RequestRegistryClaimConfirmation {
-            handle: "tom".into(),
-        },
-    )
-    .await;
-    assert!(
-        result
-            .get("token_path")
-            .and_then(serde_json::Value::as_str)
-            .is_some()
-    );
-}
-
-#[tokio::test]
 async fn the_legacy_erase_constant_no_longer_authorizes_panic() {
     let temporary = tempdir().expect("temporary directory");
     let core = open_core(temporary.path()).await;

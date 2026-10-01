@@ -1,27 +1,10 @@
-.TH OMACHAT 1 "2026-08-31" "OmaChat 0.0.1"
+.TH OMACHAT 1 "2026-10-01" "OmaChat"
 .SH NAME
-omachat \- OmaChat terminal client
+omachat \- terminal hosted messaging client
 .SH SYNOPSIS
 .B omachat
-[\fB--socket\fR \fIPATH\fR]
+[--socket PATH]
 .SH DESCRIPTION
-Opens the bounded ANSI terminal interface and connects to the per-user daemon.
-Commands include /join, /leave, /who, /block, /send,
-/join-room RELAY GROUP [CODE], /leave-room RELAY GROUP, /rooms,
-/room-members RELAY GROUP,
-/panic ERASE, and /detach.
-Panic erasure is destructive and cannot remove copies already held by relays,
-peers, backups, or filesystem snapshots.
-.SH CONTROLS
-Tab and Shift-Tab switch conversations. Escape toggles scroll/compose mode;
-i returns to compose. Page Up/Down scroll messages. /help shows controls.
-On disconnect, drafts are preserved and connection retries back off to 30 seconds.
-Failed sends are never automatically resubmitted by the client.
-Recent messages are loaded from a bounded sealed daemon cache on reattach.
-Ctrl-C, Ctrl-D, /detach, SIGINT and SIGTERM detach without stopping the daemon.
-.SH FILES
-.I $XDG_RUNTIME_DIR/omachat/omachat.sock
-.SH SEE ALSO
-.BR omachat-ctl (1),
-.BR omachatd (8),
-.BR omachat-protocol (7)
+Connects to the local daemon. Tab selects conversations. Enter sends and /help lists controls.
+Use /dm HANDLE, /conversations, /history, /send CONVERSATION TEXT and /detach.
+The server operator can read messages. /panic ERASE requires repeated confirmation and erases local state only.

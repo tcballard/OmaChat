@@ -173,18 +173,6 @@ async fn core_commands_negotiate_then_preserve_arguments_and_correlation() {
     for (args, expected) in [
         (vec!["fingerprint"], Command::Fingerprint),
         (
-            vec!["join", "gcpvj"],
-            Command::Join {
-                geohash: "gcpvj".into(),
-            },
-        ),
-        (
-            vec!["leave", "gcpvj"],
-            Command::Leave {
-                geohash: "gcpvj".into(),
-            },
-        ),
-        (
             vec!["send", "gcpvj", "hello\nworld 🦀"],
             Command::Send {
                 conversation: "gcpvj".into(),

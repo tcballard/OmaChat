@@ -22,9 +22,7 @@ Item {
             onStreamFinished: {
                 try {
                     const state = JSON.parse(this.text)
-                    const joined = Number(state.joined_geohashes?.length || 0)
-                    const pending = Number(state.outbox_pending || 0)
-                    root.statusText = "OC " + joined + (pending > 0 ? " ·" + pending : "")
+                    root.statusText = state.hosted?.state === "connected" ? "OC online" : "OC offline"
                 } catch (_) {
                     root.statusText = "OC —"
                 }

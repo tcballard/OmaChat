@@ -1,19 +1,10 @@
-.TH OMACHAT-PROTOCOL 7 "2026-08-31" "OmaChat 0.0.1"
+.TH OMACHAT-PROTOCOL 7 "2026-10-01" "OmaChat"
 .SH NAME
-omachat-protocol \- OmaChat compatibility and IPC contract
+omachat-protocol \- local IPC and hosted server protocol
 .SH DESCRIPTION
-IPC v2 is newline-delimited JSON over a 0600 Unix socket. Clients must begin
-with hello and a supported version range. Lines are limited to 65536 bytes;
-unknown fields and unsupported versions are rejected.
-Responses retain request IDs.
-.PP
-Wire behavior targets the immutable upstream pins documented in
-docs/compatibility-profile.md. A codec passing hermetic tests is not a live
-interoperability claim. Courier v1 and v2, Android limitations, bridge health,
-and uncompleted hardware/live gates are documented there and in SECURITY.md.
-
-.SH SUBSCRIPTIONS
-Subscribe returns a bounded recent-message snapshot and current status.
-Streamed events are filtered by the requested topics and interleaved with
-correlated responses. Clients must deduplicate snapshot/live overlap by message ID.
-Destructive commands require a daemon-issued, single-use token, valid for 120 seconds.
+Local IPC uses bounded JSON lines over a private same-user Unix socket.
+Clients negotiate the version with hello before issuing requests.
+The hosted server protocol uses WebSocket, pinned server authentication,
+device-key challenges, ordered conversation sequences and idempotent sends.
+TLS is required except for numeric-loopback development connections.
+The server operator can read message bodies. Local and server storage are sealed at rest.

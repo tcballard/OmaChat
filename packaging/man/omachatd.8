@@ -1,74 +1,20 @@
-.TH OMACHATD 8 "2026-08-31" "OmaChat 0.0.1"
+.TH OMACHATD 8 "2026-10-01" "OmaChat"
 .SH NAME
-omachatd \- per-user OmaChat daemon
+omachatd \- hosted messaging and local IPC daemon
 .SH SYNOPSIS
 .B omachatd
-[\fB--config\fR \fIPATH\fR] [\fB--state\fR \fIPATH\fR]
-[\fB--socket\fR \fIPATH\fR] [\fB--anchors\fR \fIPATH\fR] [\fB--file-key\fR]
+[--config PATH] [--state PATH] [--socket PATH] [--file-key]
 .SH DESCRIPTION
-Owns identities, sealed state, the Nostr transport, and the versioned IPC
-socket.
-Only the Nostr transport is currently wired into the daemon; the mesh transport
-is not yet integrated.
-SIGHUP validates a replacement configuration before applying it.
-SIGINT and SIGTERM stop cleanly: stop accepting IPC, drain active requests
-within a bounded deadline, remove the socket, and shut down owned services.
-Neither signal erases identity or the sealed outbox.
-Signal handlers are installed before the IPC socket becomes available.
-With --config, malformed or invalid SIGHUP replacements and relay-policy
-changes requiring restart leave the prior active configuration in effect.
-.SH ACCOUNT
-The JSON configuration may set account_handle and account_display_name. These
-values are sealed into a root-signed local account binding and survive restart.
-A configured handle is reported as local-only until a signed central-registry
-receipt proves global uniqueness. The separate nickname setting remains the
-public geohash-chat nickname and is never populated from the account handle.
-.SH PRIVATE RELAYS
-The optional dm_relays JSON array enables the standard NIP-17 private inbox.
-The optional geo_relays object enables separate pinned per-geohash pools.
-Its mode is supplement (default) or replace, and overrides is an array of
-at most ten WSS URLs (numeric-loopback WS is allowed for tests).
-Replace requires a nonempty override list. At most eight cells and ten relays
-per cell are supported. Failed candidates are re-evaluated every 30 seconds
-and become eligible again after five minutes. Status includes profile and
-snapshot hashes plus selected/skipped endpoints. Policy changes require restart.
-Each ws or wss relay must authenticate the persisted device Nostr principal
-with NIP-42 before receiving its recipient-only kind-1059 subscription. An
-empty array disables this inbox. Relay changes require a daemon restart. A
-configured relay provides reachability and is not treated as protocol authority.
-.SH ROOMS
-The optional rooms JSON object enables standard NIP-29 rooms: rooms.relays lists
-room relays and rooms.anchor_directory optionally places the room-state
-generation anchors. Each relay is bound to the signing identity its NIP-11
-document declares, and rooms are addressed as room:RELAY_PUBKEY:GROUP so the
-same group ID under another relay key is a different room. Membership is the
-relay's policy decision; the daemon only subscribes and sends join, leave, and
-message events signed by the device Nostr identity. Room state is sealed per
-relay identity and its generation is anchored outside the state directory
-(--anchors, default <state>-anchors) so a state directory restored from backup
-is refused instead of silently rewound. Relay changes require a daemon restart.
-.SH HOSTED SERVER
-The optional hosted JSON object connects the daemon to an omachat-serverd
-instance (ADR 0007): hosted.url is the wss:// endpoint (numeric-loopback ws://
-for tests), hosted.pinned_server_public_key is the server's Ed25519 key in hex
-obtained out of band and verified on every connection before the device signs
-anything, hosted.display_name is sent only when this device first registers,
-and hosted.invite_code is required by invite-only servers. The device
-credential is the daemon's Ed25519 signing key; no new secret is stored.
-Conversations are addressed as hosted:CONVERSATION_ID. The transport
-reconnects with backoff from one to thirty seconds and status reports its
-state. The server's operator can read every message; this transport is not
-end-to-end encrypted. Changes require a daemon restart.
-.SH STORAGE
-Secret Service is preferred. --file-key selects a 0600 master key in the
-0700 state directory. A missing selected key is fatal; it is never silently
-regenerated.
-.SH SYSTEMD
-Start with "systemctl --user enable --now omachatd.service". To keep a powered,
-awake machine serving after logout, the owner may explicitly run
-"loginctl enable-linger $USER"; reverse with "loginctl disable-linger $USER".
-Suspend, power loss, radio loss, and network loss interrupt service.
-.SH SEE ALSO
-.BR omachat (1),
-.BR omachat-ctl (1),
-.BR omachat-protocol (7)
+Connects to one hosted server using a pinned Ed25519 server key and a sealed device credential.
+The server operator can read messages. This is not end-to-end encryption.
+SIGINT and SIGTERM drain requests and shut down without erasing credentials.
+SIGHUP validates configuration; changing server or storage settings requires restart.
+.SH CONFIGURATION
+JSON fields: storage_provider (auto, secret-service, file) and hosted.
+The hosted object requires url and pinned_server_public_key; display_name and invite_code are optional.
+Use wss:// except numeric-loopback ws:// for tests. Obtain the server key from its operator.
+Retired transport settings are rejected. Desktop setup saves a private backup before replacing them.
+.SH FILES
+Default configuration: $XDG_CONFIG_HOME/omachat/config.json.
+Default state: $XDG_STATE_HOME/omachat.
+Default socket: $XDG_RUNTIME_DIR/omachat/omachat.sock.

@@ -132,7 +132,7 @@ operating-system thread; SQLite calls never block the async runtime.
 
 ## Daemon transport
 
-`omachatd` speaks this protocol on behalf of every IPC v2 client when its
+`omachatd` speaks this protocol on behalf of every IPC v3 client when its
 `hosted` configuration is set (see `docs/installation.md`). The shared wire
 contract (transcripts, constants, error codes, validators) lives in
 `omachat_proto::hosted`; the daemon does not depend on the server crate, so
@@ -273,7 +273,7 @@ through `tokio-tungstenite`.
   Caddyfile and unit are written from documentation, not from a running host.
 - The daemon transport has been exercised against an in-process server over
   loopback `ws://`, not over TLS; the `wss://` path uses the same Rustls
-  stack as the registry client and the Nostr relays but has not been run
+  stack as the other hosted clients but has not been run
   against a real certificate.
 - The desktop does not call the `hosted-*` commands yet; that is slice 3 in
   `docs/hosted-server-plan.md`.

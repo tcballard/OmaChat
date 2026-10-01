@@ -1,3 +1,5 @@
+> Historical document. Nostr and its compatibility/relay workflows are retired by [ADR 0008](adr/0008-hosted-only.md). See [the hosted plan](hosted-server-plan.md) for current work.
+
 # XPS live testing plan for the desktop stack
 
 Target: Tom's Dell XPS running Omarchy, branch `feat/desktop-live-hardening`

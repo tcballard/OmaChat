@@ -190,7 +190,7 @@ async fn connect(
     omachat_ctl::ClientError,
 > {
     let mut client = Client::connect(socket, DEFAULT_TIMEOUT).await?;
-    let (snapshot, events) = client
+    let (mut snapshot, events) = client
         .subscribe(vec![
             Topic::Status,
             Topic::Conversations,
@@ -199,6 +199,12 @@ async fn connect(
             Topic::Delivery,
         ])
         .await?;
+    if snapshot["status"]["hosted"]["state"] == "connected"
+        && let Ok(response) = client.request(Command::HostedConversations).await
+        && let ResponseOutcome::Ok { result } = response.outcome
+    {
+        snapshot["conversations"] = result["conversations"].clone();
+    }
     Ok((client, snapshot, events))
 }
 
@@ -207,7 +213,7 @@ async fn handle_line(client: &mut Option<Client>, model: &mut UiModel, line: &st
         return false;
     }
     if line.trim() == "/help" {
-        model.status = "Tab/Shift-Tab: chat | Esc/i: scroll/compose | PgUp/PgDn | /join HASH | /send dm:KEY TEXT | /detach".into();
+        model.status = "Tab/Shift-Tab: chat | Esc/i: scroll/compose | PgUp/PgDn | /dm HANDLE | /conversations | /history | /detach".into();
         model.input.clear();
         return true;
     }
@@ -303,6 +309,7 @@ async fn submit(client: &mut Client, model: &mut UiModel, line: &str) -> bool {
                     }
                     model.panic_confirmation_pending = false;
                     model.input.clear();
+                    model.apply_hosted_result(&result);
                     model.status = result.to_string();
                     model.security_notice_pending = false;
                 }

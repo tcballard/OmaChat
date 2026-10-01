@@ -1,94 +1,16 @@
-.TH OMACHAT-CTL 1 "2026-08-31" "OmaChat 0.0.1"
+.TH OMACHAT-CTL 1 "2026-10-01" "OmaChat"
 .SH NAME
-omachat-ctl \- control an OmaChat daemon
+omachat-ctl \- control the local hosted messaging daemon
 .SH SYNOPSIS
 .B omachat-ctl
-[\fB--socket\fR \fIPATH\fR] \fICOMMAND\fR
+[--socket PATH] COMMAND
 .SH COMMANDS
-.TP
-.B status [--json]
-Show daemon, relay, storage, join, outbox, and local account state, including
-account and device IDs, configured handle and display name, binding revision,
-and registry state. A configured handle is reported as local-only; it is not a
-claim that a live global registry has accepted the handle.
-.TP
-.B fingerprint
-Print the stable Noise fingerprint.
-.TP
-.B fingerprint --qr
-Render the same fingerprint as an ANSI QR code using qrencode.
-.TP
-.B join GEOHASH
-Join a public geohash conversation.
-.TP
-.B leave GEOHASH
-Leave a public geohash conversation.
-.TP
-.B send CONVERSATION TEXT
-Queue a public or private message. A room conversation is addressed as
-\fBroom:\fIRELAY_PUBKEY\fB:\fIGROUP\fR, as reported by \fBrooms\fR; a hosted
-conversation as \fBhosted:\fICONVERSATION_ID\fR, as reported by
-\fBhosted-conversations\fR. A hosted send either returns the server's sequence,
-is refused, or reports the server unreachable after 25 seconds; it may then be
-repeated safely because the daemon reuses the same client identifier.
-.TP
-.B join-room RELAY GROUP [--invite CODE]
-Subscribe to a NIP-29 room on a configured room relay and send a join request.
-The relay's policy, not the daemon, decides membership; the response reports
-whether the relay accepted the request.
-.TP
-.B leave-room RELAY GROUP
-Send a leave request and unsubscribe from the room.
-.TP
-.B rooms [--json]
-Describe every configured room relay: its verified signing identity, how that
-identity was obtained, connection state, and the joined rooms with their
-relay-published metadata.
-.TP
-.B room-members RELAY GROUP [--json]
-Show the relay-published membership view, role labels, relay-admin state, and
-moderation provenance for a room. This view may be partial and does not grant
-client-side authorization; relay policy remains authoritative.
-.TP
-.B hosted-conversations [--json]
-List every channel and direct conversation of the hosted-server account
-(ADR 0007), each addressed as \fBhosted:\fICONVERSATION_ID\fR with its name,
-kind, workspace, last, delivered and read sequences, and members. Requires a
-\fBhosted\fR configuration; see \fBomachatd\fR(8).
-.TP
-.B hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT] [--json]
-Page backwards through a hosted conversation, at most 200 messages per page.
-Messages the daemon fetches for the first time are reported to the server as
-delivered.
-.TP
-.B hosted-mark-read CONVERSATION SEQUENCE
-Advance this account's read receipt; every member receives it.
-.TP
-.B hosted-open-dm HANDLE [--json]
-Open, or find, the direct conversation with another account by handle.
-.TP
-.B hosted-claim-handle HANDLE
-Claim a server-wide unique handle for the hosted account, once.
-.TP
-.B hosted-resolve-handle HANDLE [--json]
-Look up the account behind a handle.
-.TP
-.B hosted-create-workspace NAME
-Create a workspace; the caller becomes its owner.
-.TP
-.B hosted-create-channel WORKSPACE_ID NAME
-Create a channel in a workspace the caller owns; every member joins it.
-.TP
-.B hosted-add-member WORKSPACE_ID HANDLE
-Add an account to a workspace the caller owns and to all of its channels.
-.TP
-.B panic --confirm ERASE
-Cryptographically erase local state and stop the daemon.
-.SH EXIT STATUS
-0 success; 2 usage; 3 connection, malformed/oversized response, or response-ID
-mismatch; 4 incompatible protocol version or daemon-reported error; 5 timeout.
-Failures write diagnostics to stderr and do not emit successful JSON on stdout.
-The client negotiates the IPC version automatically before sending its command.
-.SH SEE ALSO
-.BR omachat (1),
-.BR omachatd (8)
+status [--json], fingerprint [--qr], send CONVERSATION TEXT,
+hosted-conversations, hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT],
+hosted-mark-read CONVERSATION SEQUENCE, hosted-open-dm HANDLE, hosted-claim-handle HANDLE,
+hosted-resolve-handle HANDLE, hosted-create-workspace NAME,
+hosted-create-channel WORKSPACE_ID NAME, hosted-add-member WORKSPACE_ID HANDLE.
+Hosted commands accept --json. Conversations have the hosted: prefix.
+.SH PANIC
+panic --confirm ERASE requests and redeems a private single-use confirmation token.
+It erases local credentials and history, not server messages or backups.

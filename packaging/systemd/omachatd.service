@@ -1,5 +1,5 @@
 [Unit]
-Description=OmaChat Nostr and IPC daemon
+Description=OmaChat hosted messaging and IPC daemon
 Documentation=man:omachatd(8)
 After=network-online.target
 Wants=network-online.target

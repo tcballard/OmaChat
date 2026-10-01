@@ -25,7 +25,6 @@ jobs:
       - name: Presentation state regressions
         run: |
           node desktop/tests/test_state.js
-          node desktop/tests/test_contact.js
           node desktop/tests/test_drafts.js
           node desktop/tests/test_hosted.js
       - name: Launcher syntax

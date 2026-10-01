@@ -13,10 +13,7 @@ getrandom = "=0.4.3"
 hex = "=0.4.3"
 libc = "=0.2.189"
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
-omachat-nostr = { path = "../omachat-nostr", version = "=0.0.1" }
 omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
-omachat-registry = { path = "../omachat-registry", version = "=0.0.1" }
-omachat-registry-transport = { path = "../omachat-registry-transport", version = "=0.0.1" }
 omachat-store = { path = "../omachat-store", version = "=0.0.1" }
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -26,8 +23,6 @@ tokio-tungstenite = { version = "=0.30.0", default-features = false, features = 
 url = "=2.5.8"
 
 [dev-dependencies]
-k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
-omachat-registry-host = { path = "../omachat-registry-host", version = "=0.0.1" }
 omachat-server = { path = "../omachat-server", version = "=0.0.1" }
 tempfile = "=3.27.0"
 zeroize = "=1.9.0"

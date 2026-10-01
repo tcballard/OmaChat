@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "ChatState.js" as State
-import "Contact.js" as Contact
 
 Item {
     id: view
@@ -42,7 +41,7 @@ Item {
         var query = filter.text.toLowerCase()
         var rows = service.chats.filter(function(c) { return (c.title + " " + c.id).toLowerCase().indexOf(query) !== -1 })
         rows.sort(function(a,b) { return (a.workspaceId || "").localeCompare(b.workspaceId || "") || a.title.localeCompare(b.title) })
-        reconcile(conversations, rows.map(function(c) { var ws = (service.workspaces || []).find(function(w) { return w.workspace_id === c.workspaceId }); return { section: ws ? ws.name : c.id.indexOf("hosted:") === 0 ? "Hosted direct messages" : "Nostr", cid: c.id, title: c.title, unread: c.unread, preview: c.draft ? "Draft · " + c.draft : (c.messages.length ? c.messages[c.messages.length - 1].text : "No messages yet") } }))
+        reconcile(conversations, rows.map(function(c) { var ws = (service.workspaces || []).find(function(w) { return w.workspace_id === c.workspaceId }); return { section: ws ? ws.name : "Direct messages", cid: c.id, title: c.title, unread: c.unread, preview: c.draft ? "Draft · " + c.draft : (c.messages.length ? c.messages[c.messages.length - 1].text : "No messages yet") } }))
         var c = service.activeChat
         var changed = shownConversation !== (c ? c.id : "")
         var pinned = timeline.atYEnd || changed
@@ -87,7 +86,6 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     Action { text: "New message"; Layout.fillWidth: true; onClicked: { service.actionError = ""; dm.open() } }
-                    Action { text: "Join"; onClicked: { service.actionError = ""; join.open(); service.request("list-rooms") } }
                 }
                 Field { id: filter; objectName: "conversationSearch"; Layout.fillWidth: true; placeholderText: "Find a conversation"; Accessible.name: "Find a conversation"; onTextChanged: view.sync() }
                 Text { text: "CONVERSATIONS"; color: view.muted; font.pixelSize: 10; font.letterSpacing: 1.7 }
@@ -120,7 +118,7 @@ Item {
                     Text { anchors.centerIn: parent; width: parent.width; visible: conversations.count === 0; text: filter.text ? "No matching conversations" : "Your conversations will appear here."; color: view.muted; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
                 }
                 Action { objectName: "openHostedAdmin"; text: "Workspaces"; visible: !!service.hostedConnected; Layout.fillWidth: true; onClicked: { service.actionError = ""; admin.open(); service.refreshHosted() } }
-                Action { objectName: "openRelaySetup"; text: "Set up messaging"; Layout.fillWidth: true; onClicked: relaySetup.open() }
+                Action { objectName: "openServerSetup"; text: "Set up messaging"; Layout.fillWidth: true; onClicked: serverSetup.open() }
                 Action { text: "My identity & connection"; Layout.fillWidth: true; onClicked: identity.open() }
             }
         }
@@ -136,7 +134,7 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 5
                         Text { text: view.active ? view.activeTitle : "A place to talk."; textFormat: Text.PlainText; color: view.ink; font.pixelSize: 20; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
-                        Text { text: !view.active ? "People first. Agents when you need them." : view.active.id.indexOf("hosted:") === 0 ? "Hosted conversation · the server operator can read messages" : view.active.id.indexOf("dm:") === 0 ? "Direct message · confirm the public key with your contact" : "Room · relay permissions apply; not an encrypted DM"; color: view.muted; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
+                        Text { text: !view.active ? "Your team, connected." : "The server operator can read messages"; color: view.muted; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
                     }
                     Rectangle { width: 8; height: 8; radius: 4; color: service.ready ? view.accent : view.warning; Accessible.name: service.ready ? "Local daemon connected" : "Local daemon disconnected" }
                 }
@@ -172,7 +170,7 @@ Item {
                     anchors.centerIn: parent; width: Math.min(380, parent.width - 64); spacing: 16
                     visible: messages.count === 0
                     Text { text: view.active ? "Start the conversation." : "Make yourself at home."; color: view.ink; font.pixelSize: 25; font.weight: Font.DemiBold; Layout.fillWidth: true; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
-                    Text { text: view.active ? "Write a message below. This preview keeps only the daemon’s recent history." : "Open a direct conversation with someone’s public key, or join a room on your configured relay."; color: view.muted; font.pixelSize: 14; Layout.fillWidth: true; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
+                    Text { text: view.active ? "Write a message below. This preview keeps only the daemon’s recent history." : "Open a direct conversation by @handle, or choose a workspace channel."; color: view.muted; font.pixelSize: 14; Layout.fillWidth: true; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
                     Action { text: "New message"; visible: !view.active; Layout.alignment: Qt.AlignHCenter; onClicked: dm.open() }
                 }
                 Action { text: "Latest messages ↓"; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 16; visible: !timeline.atYEnd && messages.count > 0; onClicked: timeline.positionViewAtEnd() }
@@ -244,32 +242,12 @@ Item {
         onClosed: { peer.clear(); service.actionError = "" }
         contentItem: ColumnLayout {
             spacing: 16
-            Text { text: service.hostedConnected ? "Enter @handle for this hosted server, or a Nostr contact link. The server operator can read hosted messages." : "Paste an npub, nprofile, nostr: contact link, or hexadecimal public key. Check the identity with your contact before sharing sensitive information."; color: view.muted; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Field { id: peer; objectName: "peerKey"; placeholderText: service.hostedConnected ? "@handle or Nostr contact link" : "Paste a contact link or public key"; Accessible.name: "Contact public key or link"; maximumLength: 5000; Layout.fillWidth: true; onAccepted: if (service.newDm(text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } }
-            Text {
-                property var contact: service.hostedConnected && peer.text.trim().charAt(0) === "@" ? ({error:"Hosted account on your configured server"}) : Contact.preview(peer.text)
-                objectName: "contactPreview"
-                text: contact.key ? contact.format + " · " + contact.key + (contact.hintsIgnored ? "\nRelay hints in this link are ignored; your configured relays are used." : "") : contact.error
-                textFormat: Text.PlainText; color: contact.key ? view.accent : view.warning
-                visible: text.length > 0; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true
-            }
+            Text { text: "Enter a handle on your configured server. The server operator can read messages."; color: view.muted; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Field { id: peer; objectName: "peerKey"; placeholderText: "@handle"; Accessible.name: "Server handle"; maximumLength: 5000; Layout.fillWidth: true; onAccepted: if (service.newDm(text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } }
+
             Text { text: service.actionError; textFormat: Text.PlainText; visible: text.length > 0; color: view.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             RowLayout { Layout.alignment: Qt.AlignRight; Action { text: "Cancel"; onClicked: dm.close() } Action { text: "Open conversation"; onClicked: if (service.newDm(peer.text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } } }
         }
-    }
-    Sheet {
-        id: join
-        title: "Join a room"
-        contentItem: ColumnLayout {
-            spacing: 14
-            Text { text: service.rooms.length ? "Choose a relay already configured in your daemon. A join request does not guarantee admission. Room messages are not end-to-end encrypted by this client." : "No room relays are configured. Follow desktop/README.md to configure the daemon, then restart it."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            ComboBox { id: relay; Layout.fillWidth: true; model: service.rooms.map(function(r) { return r.relay }); Accessible.name: "Configured room relay" }
-            Field { id: group; Layout.fillWidth: true; placeholderText: "Room ID"; Accessible.name: "Room ID"; maximumLength: 128 }
-            Field { id: invitation; Layout.fillWidth: true; placeholderText: "Invite code (optional)"; Accessible.name: "Invite code"; maximumLength: 256; echoMode: TextInput.Password }
-            Text { text: service.actionError; textFormat: Text.PlainText; visible: text.length > 0; color: view.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            RowLayout { Layout.alignment: Qt.AlignRight; Action { text: "Close"; onClicked: join.close() } Action { text: service.actionBusy ? "Working…" : "Request to join"; enabled: service.ready && !service.actionBusy && service.rooms.length > 0 && group.text.trim().length > 0; onClicked: service.joinRoom(relay.currentText, group.text, invitation.text) } }
-        }
-        Connections { target: service; function onActionFinished(method) { if (method === "join-room" && join.opened) { join.close(); view.showChats = false } } }
     }
     Sheet {
         id: identity
@@ -281,16 +259,16 @@ Item {
             ColumnLayout {
             id: identityColumn; width: identityScroll.availableWidth
             spacing: 16
-            Text { text: service.ready ? "Connected to the local daemon. This does not prove relay reachability or message delivery." : "Waiting for the daemon. Build PR #230 and start omachatd using the setup instructions."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: service.ready ? "Connected to the local daemon. Check the server status below." : "Waiting for the daemon. Start omachatd using the setup instructions."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Text { objectName: "hostedTrust"; visible: !!service.hosted && service.hosted.state !== "unconfigured" && service.hosted.state !== "disabled"; text: "Hosted server: " + (service.ready ? ((service.hosted || {}).state || "not configured") : "unknown — daemon disconnected") + "\n" + ((service.hosted || {}).url || "") + "\nThe operator can read messages on this server."; textFormat: Text.PlainText; color: view.warning; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
             Field { id: hostedHandle; visible: !!service.hostedConnected && !(service.hosted || {}).handle; placeholderText: "Choose a hosted handle"; Layout.fillWidth: true; maximumLength: 32 }
             Action { text: "Claim hosted handle"; visible: !!service.hostedConnected && !(service.hosted || {}).handle; enabled: !service.actionBusy && hostedHandle.text.trim().length > 0; onClicked: service.request("hosted-claim-handle", {handle:hostedHandle.text.trim().replace(/^@/, "")}) }
             Text { text: (service.hosted || {}).handle ? "Hosted handle: @" + service.hosted.handle : ""; color: view.ink; textFormat: Text.PlainText }
             Text { text: service.actionError; visible: text.length > 0; color: view.warning; textFormat: Text.PlainText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-            Text { text: "SHARE YOUR CONTACT LINK"; color: view.accent; font.pixelSize: 10; font.letterSpacing: 1 }
-            TextArea { id: myLink; text: service.publicKey ? "nostr:" + Contact.npub(service.publicKey) : "Available after connecting"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; padding: 10; Layout.fillWidth: true; Accessible.name: "My contact link"; background: Rectangle { color: view.control; radius: 6; border.color: view.line } }
-            Action { text: "Copy contact link"; enabled: service.publicKey.length === 64; onClicked: { myLink.selectAll(); myLink.copy(); myLink.deselect() } }
-            Text { text: "This public link identifies this device, not a verified global handle. Copying it shares no private key. Saved drafts and recent message history belong to the daemon. Unsaved edits remain in this window."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: "SHARE YOUR HANDLE"; color: view.accent; font.pixelSize: 10; font.letterSpacing: 1 }
+            TextArea { id: myLink; text: service.hosted.handle ? "@" + service.hosted.handle : "Claim a handle below"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; padding: 10; Layout.fillWidth: true; Accessible.name: "My server handle"; background: Rectangle { color: view.control; radius: 6; border.color: view.line } }
+            Action { text: "Copy handle"; enabled: !!service.hosted.handle; onClicked: { myLink.selectAll(); myLink.copy(); myLink.deselect() } }
+            Text { text: "This handle identifies your account on this server. Saved drafts and recent message history belong to the daemon. Unsaved edits remain in this window."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Action { text: "Done"; Layout.alignment: Qt.AlignRight; onClicked: identity.close() }
             }
         }
@@ -324,7 +302,7 @@ Item {
             }
         }
     }
-    RelaySetup { id: relaySetup; service: view.service }
+    ServerSetup { id: serverSetup; service: view.service }
     Shortcut { sequence: "Ctrl+N"; onActivated: dm.open() }
     Shortcut { sequence: "Ctrl+K"; onActivated: { view.showChats = true; filter.forceActiveFocus() } }
 }

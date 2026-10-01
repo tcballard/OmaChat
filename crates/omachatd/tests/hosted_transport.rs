@@ -91,7 +91,6 @@ fn hosted_config(address: SocketAddr, pin: [u8; 32], display_name: &str) -> Daem
             display_name: Some(display_name.to_owned()),
             invite_code: None,
         }),
-        ..DaemonConfig::default()
     }
 }
 
@@ -600,5 +599,31 @@ async fn sends_wait_for_a_reconnect_and_give_up_honestly() {
 
     alice.shutdown().await;
     bob.shutdown().await;
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn panic_quiesces_hosted_transport_before_erasing_credentials() {
+    let directory = tempdir().unwrap();
+    let server = TestServer::start(directory.path(), None).await;
+    let daemon = Daemon::start(hosted_config(server.address, server.public_key, "Alice")).await;
+    daemon.wait_connected().await;
+    let handle = daemon.service.as_ref().unwrap().handle();
+    let issued = daemon.ok(Command::RequestPanicConfirmation).await;
+    let token = std::fs::read_to_string(issued["token_path"].as_str().unwrap()).unwrap();
+    let erased = timeout(
+        WAIT,
+        daemon.ok(Command::Panic {
+            confirmation: token,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(erased["erased"], true);
+    assert_eq!(handle.state(), omachatd::HostedState::Stopped);
+    assert!(!daemon._state.path().exists());
+    assert!(daemon.core.start_hosted().is_err());
+    assert!(daemon.request(Command::HostedConversations).await.is_err());
+    daemon.shutdown().await;
     server.stop().await;
 }

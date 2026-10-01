@@ -1,11 +1,10 @@
 #compdef omachat-ctl
 _arguments '--socket[daemon socket]:path:_files' \
-  '1:command:(status fingerprint join leave send join-room leave-room rooms room-members hosted-conversations hosted-history hosted-mark-read hosted-open-dm hosted-claim-handle hosted-resolve-handle hosted-create-workspace hosted-create-channel hosted-add-member panic)' \
+  '1:command:(status fingerprint send hosted-conversations hosted-history hosted-mark-read hosted-open-dm hosted-claim-handle hosted-resolve-handle hosted-create-workspace hosted-create-channel hosted-add-member panic)' \
   '*::argument:->args'
 case $words[2] in
-  status|rooms|room-members|hosted-conversations|hosted-open-dm|hosted-resolve-handle) _arguments '--json[emit compact JSON]' ;;
+  status|hosted-conversations|hosted-open-dm|hosted-resolve-handle) _arguments '--json[emit compact JSON]' ;;
   hosted-history) _arguments '--before[page before this sequence]:sequence:' '--limit[messages per page]:count:' '--json[emit compact JSON]' ;;
-  join-room) _arguments '--invite[invite code]:code:' ;;
   fingerprint) _arguments '--qr[render ANSI QR code]' ;;
   panic) _arguments '--confirm[confirm destructive erase]:confirmation:(ERASE)' ;;
 esac

@@ -13,7 +13,7 @@ fn model() -> UiModel {
     UiModel {
         conversations: vec![Conversation {
             id: "gcpvj".into(),
-            title: "#gcpvj".into(),
+            title: "hosted:general".into(),
             unread: 2,
             messages: vec![
                 Message {
@@ -83,7 +83,7 @@ fn eighty_by_twenty_four_and_narrow_layouts_are_bounded_ansi16() {
                 );
             }
         }
-        assert!(rendered.iter().any(|row| row.contains("#gcpvj")));
+        assert!(rendered.iter().any(|row| row.contains("hosted:general")));
         assert!(rendered.iter().any(|row| row.contains('○')));
     }
 }
@@ -92,7 +92,7 @@ fn eighty_by_twenty_four_and_narrow_layouts_are_bounded_ansi16() {
 fn wide_layout_shows_the_sidebar_and_narrow_layout_drops_it() {
     let wide = rows(&draw(80, 24));
     assert!(wide.iter().any(|row| row.contains('│')));
-    assert!(wide.iter().any(|row| row.contains("> #gcpvj (2)")));
+    assert!(wide.iter().any(|row| row.contains("> hosted:general (2)")));
     assert!(wide.iter().any(|row| row.contains("Conversations")));
 
     let narrow = rows(&draw(24, 10));
@@ -147,14 +147,14 @@ fn terminal_draw_renders_the_model_through_a_backend() {
         .expect("draw succeeds");
     let rendered = rows(terminal.backend().buffer());
     assert_eq!(rendered.len(), 24);
-    assert!(rendered.iter().any(|row| row.contains("#gcpvj")));
+    assert!(rendered.iter().any(|row| row.contains("hosted:general")));
 }
 
 #[test]
 fn messaging_commands_map_to_daemon_requests() {
     assert!(matches!(
-        parse_input("/join GCPVJ", None),
-        Ok(Some(Command::Join { geohash })) if geohash == "GCPVJ"
+        parse_input("/dm alice", None),
+        Ok(Some(Command::HostedOpenDm { handle })) if handle == "alice"
     ));
     assert!(matches!(
         parse_input("hello", Some("gcpvj")),
@@ -172,12 +172,14 @@ fn live_messages_delivery_deletion_and_reattach_are_consistent() {
         input: "unfinished draft".into(),
         ..UiModel::default()
     };
-    model.apply_snapshot(&json!({"status": {"joined_geohashes": ["gcpvj"]}, "messages": []}));
+    model.apply_snapshot(
+        &json!({"conversations": [{"conversation":"hosted:general"}], "messages": []}),
+    );
     let mut event = Event {
         version: VERSION,
         sequence: 1,
         topic: Topic::Messages,
-        payload: json!({"id": "1", "conversation": "dm:alice", "sender": "alice", "text": "hi\u{1b}[2J", "delivery": "received"}),
+        payload: json!({"id": "1", "conversation": "hosted:alice", "sender": "alice", "text": "hi\u{1b}[2J", "delivery": "received"}),
     };
     model.apply_event(&event);
     model.apply_event(&event);
@@ -186,7 +188,7 @@ fn live_messages_delivery_deletion_and_reattach_are_consistent() {
     assert!(!model.conversations[1].messages[0].text.contains('\u{1b}'));
     model.select_next(false);
     assert_eq!(model.conversations[1].unread, 0);
-    event.payload = json!({"id": "2", "conversation": "dm:alice", "sender": "you", "text": "reply", "delivery": "queued"});
+    event.payload = json!({"id": "2", "conversation": "hosted:alice", "sender": "you", "text": "reply", "delivery": "queued"});
     model.apply_event(&event);
     event.topic = Topic::Delivery;
     event.payload = json!({"id": "2", "delivery": "stored"});
@@ -199,7 +201,7 @@ fn live_messages_delivery_deletion_and_reattach_are_consistent() {
     event.payload = json!({"id": "1", "deleted": true});
     model.apply_event(&event);
     assert_eq!(model.conversations[1].messages.len(), 1);
-    model.apply_snapshot(&json!({"messages": [{"id": "2", "conversation": "dm:alice", "text": "reply", "delivery": "stored"}]}));
+    model.apply_snapshot(&json!({"messages": [{"id": "2", "conversation": "hosted:alice", "text": "reply", "delivery": "stored"}]}));
     assert_eq!(model.input, "unfinished draft");
     assert_eq!(
         model.conversations[0].messages[0].delivery,
@@ -211,7 +213,7 @@ fn live_messages_delivery_deletion_and_reattach_are_consistent() {
 fn scrolling_reveals_older_messages_and_conversation_selection_clears_unread() {
     use serde_json::json;
     let mut model = UiModel::default();
-    model.apply_snapshot(&json!({"messages": (0..30).map(|i| json!({"id": i.to_string(), "conversation": "#gcpvj", "sender": "peer", "text": format!("message {i}")})).collect::<Vec<_>>()}));
+    model.apply_snapshot(&json!({"messages": (0..30).map(|i| json!({"id": i.to_string(), "conversation": "hosted:general", "sender": "peer", "text": format!("message {i}")})).collect::<Vec<_>>()}));
     let mut buffer = Buffer::empty(Rect::new(0, 0, 80, 24));
     model.render(buffer.area, &mut buffer);
     assert!(rows(&buffer).iter().any(|r| r.contains("message 29")));

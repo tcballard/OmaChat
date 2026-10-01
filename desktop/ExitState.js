@@ -17,7 +17,7 @@ function inspect(s) {
 }
 function describe(s) {
     var result = inspect(s), parts = [];
-    if (s.settingsDirty) parts.push("Relay settings have unapplied edits.");
+    if (s.settingsDirty) parts.push("Server settings have unapplied edits.");
     if (s.configBusy) parts.push("A configuration operation is still running.");
     if (result.unsaved) parts.push(result.unsaved + " conversation(s) have unsaved draft changes.");
     if (result.pending) parts.push("A save or send is still waiting for the daemon.");

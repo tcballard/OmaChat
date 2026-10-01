@@ -4,12 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 
-/// Version 2 changed `Panic` and `ClaimRegistryHandle` incompatibly: their
-/// `confirmation` field is now a daemon-minted single-use token obtained
-/// through `RequestPanicConfirmation` / `RequestRegistryClaimConfirmation`,
-/// not an in-band constant. A version-1 client's destructive flow no longer
-/// works, so negotiation must reject it rather than fail at use time.
-pub const VERSION: u16 = 2;
+/// Version 3 retires Nostr commands and status fields. Clients must use hosted messaging.
+pub const VERSION: u16 = 3;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_CORRELATION_ID_BYTES: usize = 128;
 
@@ -29,12 +25,6 @@ pub enum Command {
     },
     Status,
     Fingerprint,
-    Join {
-        geohash: String,
-    },
-    Leave {
-        geohash: String,
-    },
     Send {
         conversation: String,
         text: String,
@@ -48,69 +38,10 @@ pub enum Command {
         text: String,
         expected_revision: u64,
     },
-    DiscoverDmRelays {
-        public_key: String,
-    },
-    DiscoverNip65Relays {
-        public_key: String,
-    },
-    ShowNip65Relays {
-        public_key: String,
-    },
-    DiscoverProfile {
-        public_key: String,
-    },
-    ShowProfile {
-        public_key: String,
-    },
-    PublishProfile,
-    PublishNip65Relays,
-    ResolveRegistryHandle {
-        handle: String,
-    },
-    ShowRegistryHandle {
-        handle: String,
-    },
-    ClaimRegistryHandle {
-        handle: String,
-        confirmation: String,
-    },
     /// Mint a single-use, TTL-bounded confirmation token for `Panic`. The
     /// token itself travels out of band via a 0600 file in the daemon state
     /// directory; the response carries only the file path and expiry.
     RequestPanicConfirmation,
-    /// Mint a single-use, TTL-bounded confirmation token for
-    /// `ClaimRegistryHandle` on exactly this handle.
-    RequestRegistryClaimConfirmation {
-        handle: String,
-    },
-    Who {
-        geohash: String,
-    },
-    Block {
-        public_key: String,
-    },
-    /// Join a NIP-29 room on a configured room relay. The daemon subscribes
-    /// to the room and sends a kind 9021 join request; relay policy decides
-    /// membership.
-    JoinRoom {
-        relay: String,
-        group_id: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        invite_code: Option<String>,
-    },
-    /// Leave a NIP-29 room: send a kind 9022 leave request and unsubscribe.
-    LeaveRoom {
-        relay: String,
-        group_id: String,
-    },
-    /// Describe every configured room relay and its joined rooms.
-    ListRooms,
-    /// Show the relay-published membership view for one NIP-29 room.
-    RoomMembers {
-        relay: String,
-        group_id: String,
-    },
     Panic {
         confirmation: String,
     },
@@ -203,16 +134,6 @@ enum StrictRequestWire {
         version: u16,
         id: String,
     },
-    Join {
-        version: u16,
-        id: String,
-        params: GeohashParams,
-    },
-    Leave {
-        version: u16,
-        id: String,
-        params: GeohashParams,
-    },
     Send {
         version: u16,
         id: String,
@@ -232,91 +153,9 @@ enum StrictRequestWire {
         id: String,
         params: SaveDraftParams,
     },
-    DiscoverDmRelays {
-        version: u16,
-        id: String,
-        params: PublicKeyParams,
-    },
-    DiscoverNip65Relays {
-        version: u16,
-        id: String,
-        params: PublicKeyParams,
-    },
-    ShowNip65Relays {
-        version: u16,
-        id: String,
-        params: PublicKeyParams,
-    },
-    DiscoverProfile {
-        version: u16,
-        id: String,
-        params: PublicKeyParams,
-    },
-    ShowProfile {
-        version: u16,
-        id: String,
-        params: PublicKeyParams,
-    },
-    PublishProfile {
-        version: u16,
-        id: String,
-    },
-    PublishNip65Relays {
-        version: u16,
-        id: String,
-    },
-    ResolveRegistryHandle {
-        version: u16,
-        id: String,
-        params: HandleParams,
-    },
-    ShowRegistryHandle {
-        version: u16,
-        id: String,
-        params: HandleParams,
-    },
-    ClaimRegistryHandle {
-        version: u16,
-        id: String,
-        params: RegistryClaimParams,
-    },
     RequestPanicConfirmation {
         version: u16,
         id: String,
-    },
-    RequestRegistryClaimConfirmation {
-        version: u16,
-        id: String,
-        params: HandleParams,
-    },
-    Who {
-        version: u16,
-        id: String,
-        params: GeohashParams,
-    },
-    Block {
-        version: u16,
-        id: String,
-        params: PublicKeyParams,
-    },
-    JoinRoom {
-        version: u16,
-        id: String,
-        params: RoomJoinParams,
-    },
-    LeaveRoom {
-        version: u16,
-        id: String,
-        params: RoomParams,
-    },
-    ListRooms {
-        version: u16,
-        id: String,
-    },
-    RoomMembers {
-        version: u16,
-        id: String,
-        params: RoomParams,
     },
     Panic {
         version: u16,
@@ -383,12 +222,6 @@ struct HelloParams {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct GeohashParams {
-    geohash: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct SendParams {
     conversation: String,
     text: String,
@@ -410,21 +243,8 @@ struct SaveDraftParams {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PublicKeyParams {
-    public_key: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct HandleParams {
     handle: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RegistryClaimParams {
-    handle: String,
-    confirmation: String,
 }
 
 #[derive(Deserialize)]
@@ -437,22 +257,6 @@ struct ConfirmationParams {
 #[serde(deny_unknown_fields)]
 struct SubscribeParams {
     topics: Vec<Topic>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RoomJoinParams {
-    relay: String,
-    group_id: String,
-    #[serde(default)]
-    invite_code: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RoomParams {
-    relay: String,
-    group_id: String,
 }
 
 #[derive(Deserialize)]
@@ -513,16 +317,6 @@ impl From<StrictRequestWire> for Request {
             ),
             StrictRequestWire::Status { version, id } => (version, id, Command::Status),
             StrictRequestWire::Fingerprint { version, id } => (version, id, Command::Fingerprint),
-            StrictRequestWire::Join {
-                version,
-                id,
-                params: GeohashParams { geohash },
-            } => (version, id, Command::Join { geohash }),
-            StrictRequestWire::Leave {
-                version,
-                id,
-                params: GeohashParams { geohash },
-            } => (version, id, Command::Leave { geohash }),
             StrictRequestWire::Send {
                 version,
                 id,
@@ -552,114 +346,9 @@ impl From<StrictRequestWire> for Request {
                     expected_revision,
                 },
             ),
-            StrictRequestWire::DiscoverDmRelays {
-                version,
-                id,
-                params: PublicKeyParams { public_key },
-            } => (version, id, Command::DiscoverDmRelays { public_key }),
-            StrictRequestWire::DiscoverNip65Relays {
-                version,
-                id,
-                params: PublicKeyParams { public_key },
-            } => (version, id, Command::DiscoverNip65Relays { public_key }),
-            StrictRequestWire::ShowNip65Relays {
-                version,
-                id,
-                params: PublicKeyParams { public_key },
-            } => (version, id, Command::ShowNip65Relays { public_key }),
-            StrictRequestWire::DiscoverProfile {
-                version,
-                id,
-                params: PublicKeyParams { public_key },
-            } => (version, id, Command::DiscoverProfile { public_key }),
-            StrictRequestWire::ShowProfile {
-                version,
-                id,
-                params: PublicKeyParams { public_key },
-            } => (version, id, Command::ShowProfile { public_key }),
-            StrictRequestWire::PublishProfile { version, id } => {
-                (version, id, Command::PublishProfile)
-            }
-            StrictRequestWire::PublishNip65Relays { version, id } => {
-                (version, id, Command::PublishNip65Relays)
-            }
-            StrictRequestWire::ResolveRegistryHandle {
-                version,
-                id,
-                params: HandleParams { handle },
-            } => (version, id, Command::ResolveRegistryHandle { handle }),
-            StrictRequestWire::ShowRegistryHandle {
-                version,
-                id,
-                params: HandleParams { handle },
-            } => (version, id, Command::ShowRegistryHandle { handle }),
-            StrictRequestWire::ClaimRegistryHandle {
-                version,
-                id,
-                params:
-                    RegistryClaimParams {
-                        handle,
-                        confirmation,
-                    },
-            } => (
-                version,
-                id,
-                Command::ClaimRegistryHandle {
-                    handle,
-                    confirmation,
-                },
-            ),
             StrictRequestWire::RequestPanicConfirmation { version, id } => {
                 (version, id, Command::RequestPanicConfirmation)
             }
-            StrictRequestWire::RequestRegistryClaimConfirmation {
-                version,
-                id,
-                params: HandleParams { handle },
-            } => (
-                version,
-                id,
-                Command::RequestRegistryClaimConfirmation { handle },
-            ),
-            StrictRequestWire::Who {
-                version,
-                id,
-                params: GeohashParams { geohash },
-            } => (version, id, Command::Who { geohash }),
-            StrictRequestWire::Block {
-                version,
-                id,
-                params: PublicKeyParams { public_key },
-            } => (version, id, Command::Block { public_key }),
-            StrictRequestWire::JoinRoom {
-                version,
-                id,
-                params:
-                    RoomJoinParams {
-                        relay,
-                        group_id,
-                        invite_code,
-                    },
-            } => (
-                version,
-                id,
-                Command::JoinRoom {
-                    relay,
-                    group_id,
-                    invite_code,
-                },
-            ),
-            StrictRequestWire::LeaveRoom {
-                version,
-                id,
-                params: RoomParams { relay, group_id },
-            } => (version, id, Command::LeaveRoom { relay, group_id }),
-            StrictRequestWire::ListRooms { version, id } => (version, id, Command::ListRooms),
-            StrictRequestWire::RoomMembers {
-                version,
-                id,
-                params: RoomParams { relay, group_id },
-            } => (version, id, Command::RoomMembers { relay, group_id }),
             StrictRequestWire::Panic {
                 version,
                 id,

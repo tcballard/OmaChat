@@ -33,3 +33,31 @@ async fn identity_is_created_only_when_explicitly_absent() {
         Err(IdentityStoreError::Store(StoreError::Authentication))
     ));
 }
+
+#[tokio::test]
+async fn pre_retirement_identity_keeps_the_hosted_signing_key() {
+    let temporary = tempdir().unwrap();
+    let store = SealedStore::open(temporary.path(), RequestedProvider::File)
+        .await
+        .unwrap();
+    let seed = [23u8; 32];
+    let old = serde_json::json!({"signing_seed":seed,"noise_static_secret":vec![0;32],"nostr_identity_secret":vec![1;32],"nostr_device_seed":vec![2;32]});
+    store
+        .write("identity-v1", &serde_json::to_vec(&old).unwrap())
+        .unwrap();
+    let loaded = IdentityVault::load_or_create(&store).unwrap();
+    let expected = omachat_crypto::IdentitySecrets::from_signing_seed(seed);
+    assert_eq!(loaded.public_identity(), expected.public_identity());
+    assert_eq!(
+        loaded.sign(b"hosted challenge"),
+        expected.sign(b"hosted challenge")
+    );
+    assert_eq!(
+        serde_json::to_value(&loaded)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len(),
+        1
+    );
+}

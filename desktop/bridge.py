@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded, same-user IPC v2 adapter. No keys, network, disk cache or retries.
+"""Bounded, same-user IPC v3 adapter. No keys, network, disk cache or retries.
 
 Quickshell owns this process; EOF on stdin closes the subscription. A broken
 session exits so the UI can reconnect and obtain a fresh snapshot. In-flight
@@ -18,13 +18,12 @@ import sys
 import time
 import tomllib
 
-VERSION = 2
+VERSION = 3
 LIMIT = 65536
 TOPICS = ["status", "conversations", "messages", "delivery"]
-ALLOWED = {"send", "status", "list-rooms", "join-room", "leave-room", "room-members", "list-drafts", "get-draft", "save-draft", "hosted-conversations", "hosted-history", "hosted-mark-read", "hosted-open-dm", "hosted-claim-handle", "hosted-resolve-handle", "hosted-create-workspace", "hosted-create-channel", "hosted-add-member"}
-# Relay round trips (connect and response timeouts of 20 s each in the daemon)
-# take longer than local storage or status requests.
-DEADLINES = {"send": 30, "join-room": 30, "leave-room": 30}
+ALLOWED = {"send", "status", "list-drafts", "get-draft", "save-draft", "hosted-conversations", "hosted-history", "hosted-mark-read", "hosted-open-dm", "hosted-claim-handle", "hosted-resolve-handle", "hosted-create-workspace", "hosted-create-channel", "hosted-add-member"}
+# Hosted network requests take longer than local storage or status requests.
+DEADLINES = {"send": 30}
 MAX_EXPIRED = 64
 
 
@@ -115,7 +114,7 @@ class Session:
 
     def receive(self, value):
         if value.get("version") != VERSION:
-            raise ValueError("Incompatible daemon: desktop requires IPC v2 (PR #230)")
+            raise ValueError("Incompatible daemon: desktop requires IPC v3 (PR #230)")
         if "topic" in value:
             if value["topic"] not in TOPICS or not isinstance(value.get("payload"), dict):
                 raise ValueError("Invalid daemon event")
@@ -156,14 +155,10 @@ class Session:
             for event in self.events:
                 self.emit({"kind": "event", "data": event})
             self.events.clear()
-            self.request("list-rooms", target="rooms")
             if result.get("status", {}).get("hosted", {}).get("state") == "connected":
                 self.request("hosted-conversations", target="hosted-list", deadline=30)
         elif target == "hosted-list":
             self.emit({"kind": "hosted-list", "ok": ok, "data": result, "error": error if not ok else ""})
-        elif target in ("rooms", "hosted-list"):
-            if ok:
-                self.emit({"kind": "rooms", "data": result})
         else:
             self.emit({"kind": "response", "id": target, "ok": ok, "data": result, "error": error if not ok else ""})
 
@@ -178,7 +173,7 @@ class Session:
                 raise TimeoutError("Daemon stopped answering; pending delivery may be unknown")
             del self.pending[identity]
             self.expired[identity] = target
-            if target in ("rooms", "hosted-list"):
+            if target == "hosted-list":
                 continue
             self.emit({"kind": "response", "id": target, "ok": False, "unknown": True,
                        "error": "The daemon did not answer in time. The outcome is unknown; check before repeating it."})

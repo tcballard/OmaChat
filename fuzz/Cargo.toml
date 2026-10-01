@@ -9,8 +9,6 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.10"
-omachat-mesh = { path = "../crates/omachat-mesh" }
-omachat-nostr = { path = "../crates/omachat-nostr" }
 omachat-proto = { path = "../crates/omachat-proto" }
 
 [[bin]]

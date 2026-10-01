@@ -1,7 +1,0 @@
-*
-!Dockerfile
-!container-entrypoint.sh
-!config.yml
-!relay_metadata.json
-!whitelist.yml
-!blacklist.yml

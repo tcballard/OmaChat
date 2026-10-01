@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit, local relay-config editor. No network, credentials, or service control."""
+"""Explicit, local server-config editor. No network, credentials, or service control."""
 import argparse
 import fcntl
 import hashlib
@@ -59,13 +59,13 @@ def revision(raw):
     return "missing" if raw is None else hashlib.sha256(raw).hexdigest()
 
 
-def relays(values):
+def server_urls(values):
     if not isinstance(values, list) or len(values) > 16:
-        raise ValueError("Enter at most 16 relay URLs per transport.")
+        raise ValueError("Enter at most 16 server URLs per transport.")
     result = []
     for value in values:
         if not isinstance(value, str) or len(value) > 2048 or any(c.isspace() or ord(c) < 32 for c in value) or "\\" in value:
-            raise ValueError("Invalid relay URL.")
+            raise ValueError("Invalid server URL.")
         url = urlsplit(value)
         host = url.hostname
         try:
@@ -73,22 +73,22 @@ def relays(values):
         except ValueError:
             loopback = False
         if not host or url.username is not None or url.password is not None or "?" in value or "#" in value or (url.scheme != "wss" and not (url.scheme == "ws" and loopback)):
-            raise ValueError("Use wss:// relays, or ws:// numeric loopback; no credentials, query or fragment.")
+            raise ValueError("Use wss:// servers, or ws:// numeric loopback; no credentials, query or fragment.")
         port = url.port
         if port == 0:
-            raise ValueError("Relay port must be between 1 and 65535.")
+            raise ValueError("Server port must be between 1 and 65535.")
         host = host.encode("idna").decode("ascii").lower()
         if ":" in host:
             if "%" in host:
-                raise ValueError("Scoped IPv6 relay addresses are not supported.")
+                raise ValueError("Scoped IPv6 server addresses are not supported.")
             ipaddress.IPv6Address(host)
             host = "[" + host + "]"
         elif not re.fullmatch(r"[a-z0-9.-]+", host) or len(host) > 253 or any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-") for label in host.rstrip(".").split(".")):
-            raise ValueError("Invalid relay hostname.")
+            raise ValueError("Invalid server hostname.")
         authority = host + (":" + str(port) if port is not None and port != (443 if url.scheme == "wss" else 80) else "")
         canonical = urlunsplit((url.scheme, authority, url.path or "/", "", ""))
         if canonical in result:
-            raise ValueError("Duplicate relay URL.")
+            raise ValueError("Duplicate server URL.")
         result.append(canonical)
     return result
 
@@ -104,19 +104,34 @@ def safe_path(path):
 def snapshot(path):
     path = safe_path(path)
     raw, value = read(path)
-    rooms = value.get("rooms")
-    if rooms is None:
-        rooms = {}
-    if not isinstance(rooms, dict):
-        raise ValueError("Existing rooms configuration must be an object.")
-    return {"path": str(path), "revision": revision(raw), "exists": raw is not None,
-            "dm_relays": relays(value.get("dm_relays", [])),
-            "room_relays": relays(rooms.get("relays", []))}
+    hosted = value.get("hosted") or {}
+    if not isinstance(hosted, dict):
+        raise ValueError("Hosted configuration must be an object.")
+    return {"path": str(path), "revision": revision(raw), "exists": raw is not None, "hosted": hosted}
+
+
+def hosted_config(value):
+    if not isinstance(value, dict):
+        raise ValueError("Enter server settings.")
+    urls = server_urls([value.get("url")])
+    pin = value.get("pinned_server_public_key", "")
+    if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", pin) or pin == "0" * 64:
+        raise ValueError("Enter the server's 64-character public key, obtained from its operator.")
+    result = {"url": urls[0], "pinned_server_public_key": pin.lower()}
+    for name, limit in [("display_name", 256), ("invite_code", 128)]:
+        text = value.get(name, "")
+        if not isinstance(text, str) or text.strip() != text or len(text.encode()) > limit or any(ord(c) < 32 for c in text):
+            raise ValueError("Invalid " + name.replace("_", " ") + ".")
+        if name == "display_name" and len(text) > 80:
+            raise ValueError("Display name must be at most 80 characters.")
+        if text:
+            result[name] = text
+    return result
 
 
 def apply(path, request):
     path = safe_path(path)
-    dm, room = relays(request.get("dm_relays")), relays(request.get("room_relays"))
+    hosted = hosted_config(request.get("hosted"))
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if path.parent.stat().st_uid != os.getuid() or path.parent.stat().st_mode & 0o022:
         raise ValueError("Configuration directory must be owned by this user and not writable by other users.")
@@ -129,12 +144,8 @@ def apply(path, request):
         raw, value = read(path)
         if request.get("revision") != revision(raw):
             raise ValueError("Configuration changed. Reload it before saving; your entries have not been applied.")
-        rooms = value.get("rooms")
-        if rooms is not None and not isinstance(rooms, dict):
-            raise ValueError("Existing rooms configuration must be an object.")
-        value["dm_relays"] = dm
-        if room or rooms is not None:
-            value["rooms"] = {**(rooms or {}), "relays": room}
+        # Replace the retired transport schema; the private backup retains the original file.
+        value = {"storage_provider": value.get("storage_provider", "auto"), "hosted": hosted}
         encoded = (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode()
         if len(encoded) > LIMIT:
             raise ValueError("Updated configuration exceeds the editing limit.")

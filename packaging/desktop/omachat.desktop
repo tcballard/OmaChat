@@ -6,5 +6,5 @@ Exec=omachat
 Icon=utilities-terminal
 Terminal=true
 Categories=Network;Chat;
-Keywords=mesh;nostr;chat;terminal;
+Keywords=hosted;chat;terminal;
 StartupNotify=false

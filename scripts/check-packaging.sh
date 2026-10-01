@@ -23,11 +23,7 @@ done
 grep -Fq -- '-l qr' packaging/completions/omachat-ctl.fish
 grep -Fqx "pkgdesc='Tiny encrypted text collaboration for Omarchy'" packaging/arch/omachat/PKGBUILD
 grep -Fqx "pkgdesc='Tiny encrypted text collaboration for Omarchy (git)'" packaging/arch/omachat-git/PKGBUILD
-grep -Fq 'local account state' packaging/man/omachat-ctl.1
-grep -Fq 'registry state' packaging/man/omachat-ctl.1
-grep -Fq 'Only the Nostr transport is currently wired into the daemon' packaging/man/omachatd.8
-! grep -Fq 'relay and mesh transports' packaging/man/omachatd.8
-grep -Fqx 'Description=OmaChat Nostr and IPC daemon' packaging/systemd/omachatd.service
+grep -Fqx 'Description=OmaChat hosted messaging and IPC daemon' packaging/systemd/omachatd.service
 if command -v mandoc >/dev/null 2>&1; then
   for page in packaging/man/*; do mandoc -T lint "$page"; done
 fi

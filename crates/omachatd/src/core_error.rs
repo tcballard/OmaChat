@@ -1,91 +1,32 @@
 use omachat_proto::ipc::ErrorCode;
 use std::{error::Error, fmt};
-
 #[derive(Debug)]
 pub enum CoreError {
-    Io(std::io::Error),
-    Store(omachat_store::StoreError),
-    IdentityStore(omachat_store::IdentityStoreError),
-    AccountVault(omachat_store::AccountVaultError),
-    Identity(omachat_crypto::IdentityError),
-    Outbox(omachat_store::OutboxError),
-    RelayPool(omachat_nostr::pool::RelayPoolError),
-    DmInbox(crate::dm_inbox_service::DmInboxServiceError),
-    DmRelayCache(crate::dm_relay_cache_store::SealedDmRelayCacheError),
-    DmRelayDiscovery(omachat_nostr::dm_relay_discovery::DmRelayDiscoveryError),
-    ProfileCache(crate::profile_cache_store::SealedProfileCacheError),
-    ProfileDiscovery(omachat_nostr::profile_discovery::ProfileDiscoveryError),
-    ProfilePublication(crate::ProfilePublicationCoordinatorError),
-    ProfilePublicationUnconfigured,
-    RelayListPublication(crate::RelayListPublicationRuntimeError),
-    RelayListPublicationUnconfigured,
-    RelayListCache(crate::SealedRelayListCacheError),
-    RelayListDiscovery(crate::SealedRelayListDiscoveryServiceError),
-    RegistryEvidence(
-        omachat_registry_transport::RegistryEvidenceError<
-            omachat_registry_transport::RegistryWebSocketError,
-        >,
-    ),
-    PrincipalRegistryEvidence(
-        omachat_registry_transport::PrincipalRegistryEvidenceError<
-            omachat_registry_transport::RegistryWebSocketError,
-        >,
-    ),
-    RegistryCache(omachat_store::RegistryCacheError),
-    PrincipalRegistryCache(omachat_store::PrincipalRegistryCacheError),
-    RegistryClaim(omachat_registry::RegistryError),
-    RegistryClaimIntent(omachat_store::RegistryClaimIntentError),
-    PrincipalRegistryClaimIntent(omachat_store::PrincipalRegistryClaimIntentError),
-    PrincipalRegistryProof(omachat_registry::principal_proof::NostrPrincipalProofError),
-    ProofBearingRegistryClaim(omachat_registry::proof_bearing_claim::ProofBearingClaimError),
-    RegistryClaimPreflightOffline,
-    RegistryClaimPreflightUnusable,
-    RegistryClaimConfirmationRequired,
-    RegistryHandleConflict,
-    RegistryBindingChanged,
-    RegistryUnconfigured,
-    RegistryProtocolOperationUnavailable,
-    InvalidConfig,
-    InvalidCommand,
-    InvalidGeohash,
-    InvalidHandle,
-    InvalidPublicKey,
-    InvalidMessage,
-    InvalidDraft,
-    DraftCapacity,
-    NotJoined,
-    Nostr,
-    Encoding,
     Clock,
-    Random,
-    Subscription,
-    ConfirmationRequired,
     ConfirmationExpired,
-    PanicErase,
-    Panicked,
-    RestartRequired,
-    Room(crate::RoomError),
-    RoomService(crate::RoomServiceError),
-    RoomsUnconfigured,
-    RoomRelayUnknown,
-    /// The hosted server refused a request; the code is the server's.
+    ConfirmationRequired,
+    DraftCapacity,
+    Encoding,
     Hosted(omachat_proto::hosted::ServerError),
+    HostedService(crate::HostedServiceError),
     HostedUnavailable,
     HostedUnconfigured,
-    HostedService(crate::HostedServiceError),
+    IdentityStore(omachat_store::IdentityStoreError),
+    InvalidCommand,
+    InvalidConfig,
     InvalidConversation,
+    InvalidDraft,
+    InvalidMessage,
+    Io(std::io::Error),
+    PanicErase,
+    Panicked,
+    Random,
+    RestartRequired,
+    Store(omachat_store::StoreError),
 }
 impl CoreError {
     pub(crate) fn code(&self) -> ErrorCode {
         match self {
-            Self::InvalidConfig
-            | Self::InvalidCommand
-            | Self::InvalidGeohash
-            | Self::InvalidHandle
-            | Self::InvalidPublicKey
-            | Self::InvalidDraft
-            | Self::InvalidMessage
-            | Self::InvalidConversation => ErrorCode::InvalidRequest,
             Self::Hosted(error) => match error.code {
                 omachat_proto::hosted::ErrorCode::InvalidRequest
                 | omachat_proto::hosted::ErrorCode::InvalidHandle
@@ -106,226 +47,51 @@ impl CoreError {
                 | omachat_proto::hosted::ErrorCode::NotAuthenticated => ErrorCode::Unavailable,
                 omachat_proto::hosted::ErrorCode::Internal => ErrorCode::Internal,
             },
-            Self::HostedUnavailable | Self::HostedUnconfigured => ErrorCode::Unavailable,
-            Self::HostedService(_) => ErrorCode::Internal,
+            Self::InvalidConfig
+            | Self::InvalidCommand
+            | Self::InvalidMessage
+            | Self::InvalidConversation
+            | Self::InvalidDraft => ErrorCode::InvalidRequest,
+            Self::HostedUnavailable | Self::HostedUnconfigured | Self::Panicked => {
+                ErrorCode::Unavailable
+            }
             Self::DraftCapacity
             | Self::ConfirmationRequired
             | Self::ConfirmationExpired
-            | Self::RegistryClaimConfirmationRequired
-            | Self::RegistryHandleConflict
-            | Self::RegistryBindingChanged => ErrorCode::Conflict,
-            Self::RegistryClaimIntent(
-                omachat_store::RegistryClaimIntentError::PendingConflict
-                | omachat_store::RegistryClaimIntentError::PendingMissing,
-            ) => ErrorCode::Conflict,
-            Self::PrincipalRegistryClaimIntent(
-                omachat_store::PrincipalRegistryClaimIntentError::PendingConflict
-                | omachat_store::PrincipalRegistryClaimIntentError::PendingMissing,
-            ) => ErrorCode::Conflict,
-            Self::RestartRequired => ErrorCode::Conflict,
-            Self::Room(crate::RoomError::NotJoined) | Self::RoomRelayUnknown => ErrorCode::NotFound,
-            Self::Room(crate::RoomError::Unavailable { .. } | crate::RoomError::Stopped)
-            | Self::RoomsUnconfigured => ErrorCode::Unavailable,
-            Self::Room(crate::RoomError::InvalidGroup | crate::RoomError::InvalidEvent) => {
-                ErrorCode::InvalidRequest
-            }
-            Self::Room(_) | Self::RoomService(_) => ErrorCode::Internal,
-            Self::Panicked
-            | Self::ProfilePublicationUnconfigured
-            | Self::RelayListPublicationUnconfigured
-            | Self::RegistryUnconfigured
-            | Self::RegistryProtocolOperationUnavailable
-            | Self::RegistryClaimPreflightOffline => ErrorCode::Unavailable,
-            Self::NotJoined => ErrorCode::NotFound,
-            Self::Io(_)
-            | Self::Store(_)
-            | Self::IdentityStore(_)
-            | Self::AccountVault(_)
-            | Self::Identity(_)
-            | Self::Outbox(_)
-            | Self::RelayPool(_)
-            | Self::DmInbox(_)
-            | Self::DmRelayCache(_)
-            | Self::DmRelayDiscovery(_)
-            | Self::ProfileCache(_)
-            | Self::ProfileDiscovery(_)
-            | Self::ProfilePublication(_)
-            | Self::RelayListPublication(_)
-            | Self::RelayListCache(_)
-            | Self::RelayListDiscovery(_)
-            | Self::RegistryEvidence(_)
-            | Self::PrincipalRegistryEvidence(_)
-            | Self::RegistryCache(_)
-            | Self::PrincipalRegistryCache(_)
-            | Self::RegistryClaim(_)
-            | Self::RegistryClaimIntent(_)
-            | Self::PrincipalRegistryClaimIntent(_)
-            | Self::PrincipalRegistryProof(_)
-            | Self::ProofBearingRegistryClaim(_)
-            | Self::RegistryClaimPreflightUnusable
-            | Self::Nostr
-            | Self::Encoding
-            | Self::Clock
-            | Self::Random
-            | Self::Subscription => ErrorCode::Internal,
-            Self::PanicErase => ErrorCode::Internal,
+            | Self::RestartRequired => ErrorCode::Conflict,
+            _ => ErrorCode::Internal,
         }
     }
 }
-
 impl fmt::Display for CoreError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(error) => write!(formatter, "daemon I/O failed: {error}"),
-            Self::Room(error) => write!(formatter, "room operation failed: {error}"),
-            Self::RoomService(error) => write!(formatter, "room service failed: {error}"),
-            Self::RoomsUnconfigured => formatter.write_str("no NIP-29 room relays are configured"),
-            Self::RoomRelayUnknown => formatter
-                .write_str("room relay is not configured or its identity is not yet verified"),
-            Self::Hosted(error) => write!(formatter, "hosted server refused: {}", error.message),
-            Self::HostedUnavailable => formatter.write_str(
-                "hosted server is unreachable; the request was not confirmed and may be repeated safely",
-            ),
-            Self::HostedUnconfigured => formatter.write_str("hosted server is not configured"),
-            Self::HostedService(error) => write!(formatter, "hosted transport failed: {error}"),
-            Self::InvalidConversation => formatter.write_str("conversation identifier is invalid"),
-            Self::Store(error) => write!(formatter, "sealed store failed: {error}"),
-            Self::IdentityStore(error) => write!(formatter, "identity store failed: {error}"),
-            Self::AccountVault(error) => write!(formatter, "account store failed: {error}"),
-            Self::Identity(error) => write!(formatter, "identity operation failed: {error}"),
-            Self::Outbox(error) => write!(formatter, "outbox failed: {error}"),
-            Self::RelayPool(error) => write!(formatter, "relay pool failed: {error}"),
-            Self::DmInbox(error) => write!(formatter, "private inbox failed: {error}"),
-            Self::DmRelayCache(error) => write!(formatter, "recipient relay cache failed: {error}"),
-            Self::DmRelayDiscovery(error) => {
-                write!(formatter, "recipient relay discovery failed: {error}")
+            Self::Clock => f.write_str("system clock invalid"),
+            Self::ConfirmationExpired => f.write_str("confirmation expired"),
+            Self::ConfirmationRequired => f.write_str("confirmation required"),
+            Self::DraftCapacity => f.write_str("draft capacity reached"),
+            Self::Encoding => f.write_str("invalid stored data"),
+            Self::Hosted(e) => write!(f, "Hosted: {e}"),
+            Self::HostedService(e) => write!(f, "HostedService: {e}"),
+            Self::HostedUnavailable => {
+                f.write_str("hosted server is unreachable; the request was not confirmed and may be repeated safely")
             }
-            Self::ProfileCache(error) => write!(formatter, "profile cache failed: {error}"),
-            Self::ProfileDiscovery(error) => write!(formatter, "profile discovery failed: {error}"),
-            Self::ProfilePublication(error) => {
-                write!(formatter, "profile publication failed: {error}")
+            Self::HostedUnconfigured => f.write_str("hosted server is not configured"),
+            Self::IdentityStore(e) => write!(f, "IdentityStore: {e}"),
+            Self::InvalidCommand => f.write_str("invalid command"),
+            Self::InvalidConfig => {
+                f.write_str("invalid configuration; use storage_provider and hosted settings only")
             }
-            Self::ProfilePublicationUnconfigured => {
-                formatter.write_str("profile publication is not configured")
-            }
-            Self::RelayListPublication(error) => {
-                write!(formatter, "NIP-65 relay-list publication failed: {error}")
-            }
-            Self::RelayListPublicationUnconfigured => {
-                formatter.write_str("NIP-65 relay-list publication is not configured")
-            }
-            Self::RelayListCache(error) => write!(formatter, "NIP-65 relay cache failed: {error}"),
-            Self::RelayListDiscovery(error) => {
-                write!(formatter, "NIP-65 relay discovery failed: {error}")
-            }
-            Self::RegistryEvidence(error) => {
-                write!(formatter, "registry evidence resolution failed: {error}")
-            }
-            Self::PrincipalRegistryEvidence(error) => {
-                write!(
-                    formatter,
-                    "principal registry evidence resolution failed: {error}"
-                )
-            }
-            Self::RegistryCache(error) => write!(formatter, "registry cache failed: {error}"),
-            Self::PrincipalRegistryCache(error) => {
-                write!(formatter, "principal registry cache failed: {error}")
-            }
-            Self::RegistryClaim(error) => write!(formatter, "registry claim failed: {error}"),
-            Self::RegistryClaimIntent(error) => {
-                write!(formatter, "pending registry claim failed: {error}")
-            }
-            Self::PrincipalRegistryClaimIntent(error) => {
-                write!(
-                    formatter,
-                    "pending principal registry claim failed: {error}"
-                )
-            }
-            Self::PrincipalRegistryProof(error) => {
-                write!(formatter, "principal registry proof failed: {error}")
-            }
-            Self::ProofBearingRegistryClaim(error) => {
-                write!(formatter, "proof-bearing registry claim failed: {error}")
-            }
-            Self::RegistryClaimPreflightOffline => {
-                formatter.write_str("registry must be online before preparing a new handle claim")
-            }
-            Self::RegistryClaimPreflightUnusable => formatter
-                .write_str("registry preflight did not return usable current account state"),
-            Self::RegistryClaimConfirmationRequired => formatter.write_str(
-                "registry handle claim requires a fresh confirmation token; request one with request-registry-claim-confirmation",
-            ),
-            Self::RegistryHandleConflict => formatter
-                .write_str("requested handle conflicts with local or authoritative account state"),
-            Self::RegistryBindingChanged => {
-                formatter.write_str("local account binding changed during registry preflight")
-            }
-            Self::RegistryUnconfigured => {
-                formatter.write_str("authoritative registry client is not configured")
-            }
-            Self::RegistryProtocolOperationUnavailable => {
-                formatter.write_str("command is unavailable for the configured registry protocol")
-            }
-            Self::InvalidConfig => formatter.write_str("daemon configuration is invalid"),
-            Self::InvalidCommand => formatter.write_str("command is invalid in this context"),
-            Self::InvalidGeohash => formatter.write_str("geohash is invalid"),
-            Self::InvalidHandle => formatter.write_str("global handle is invalid"),
-            Self::InvalidPublicKey => formatter.write_str("Nostr public key is invalid"),
-            Self::InvalidDraft => formatter.write_str("invalid draft conversation or text"),
-            Self::DraftCapacity => formatter.write_str("sealed draft storage limit reached"),
-            Self::InvalidMessage => formatter.write_str("message is empty or too large"),
-            Self::NotJoined => formatter.write_str("geohash is not joined"),
-            Self::Nostr => formatter.write_str("Nostr event creation failed"),
-            Self::Encoding => formatter.write_str("daemon state encoding failed"),
-            Self::Clock => formatter.write_str("system clock is before the Unix epoch"),
-            Self::Random => formatter.write_str("secure random generation failed"),
-            Self::Subscription => formatter.write_str("Nostr subscription refresh failed"),
-            Self::ConfirmationRequired => formatter.write_str(
-                "panic erase requires a fresh confirmation token; request one with request-panic-confirmation",
-            ),
-            Self::ConfirmationExpired => formatter.write_str(
-                "confirmation token expired or was consumed; request a new one",
-            ),
-            Self::PanicErase => {
-                formatter.write_str("panic erase cannot run in this runtime context")
-            }
-            Self::Panicked => formatter.write_str("daemon state has been erased"),
-            Self::RestartRequired => formatter.write_str("relay changes require a daemon restart"),
+            Self::InvalidConversation => f.write_str("invalid hosted conversation"),
+            Self::InvalidDraft => f.write_str("invalid draft"),
+            Self::InvalidMessage => f.write_str("message is empty or too large"),
+            Self::Io(e) => write!(f, "Io: {e}"),
+            Self::PanicErase => f.write_str("panic cleanup failed"),
+            Self::Panicked => f.write_str("daemon is shutting down"),
+            Self::Random => f.write_str("random generation failed"),
+            Self::RestartRequired => f.write_str("configuration change requires restart"),
+            Self::Store(e) => write!(f, "Store: {e}"),
         }
     }
 }
-
-impl Error for CoreError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Io(error) => Some(error),
-            Self::Store(error) => Some(error),
-            Self::IdentityStore(error) => Some(error),
-            Self::AccountVault(error) => Some(error),
-            Self::Identity(error) => Some(error),
-            Self::Outbox(error) => Some(error),
-            Self::RelayPool(error) => Some(error),
-            Self::DmInbox(error) => Some(error),
-            Self::DmRelayCache(error) => Some(error),
-            Self::DmRelayDiscovery(error) => Some(error),
-            Self::ProfileCache(error) => Some(error),
-            Self::ProfileDiscovery(error) => Some(error),
-            Self::ProfilePublication(error) => Some(error),
-            Self::RelayListPublication(error) => Some(error),
-            Self::RelayListCache(error) => Some(error),
-            Self::RelayListDiscovery(error) => Some(error),
-            Self::RegistryEvidence(error) => Some(error),
-            Self::PrincipalRegistryEvidence(error) => Some(error),
-            Self::RegistryCache(error) => Some(error),
-            Self::PrincipalRegistryCache(error) => Some(error),
-            Self::RegistryClaim(error) => Some(error),
-            Self::RegistryClaimIntent(error) => Some(error),
-            Self::PrincipalRegistryClaimIntent(error) => Some(error),
-            Self::PrincipalRegistryProof(error) => Some(error),
-            Self::ProofBearingRegistryClaim(error) => Some(error),
-            Self::Hosted(error) => Some(error),
-            Self::HostedService(error) => Some(error),
-            _ => None,
-        }
-    }
-}
+impl Error for CoreError {}
