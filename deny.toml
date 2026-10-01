@@ -20,6 +20,14 @@ allow = [
     "Unicode-3.0",
 ]
 
+# The pinned ratatui stack reaches foldhash through hashbrown, which every
+# ratatui-core layout and cache path depends on unconditionally. Zlib is
+# permissive and carries no source obligation, but it stays scoped to this one
+# crate rather than widening the workspace allow list.
+[[licenses.exceptions]]
+name = "foldhash"
+allow = ["Zlib"]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"

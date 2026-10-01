@@ -43,7 +43,12 @@ async fn run(mut arguments: Vec<std::ffi::OsString>) -> Result<(), CliError> {
     let mut client = Client::connect(socket, DEFAULT_TIMEOUT)
         .await
         .map_err(CliError::Client)?;
-    let response = client.request(command).await.map_err(CliError::Client)?;
+    if matches!(command, Command::Panic { .. }) {
+        eprintln!("{}", omachat_ctl::PANIC_ERASE_WARNING);
+    }
+    let response = omachat_ctl::request_with_confirmation(&mut client, command)
+        .await
+        .map_err(CliError::Client)?;
     match response.outcome {
         ResponseOutcome::Ok { result } => {
             if output_mode == OutputMode::Json {

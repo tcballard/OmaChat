@@ -62,3 +62,13 @@ The dependency policy permits 0BSD, Apache-2.0, MIT, Unicode-3.0, ISC, and the
 two- and three-clause BSD licenses. The BSD/ISC additions cover the pinned
 BlueR and Rustls probe stacks; they do not weaken the Android clean-room rule or
 allow copyleft source into OmaChat.
+
+Release-binary terminal and local-relay smoke checks:
+
+```sh
+python3 scripts/test-tui-pty.py
+# Requires the localhost Grain test relay on port 18181:
+python3 scripts/test-local-dm.py
+# The release daemon serving the desktop IPC adapter from a temporary state:
+python3 scripts/test-desktop-bridge.py
+```

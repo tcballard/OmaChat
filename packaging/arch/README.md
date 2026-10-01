@@ -18,3 +18,9 @@ a polkit rule, or publishes anything to the AUR.
 After an owner-authorized release commit exists, create deterministic source
 and checksum files with `scripts/package-release.sh 0.0.1 COMMIT OUTPUT_DIR`.
 Insert that exact SHA-256 into the tagged PKGBUILD before its clean-chroot run.
+
+`namcap` cannot infer the runtime dependencies on the D-Bus service, native
+CA certificate store or the optional `qrencode` subprocess. Those dependencies
+are intentional even when its ELF scanner reports them as unused. The recipes
+explicitly list glibc/libgcc and install the license under the actual package
+name (including `omachat-git`).

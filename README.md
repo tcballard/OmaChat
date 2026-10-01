@@ -34,6 +34,17 @@ commands. No server is deployed; the desktop does not yet use the hosted
 commands. The remaining work is listed in
 [docs/hosted-server-plan.md](docs/hosted-server-plan.md).
 
+## Desktop preview
+
+A standalone conversation window is now available on this development branch.
+It builds on the live IPC v2 trial in PR #230: DMs, recent history, delivery
+updates, Nostr contact links, sealed per-chat drafts, reconnect recovery and
+configured-room joining. Draft persistence requires the matching daemon capability;
+wait for saved status before closing.
+See [Desktop setup and limits](desktop/README.md), the
+[product roadmap](docs/desktop-roadmap.md), and [test evidence](docs/desktop-evidence.md).
+This is a source-run preview, not an official Omarchy default or a release.
+
 ## Planning
 
 - [Upstream validation](docs/upstream-validation.md)
@@ -59,3 +70,4 @@ see the development contract and build backlog for the exact boundary.
 All implementation changes use pull requests. Pull requests are not merged without explicit owner approval.
 
 OmaChat is licensed under the [Zero-Clause BSD license](LICENSE). The project name remains provisional pending a separate adoption-grade clearance review.
+

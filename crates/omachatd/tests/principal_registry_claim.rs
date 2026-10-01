@@ -16,6 +16,32 @@ use omachatd::{
 use tempfile::tempdir;
 use tokio::{net::TcpListener, sync::oneshot};
 
+/// Registry claims require a daemon-minted single-use token bound to the
+/// exact handle; mint one over the same IPC surface the client uses.
+async fn minted_claim_token(core: &DaemonCore, handle: &str) -> String {
+    let outcome = core
+        .handle(Request {
+            version: VERSION,
+            id: "claim-token".into(),
+            command: Command::RequestRegistryClaimConfirmation {
+                handle: handle.to_owned(),
+            },
+        })
+        .await;
+    let ResponseOutcome::Ok { result } = outcome else {
+        panic!("claim token issuance failed: {outcome:?}");
+    };
+    let path = result
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .expect("token_path")
+        .to_owned();
+    std::fs::read_to_string(path)
+        .expect("token file")
+        .trim()
+        .to_owned()
+}
+
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -24,13 +50,14 @@ fn now() -> u64 {
 }
 
 async fn claim(core: &DaemonCore) -> serde_json::Value {
+    let confirmation = minted_claim_token(core, "alice").await;
     match core
         .handle(Request {
             version: VERSION,
             id: "principal-registry-claim".into(),
             command: Command::ClaimRegistryHandle {
                 handle: "alice".into(),
-                confirmation: "alice".into(),
+                confirmation,
             },
         })
         .await

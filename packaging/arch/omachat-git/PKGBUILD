@@ -6,7 +6,10 @@ pkgdesc='Tiny encrypted text collaboration for Omarchy (git)'
 arch=('x86_64')
 url='https://github.com/tcballard/OmaChat'
 license=('0BSD')
-depends=('dbus' 'ca-certificates' 'coreutils' 'gcc-libs' 'qrencode')
+# Cargo owns release LTO/stripping. GCC LTO objects from ring cannot be linked
+# by rust-lld; do not inject makepkg's C LTO or unused debug information.
+options=('!lto' '!debug')
+depends=('dbus' 'ca-certificates' 'glibc' 'libgcc' 'qrencode')
 makedepends=('cargo' 'rust' 'git')
 provides=('omachat')
 conflicts=('omachat')
@@ -44,5 +47,5 @@ package() {
   install -Dm644 packaging/completions/_omachat-ctl "$pkgdir/usr/share/zsh/site-functions/_omachat-ctl"
   install -Dm644 packaging/completions/_omachat "$pkgdir/usr/share/zsh/site-functions/_omachat"
   install -Dm644 packaging/completions/*.fish -t "$pkgdir/usr/share/fish/vendor_completions.d"
-  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/omachat/LICENSE"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

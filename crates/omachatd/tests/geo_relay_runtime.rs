@@ -244,14 +244,13 @@ async fn runtime_routes_cells_independently_and_leave_removes_the_pool() {
         ResponseOutcome::Error { .. }
     ));
     // Panic must stop the new pools before destroying keys too.
+    let issued = command(&core, Command::RequestPanicConfirmation).await;
+    let ResponseOutcome::Ok { result } = issued else {
+        panic!("confirmation refused")
+    };
+    let confirmation = std::fs::read_to_string(result["token_path"].as_str().unwrap()).unwrap();
     assert!(matches!(
-        command(
-            &core,
-            Command::Panic {
-                confirmation: "ERASE".into()
-            }
-        )
-        .await,
+        command(&core, Command::Panic { confirmation }).await,
         ResponseOutcome::Ok { .. }
     ));
     service.shutdown().await;

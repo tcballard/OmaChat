@@ -11,6 +11,30 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+/// Destructive commands require a daemon-minted single-use token; mint one
+/// over the same IPC surface the client uses.
+async fn minted_panic_token(core: &DaemonCore) -> String {
+    let outcome = core
+        .handle(Request {
+            version: VERSION,
+            id: "panic-token".into(),
+            command: Command::RequestPanicConfirmation,
+        })
+        .await;
+    let ResponseOutcome::Ok { result } = outcome else {
+        panic!("panic token issuance failed: {outcome:?}");
+    };
+    let path = result
+        .get("token_path")
+        .and_then(serde_json::Value::as_str)
+        .expect("token_path")
+        .to_owned();
+    std::fs::read_to_string(path)
+        .expect("token file")
+        .trim()
+        .to_owned()
+}
+
 #[tokio::test]
 async fn ipc_publishes_a_device_principal_profile() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -171,13 +195,14 @@ async fn panic_erasure_cancels_profile_publication_before_erasing_keys() {
         })
     };
     publication_started.await.unwrap();
+    let token = minted_panic_token(&core).await;
     let panic = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         core.handle(Request {
             version: VERSION,
             id: "panic-profile".into(),
             command: Command::Panic {
-                confirmation: "ERASE".into(),
+                confirmation: token,
             },
         }),
     )
