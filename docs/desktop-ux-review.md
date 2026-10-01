@@ -1,5 +1,7 @@
 # Desktop UX pass
 
+The [second pass using Authored Frontend Design](desktop-ux-pass2.md) contains the latest design and verification.
+
 Reviewed 2026-10-01 on `feat/desktop-ux-polish`, based on `feat/hosted-only`.
 The target is the existing native Quickshell desktop. Nostr remains retired.
 

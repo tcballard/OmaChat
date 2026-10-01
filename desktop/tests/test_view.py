@@ -239,6 +239,65 @@ class ViewTests(unittest.TestCase):
         QTest.qWait(20)
         self.assertEqual(selector.property("currentText"), "Second team")
 
+    def test_search_can_be_cleared_without_losing_active_draft(self):
+        composer = self.window.findChild(QObject, "composer")
+        composer.setProperty("text", "keep while searching")
+        search = self.window.findChild(QObject, "conversationSearch")
+        search.setProperty("text", "nothing matches")
+        QTest.qWait(20)
+        self.assertEqual(self.window.findChild(QObject, "conversationList").property("count"), 0)
+        self.window.findChild(QObject, "clearConversationSearch").click()
+        QTest.qWait(20)
+        self.assertEqual(search.property("text"), "")
+        self.assertTrue(search.property("activeFocus"))
+        self.assertEqual(composer.property("text"), "keep while searching")
+        self.assertEqual(self.window.findChild(QObject, "conversationList").property("count"), 2)
+
+    def test_latest_message_stays_visible_when_window_shrinks(self):
+        timeline = self.window.findChild(QObject, "timeline")
+        for width, height in [(1440,900), (860,640), (440,480)]:
+            self.window.setWidth(width); self.window.setHeight(height)
+            QTest.qWait(60)
+            self.assertTrue(timeline.property("atYEnd"))
+            button = self.window.findChild(QObject, "sendButton")
+            point = button.mapToScene(button.boundingRect().center())
+            self.assertLess(point.y(), height)
+            self.assertGreaterEqual(button.property("height"), 44)
+            self.assertLessEqual(timeline.property("width"), 820)
+
+    def test_reading_older_messages_does_not_jump_on_draft_edit(self):
+        self.window.setWidth(440); self.window.setHeight(480)
+        QTest.qWait(40)
+        timeline = self.window.findChild(QObject, "timeline")
+        timeline.setProperty("followLatest", False)
+        timeline.setProperty("contentY", 0)
+        before = timeline.property("contentY")
+        self.window.findChild(QObject, "composer").setProperty("text", "draft while reading")
+        QTest.qWait(40)
+        self.assertFalse(timeline.property("followLatest"))
+        self.assertAlmostEqual(timeline.property("contentY"), before)
+
+    def test_conflict_choices_remain_reachable_and_enter_cannot_send(self):
+        self.window.setWidth(440); self.window.setHeight(480)
+        self.window.property("backend").conflictFixture()
+        QTest.qWait(40)
+        self.assertEqual(self.window.findChild(QObject, "composerState").property("text"), "Review draft")
+        self.assertFalse(self.window.findChild(QObject, "sendButton").property("enabled"))
+        composer = self.window.findChild(QObject, "composer")
+        composer.forceActiveFocus()
+        QTest.keyClick(self.window, Qt.Key_Return)
+        self.assertEqual(composer.property("text"), "my unsaved text")
+        for name in ["keepLocalDraft", "useSavedDraft"]:
+            button = self.window.findChild(QObject, name)
+            point = button.mapToScene(button.boundingRect().center())
+            self.assertTrue(button.property("visible"))
+            self.assertGreater(point.y(), 84)
+            self.assertLess(point.y(), 480)
+        self.window.findChild(QObject, "keepLocalDraft").click()
+        QTest.qWait(20)
+        self.assertEqual(composer.property("text"), "my unsaved text")
+        self.assertFalse(self.window.findChild(QObject, "keepLocalDraft").property("visible"))
+
     def test_invalid_handle_is_rejected(self):
         QTest.keyClick(self.window, Qt.Key_N, Qt.ControlModifier)
         QTest.qWait(20)
