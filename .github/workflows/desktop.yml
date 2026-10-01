@@ -27,5 +27,6 @@ jobs:
           node desktop/tests/test_state.js
           node desktop/tests/test_drafts.js
           node desktop/tests/test_hosted.js
+          node desktop/tests/test_theme.js
       - name: Launcher syntax
         run: sh -n desktop/omachat-desktop
