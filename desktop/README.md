@@ -197,3 +197,31 @@ or checking out sources under `desktop/` cannot hot-reload a live window; an
 explicit reload still discards memory-only edits and forgets in-flight sends.
 A live Quickshell/reboot test is required before release; see
 [XPS live testing](../docs/xps-live-testing.md).
+
+## Hosted server conversations
+
+With the daemon's `hosted` configuration enabled (URL and pinned server key;
+see [hosted server setup](../docs/hosted-server.md)), the desktop discovers
+hosted conversations and loads selected history in pages of 50. Earlier/Latest
+messages navigate the bounded view. Hosted history remains on the server;
+the window retains at most 128 messages per conversation.
+
+Enter `@handle` in New message for a hosted DM; Nostr links still select Nostr
+DMs. Claim your own hosted handle in My identity & connection. Channels are
+grouped by workspace. Workspaces lets any connected account create a workspace;
+only workspaces owned by that account are offered for creating channels or
+adding members, and the server enforces those permissions.
+
+Hosted unread counts use sequence cursors. A focused, loaded conversation
+advances the read cursor only after server acknowledgement. “Delivered to a
+member” and “Read by a member” mean at least one other conversation member;
+they do not mean every member. Receipt metadata survives desktop reconnect.
+Hosted drafts use the same sealed daemon store and close guard as Nostr drafts.
+The server operator can read hosted messages; they are not end-to-end encrypted.
+
+Run `node desktop/tests/test_hosted.js` and, after building workspace binaries,
+`python3 scripts/test-hosted-desktop.py`. The latter uses generated temporary
+identities, a loopback server, two daemons and the production adapter. Add
+`--serve` to retain that fixture for a production Quickshell run until interrupted.
+See [acceptance evidence](../docs/hosted-desktop-evidence.md) for screenshots and
+platform boundaries.

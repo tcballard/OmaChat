@@ -49,6 +49,7 @@ pub struct ConversationSummary {
     pub delivered_sequence: u64,
     pub read_sequence: u64,
     pub members: Vec<MemberSummary>,
+    pub receipts: Vec<Receipt>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -368,6 +369,20 @@ impl Storage {
 
     // ----- workspaces -----
 
+    /// Only workspaces visible to this account, including empty workspaces.
+    pub fn workspaces_for(
+        &self,
+        account_id: &str,
+    ) -> Result<Vec<(String, String, String)>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT w.id, w.name, m.role FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id WHERE m.account_id = ?1 ORDER BY w.created_at, w.id",
+        )?;
+        let rows = statement.query_map(params![account_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+        rows.collect::<Result<_, _>>().map_err(StorageError::from)
+    }
+
     pub fn create_workspace(
         &mut self,
         name: &str,
@@ -554,6 +569,7 @@ impl Storage {
             None => Ok(None),
             Some(mut summary) => {
                 summary.members = self.members(&summary.id)?;
+                summary.receipts = self.receipts(&summary.id)?;
                 Ok(Some(summary))
             }
         }
@@ -575,6 +591,7 @@ impl Storage {
         let mut summaries: Vec<ConversationSummary> = rows.collect::<Result<_, _>>()?;
         for summary in &mut summaries {
             summary.members = self.members(&summary.id)?;
+            summary.receipts = self.receipts(&summary.id)?;
         }
         Ok(summaries)
     }
@@ -862,6 +879,7 @@ fn conversation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationSum
         delivered_sequence: from_i64(row.get(5)?),
         read_sequence: from_i64(row.get(6)?),
         members: Vec::new(),
+        receipts: Vec::new(),
     })
 }
 
