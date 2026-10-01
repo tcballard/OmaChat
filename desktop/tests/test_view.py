@@ -31,6 +31,21 @@ class ViewTests(unittest.TestCase):
         self.engine.deleteLater()
         self.app.processEvents()
 
+    def test_hosted_admin_uses_only_owned_workspaces(self):
+        backend = self.window.property("backend")
+        backend.setProperty("hosted", {"state":"connected", "handle":"alice", "url":"ws://127.0.0.1:7448"})
+        backend.setProperty("hostedConnected", True)
+        backend.setProperty("workspaces", [
+            {"workspace_id":"owned", "name":"My team", "role":"owner"},
+            {"workspace_id":"joined", "name":"Other team", "role":"member"}])
+        QTest.qWait(20)
+        self.window.findChild(QObject, "openHostedAdmin").click()
+        QTest.qWait(20)
+        selector = self.window.findChild(QObject, "ownedWorkspace")
+        self.assertEqual(selector.property("count"), 1)
+        self.assertEqual(selector.property("currentText"), "My team")
+        self.assertIn("operator can read", self.window.findChild(QObject, "hostedTrust").property("text"))
+
     def test_compose_send_and_multiline(self):
         composer = self.window.findChild(QObject, "composer")
         composer.forceActiveFocus()

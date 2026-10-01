@@ -408,6 +408,7 @@ impl Service {
                     .map_err(storage_error)?;
                 Ok(json!({
                     "conversations": list.iter().map(conversation_json).collect::<Vec<_>>(),
+                    "workspaces": self.storage.workspaces_for(account_id).map_err(storage_error)?.iter().map(|(id, name, role)| json!({"workspace_id": id, "name": name, "role": role})).collect::<Vec<_>>(),
                 }))
             }
             Command::Send {
@@ -644,6 +645,7 @@ pub fn conversation_json(summary: &ConversationSummary) -> Value {
         "last_sequence": summary.last_sequence,
         "delivered_sequence": summary.delivered_sequence,
         "read_sequence": summary.read_sequence,
+        "receipts": summary.receipts.iter().map(receipt_json).collect::<Vec<_>>(),
         "members": summary.members.iter().map(|member| json!({
             "account_id": member.account_id,
             "handle": member.handle,

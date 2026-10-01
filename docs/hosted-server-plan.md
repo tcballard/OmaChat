@@ -21,7 +21,7 @@ each item there is a product decision that needs its own ADR before code.
 |---|---|---|
 | 1. Server crate | Done on this branch | 23 tests, full workspace suite green, real binaries driven end to end in the development container |
 | 2. Daemon transport | Done on this branch | `crates/omachatd/tests/hosted_transport.rs`, three end-to-end tests over an in-process server; full workspace suite green |
-| 3. Desktop support | Not started; blocked on the desktop stack merging (#230 to #238) | |
+| 3. Desktop support | Implemented on `feat/hosted-desktop`; pending PR review | [Desktop evidence](hosted-desktop-evidence.md), real server/two-daemon adapter test and production headless Quickshell run |
 | 4. Deployment | Not started; needs a host, a name and an operator | |
 | 5. Security review | Not started; needs the reviewers named | |
 | 6. Product features | Not started; each needs an ADR | |
@@ -106,10 +106,9 @@ the `wss://` path against a real certificate, which needs slice 4.
 
 ## Slice 3: desktop support
 
-Blocked on the desktop stack (#230 to #238) merging, because the Quickshell
-shell, adapter and state modules live there. Nothing in slice 2 changes the
-desktop, and the daemon contract above is designed so that the desktop
-change is additive.
+The desktop stack (#230 to #238) is merged into main and reconciled with
+`feat/hosted-server`. The implementation is in `feat/hosted-desktop`; see
+[hosted desktop evidence](hosted-desktop-evidence.md) for validation and limits.
 
 Scope:
 

@@ -3542,6 +3542,7 @@ impl DaemonCore {
             "last_sequence": summary.get("last_sequence").cloned().unwrap_or(serde_json::Value::Null),
             "delivered_sequence": summary.get("delivered_sequence").cloned().unwrap_or(serde_json::Value::Null),
             "read_sequence": summary.get("read_sequence").cloned().unwrap_or(serde_json::Value::Null),
+            "receipts": summary.get("receipts").and_then(serde_json::Value::as_array).map(|receipts| receipts.iter().take(HOSTED_MEMBERS_PER_CONVERSATION).map(hosted_receipt_value).collect::<Vec<_>>()).unwrap_or_default(),
             "member_count": members.len(),
             "members": members.iter().take(HOSTED_MEMBERS_PER_CONVERSATION).cloned().collect::<Vec<_>>(),
         })
@@ -3870,8 +3871,18 @@ impl DaemonCore {
             .iter()
             .map(|summary| self.hosted_conversation_value(summary))
             .collect::<Vec<_>>();
-        let (conversations, truncated) = fit_ipc_budget(conversations, false);
-        Ok(serde_json::json!({"conversations": conversations, "truncated": truncated}))
+        let (conversations, truncated) =
+            fit_ipc_budget_limit(conversations, false, HOSTED_IPC_BUDGET_BYTES * 3 / 4);
+        let workspaces = list
+            .get("workspaces")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let (workspaces, workspace_truncated) =
+            fit_ipc_budget_limit(workspaces, false, HOSTED_IPC_BUDGET_BYTES / 4);
+        Ok(
+            serde_json::json!({"conversations": conversations, "workspaces": workspaces, "truncated": truncated || workspace_truncated}),
+        )
     }
 
     async fn hosted_history(
@@ -4015,6 +4026,14 @@ fn fit_ipc_budget(
     values: Vec<serde_json::Value>,
     keep_newest: bool,
 ) -> (Vec<serde_json::Value>, bool) {
+    fit_ipc_budget_limit(values, keep_newest, HOSTED_IPC_BUDGET_BYTES)
+}
+
+fn fit_ipc_budget_limit(
+    values: Vec<serde_json::Value>,
+    keep_newest: bool,
+    budget: usize,
+) -> (Vec<serde_json::Value>, bool) {
     let mut kept = Vec::with_capacity(values.len());
     let mut used: usize = 0;
     let mut truncated = false;
@@ -4025,7 +4044,7 @@ fn fit_ipc_budget(
     };
     for value in ordered {
         let size = serde_json::to_vec(&value).map_or(usize::MAX, |bytes| bytes.len() + 1);
-        if used.saturating_add(size) > HOSTED_IPC_BUDGET_BYTES {
+        if used.saturating_add(size) > budget {
             truncated = true;
             break;
         }

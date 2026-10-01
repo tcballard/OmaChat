@@ -41,7 +41,8 @@ Item {
     function sync() {
         var query = filter.text.toLowerCase()
         var rows = service.chats.filter(function(c) { return (c.title + " " + c.id).toLowerCase().indexOf(query) !== -1 })
-        reconcile(conversations, rows.map(function(c) { return { cid: c.id, title: c.title, unread: c.unread, preview: c.draft ? "Draft · " + c.draft : (c.messages.length ? c.messages[c.messages.length - 1].text : "No messages yet") } }))
+        rows.sort(function(a,b) { return (a.workspaceId || "").localeCompare(b.workspaceId || "") || a.title.localeCompare(b.title) })
+        reconcile(conversations, rows.map(function(c) { var ws = (service.workspaces || []).find(function(w) { return w.workspace_id === c.workspaceId }); return { section: ws ? ws.name : c.id.indexOf("hosted:") === 0 ? "Hosted direct messages" : "Nostr", cid: c.id, title: c.title, unread: c.unread, preview: c.draft ? "Draft · " + c.draft : (c.messages.length ? c.messages[c.messages.length - 1].text : "No messages yet") } }))
         var c = service.activeChat
         var changed = shownConversation !== (c ? c.id : "")
         var pinned = timeline.atYEnd || changed
@@ -94,6 +95,8 @@ Item {
                     id: chatList
                     Layout.fillWidth: true; Layout.fillHeight: true
                     clip: true; spacing: 5; model: conversations
+                    section.property: "section"
+                    section.delegate: Text { required property string section; text: section; color: view.accent; font.pixelSize: 12; padding: 6; textFormat: Text.PlainText }
                     ScrollBar.vertical: ScrollBar {}
                     delegate: ItemDelegate {
                         id: chatRow
@@ -109,13 +112,14 @@ Item {
                             spacing: 6
                             RowLayout {
                                 Text { text: chatRow.title; textFormat: Text.PlainText; color: view.ink; elide: Text.ElideRight; font.pixelSize: 14; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                                Text { text: "●"; visible: chatRow.unread > 0; color: view.accent; font.pixelSize: 10 }
+                                Text { text: String(chatRow.unread); visible: chatRow.unread > 0; color: view.accent; font.pixelSize: 10 }
                             }
                             Text { text: chatRow.preview; textFormat: Text.PlainText; color: view.muted; elide: Text.ElideRight; maximumLineCount: 1; font.pixelSize: 12; Layout.fillWidth: true }
                         }
                     }
                     Text { anchors.centerIn: parent; width: parent.width; visible: conversations.count === 0; text: filter.text ? "No matching conversations" : "Your conversations will appear here."; color: view.muted; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignHCenter }
                 }
+                Action { objectName: "openHostedAdmin"; text: "Workspaces"; visible: !!service.hostedConnected; Layout.fillWidth: true; onClicked: { service.actionError = ""; admin.open(); service.refreshHosted() } }
                 Action { objectName: "openRelaySetup"; text: "Set up messaging"; Layout.fillWidth: true; onClicked: relaySetup.open() }
                 Action { text: "My identity & connection"; Layout.fillWidth: true; onClicked: identity.open() }
             }
@@ -132,7 +136,7 @@ Item {
                     ColumnLayout {
                         Layout.fillWidth: true; spacing: 5
                         Text { text: view.active ? view.activeTitle : "A place to talk."; textFormat: Text.PlainText; color: view.ink; font.pixelSize: 20; font.weight: Font.DemiBold; elide: Text.ElideRight; Layout.fillWidth: true }
-                        Text { text: !view.active ? "People first. Agents when you need them." : view.active.id.indexOf("dm:") === 0 ? "Direct message · confirm the public key with your contact" : "Room · relay permissions apply; not an encrypted DM"; color: view.muted; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
+                        Text { text: !view.active ? "People first. Agents when you need them." : view.active.id.indexOf("hosted:") === 0 ? "Hosted conversation · the server operator can read messages" : view.active.id.indexOf("dm:") === 0 ? "Direct message · confirm the public key with your contact" : "Room · relay permissions apply; not an encrypted DM"; color: view.muted; font.pixelSize: 11; elide: Text.ElideRight; Layout.fillWidth: true }
                     }
                     Rectangle { width: 8; height: 8; radius: 4; color: service.ready ? view.accent : view.warning; Accessible.name: service.ready ? "Local daemon connected" : "Local daemon disconnected" }
                 }
@@ -161,7 +165,7 @@ Item {
                         width: timeline.width; spacing: 6
                         Text { text: messageRow.outgoing ? "You" : State.shortKey(messageRow.sender); textFormat: Text.PlainText; color: messageRow.outgoing ? view.accent : view.ink; font.pixelSize: 12; font.weight: Font.DemiBold }
                         TextEdit { width: parent.width - 12; text: messageRow.text; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap; color: view.ink; font.pixelSize: 15; Accessible.name: messageRow.sender + ": " + messageRow.text }
-                        Text { visible: messageRow.outgoing; text: State.deliveryLabel(messageRow.delivery); color: messageRow.delivery === "failed" ? view.warning : view.muted; font.pixelSize: 10 }
+                        Text { visible: messageRow.outgoing; text: State.deliveryLabel(messageRow.delivery, !!view.active && view.active.id.indexOf("hosted:") === 0); color: messageRow.delivery === "failed" ? view.warning : view.muted; font.pixelSize: 10 }
                     }
                 }
                 ColumnLayout {
@@ -176,6 +180,11 @@ Item {
             ColumnLayout {
                 Layout.fillWidth: true; Layout.margins: 20; spacing: 10
                 visible: !!view.active
+                RowLayout {
+                    visible: !!view.active && view.active.id.indexOf("hosted:") === 0
+                    Action { objectName: "olderHostedHistory"; text: "Earlier messages"; enabled: !!service.hostedConnected && !!view.active && view.active.hasOlder !== false; onClicked: service.loadHistory(true) }
+                    Action { text: "Latest messages"; enabled: !!service.hostedConnected; onClicked: service.loadHistory(false) }
+                }
                 Text { objectName: "sendError"; visible: view.activeError.length > 0; text: view.activeError; textFormat: Text.PlainText; color: view.warning; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                 Action { objectName: "allowResend"; visible: view.activeUncertain; text: "I checked — allow another send"; onClicked: service.reviewedUnknown() }
                 Text { objectName: "draftStatus"; text: service.draftStatus; textFormat: Text.PlainText; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
@@ -229,15 +238,16 @@ Item {
     }
     Sheet {
         id: dm
+        Connections { target: service; function onActionFinished(method) { if (method === "hosted-open-dm") { dm.close(); view.showChats = false } } }
         title: "New direct message"
         onOpened: { service.actionError = ""; peer.forceActiveFocus() }
         onClosed: { peer.clear(); service.actionError = "" }
         contentItem: ColumnLayout {
             spacing: 16
-            Text { text: "Paste an npub, nprofile, nostr: contact link, or hexadecimal public key. Check the identity with your contact before sharing sensitive information."; color: view.muted; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Field { id: peer; objectName: "peerKey"; placeholderText: "Paste a contact link or public key"; Accessible.name: "Contact public key or link"; maximumLength: 5000; Layout.fillWidth: true; onAccepted: if (service.newDm(text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } }
+            Text { text: service.hostedConnected ? "Enter @handle for this hosted server, or a Nostr contact link. The server operator can read hosted messages." : "Paste an npub, nprofile, nostr: contact link, or hexadecimal public key. Check the identity with your contact before sharing sensitive information."; color: view.muted; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Field { id: peer; objectName: "peerKey"; placeholderText: service.hostedConnected ? "@handle or Nostr contact link" : "Paste a contact link or public key"; Accessible.name: "Contact public key or link"; maximumLength: 5000; Layout.fillWidth: true; onAccepted: if (service.newDm(text)) { dm.close(); view.showChats = false; composer.forceActiveFocus() } }
             Text {
-                property var contact: Contact.preview(peer.text)
+                property var contact: service.hostedConnected && peer.text.trim().charAt(0) === "@" ? ({error:"Hosted account on your configured server"}) : Contact.preview(peer.text)
                 objectName: "contactPreview"
                 text: contact.key ? contact.format + " · " + contact.key + (contact.hintsIgnored ? "\nRelay hints in this link are ignored; your configured relays are used." : "") : contact.error
                 textFormat: Text.PlainText; color: contact.key ? view.accent : view.warning
@@ -264,14 +274,54 @@ Item {
     Sheet {
         id: identity
         title: "My identity & connection"
-        contentItem: ColumnLayout {
+        contentItem: ScrollView {
+            id: identityScroll
+            implicitHeight: Math.min(identityColumn.implicitHeight, view.height - 140)
+            contentWidth: availableWidth
+            ColumnLayout {
+            id: identityColumn; width: identityScroll.availableWidth
             spacing: 16
             Text { text: service.ready ? "Connected to the local daemon. This does not prove relay reachability or message delivery." : "Waiting for the daemon. Build PR #230 and start omachatd using the setup instructions."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { objectName: "hostedTrust"; visible: !!service.hosted && service.hosted.state !== "unconfigured" && service.hosted.state !== "disabled"; text: "Hosted server: " + (service.ready ? ((service.hosted || {}).state || "not configured") : "unknown — daemon disconnected") + "\n" + ((service.hosted || {}).url || "") + "\nThe operator can read messages on this server."; textFormat: Text.PlainText; color: view.warning; wrapMode: Text.WrapAnywhere; Layout.fillWidth: true }
+            Field { id: hostedHandle; visible: !!service.hostedConnected && !(service.hosted || {}).handle; placeholderText: "Choose a hosted handle"; Layout.fillWidth: true; maximumLength: 32 }
+            Action { text: "Claim hosted handle"; visible: !!service.hostedConnected && !(service.hosted || {}).handle; enabled: !service.actionBusy && hostedHandle.text.trim().length > 0; onClicked: service.request("hosted-claim-handle", {handle:hostedHandle.text.trim().replace(/^@/, "")}) }
+            Text { text: (service.hosted || {}).handle ? "Hosted handle: @" + service.hosted.handle : ""; color: view.ink; textFormat: Text.PlainText }
+            Text { text: service.actionError; visible: text.length > 0; color: view.warning; textFormat: Text.PlainText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Text { text: "SHARE YOUR CONTACT LINK"; color: view.accent; font.pixelSize: 10; font.letterSpacing: 1 }
             TextArea { id: myLink; text: service.publicKey ? "nostr:" + Contact.npub(service.publicKey) : "Available after connecting"; textFormat: TextEdit.PlainText; readOnly: true; selectByMouse: true; color: view.ink; wrapMode: TextEdit.WrapAnywhere; padding: 10; Layout.fillWidth: true; Accessible.name: "My contact link"; background: Rectangle { color: view.control; radius: 6; border.color: view.line } }
             Action { text: "Copy contact link"; enabled: service.publicKey.length === 64; onClicked: { myLink.selectAll(); myLink.copy(); myLink.deselect() } }
             Text { text: "This public link identifies this device, not a verified global handle. Copying it shares no private key. Saved drafts and recent message history belong to the daemon. Unsaved edits remain in this window."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
             Action { text: "Done"; Layout.alignment: Qt.AlignRight; onClicked: identity.close() }
+            }
+        }
+    }
+    Sheet {
+        id: admin; title: "Hosted workspaces"
+        onOpened: { adminResult.text = ""; workspaceName.forceActiveFocus() }
+        Connections { target: service; function onActionFinished(method) {
+            if (method === "hosted-create-workspace") { adminResult.text = "Workspace created."; workspaceName.clear() }
+            else if (method === "hosted-create-channel") { adminResult.text = "Channel created."; channelName.clear() }
+            else if (method === "hosted-add-member") { adminResult.text = "Member added."; memberHandle.clear() }
+        } }
+        contentItem: ScrollView {
+            id: adminScroll
+            implicitHeight: Math.min(adminColumn.implicitHeight, view.height - 140)
+            contentWidth: availableWidth
+            ColumnLayout {
+            id: adminColumn; width: adminScroll.availableWidth
+            spacing: 12
+            Text { text: "Create a workspace, or manage one you own. The server verifies ownership for every change."; color: view.muted; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Field { id: workspaceName; objectName: "workspaceName"; placeholderText: "New workspace name"; maximumLength: 64; Layout.fillWidth: true }
+            Action { text: "Create workspace"; enabled: !!service.hostedConnected && !service.actionBusy && workspaceName.text.trim().length > 0; onClicked: service.administer("hosted-create-workspace", "", workspaceName.text) }
+            ComboBox { id: owned; objectName: "ownedWorkspace"; Layout.fillWidth: true; model: (service.workspaces || []).filter(function(w) { return w.role === "owner" }); textRole: "name"; valueRole: "workspace_id"; Accessible.name: "Workspace you own" }
+            Field { id: channelName; placeholderText: "New channel name"; maximumLength: 64; Layout.fillWidth: true }
+            Action { text: "Create channel"; enabled: !!service.hostedConnected && !service.actionBusy && owned.count > 0 && channelName.text.trim().length > 0; onClicked: service.administer("hosted-create-channel", owned.currentValue, channelName.text) }
+            Field { id: memberHandle; placeholderText: "Member @handle"; maximumLength: 32; Layout.fillWidth: true }
+            Action { text: "Add member"; enabled: !!service.hostedConnected && !service.actionBusy && owned.count > 0 && memberHandle.text.trim().length > 0; onClicked: service.administer("hosted-add-member", owned.currentValue, memberHandle.text) }
+            Text { id: adminResult; color: view.accent; textFormat: Text.PlainText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Text { text: service.actionBusy ? "Working…" : service.actionError; color: view.warning; textFormat: Text.PlainText; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+            Action { text: "Close"; onClicked: admin.close() }
+            }
         }
     }
     RelaySetup { id: relaySetup; service: view.service }

@@ -1,0 +1,27 @@
+const fs = require('node:fs'), vm = require('node:vm'), assert = require('node:assert/strict');
+const state = vm.createContext({});
+vm.runInContext(fs.readFileSync(__dirname + '/../ChatState.js', 'utf8'), state);
+const s = state.create();
+state.snapshot(s, {status:{hosted:{state:'connected',account_id:'alice'}},messages:[]});
+state.hostedList(s,{workspaces:[{workspace_id:'w',name:'Team',role:'owner'}],conversations:[{conversation:'hosted:c',name:'general',workspace_id:'w',last_sequence:4,read_sequence:1}]});
+let c = s.chats[0]; assert.equal(c.unread,3); assert.equal(c.workspaceId,'w');
+state.hostedHistory(s,{conversation:c.id,messages:[{id:'m2',conversation:c.id,text:'hello',outgoing:true,delivery:'stored',sequence:2},{id:'m4',conversation:c.id,text:'reply',outgoing:false,delivery:'received',sequence:4}]});
+state.hostedReceipt(s,{conversation:c.id,account_id:'alice',read_sequence:4,delivered_sequence:4});
+assert.equal(c.unread,0); assert.equal(c.messages[0].delivery,'stored','own reads are not recipient receipts');
+state.hostedReceipt(s,{conversation:c.id,account_id:'bob',read_sequence:0,delivered_sequence:2});
+assert.equal(c.messages[0].delivery,'delivered');
+state.hostedReceipt(s,{conversation:c.id,account_id:'bob',read_sequence:2,delivered_sequence:2});
+assert.equal(c.messages[0].delivery,'read');
+state.hostedHistory(s,{conversation:c.id,messages:[{id:'m2',conversation:c.id,text:'hello',outgoing:true,delivery:'stored',sequence:2}]});
+assert.equal(c.messages.length,2); assert.equal(c.messages[0].delivery,'read','late history must not regress receipts');
+state.hostedReceipt(s,{conversation:'hosted:other',account_id:'bob',read_sequence:999});
+assert.equal(c.readSequence,4);
+c.draft='keep this'; s.status.hosted.state='disconnected'; assert.equal(state.beginSend(s),null); assert.equal(c.draft,'keep this');
+assert.equal(state.deliveryLabel('stored',true),'Stored by server');
+console.log('PASS: hosted ordering, history deduplication, account-scoped receipts, unread cursors, workspace metadata, disconnected drafts');
+
+const reopened = state.create();
+state.snapshot(reopened,{status:{hosted:{state:'connected',account_id:'alice'}},messages:[{id:'cached',conversation:'hosted:c',text:'cached snapshot',outgoing:true,delivery:'stored'}]});
+state.hostedList(reopened,{conversations:[{conversation:'hosted:c',receipts:[{conversation:'hosted:c',account_id:'bob',read_sequence:3}]}]});
+state.hostedHistory(reopened,{conversation:'hosted:c',messages:[{id:'cached',conversation:'hosted:c',text:'cached snapshot',outgoing:true,delivery:'stored',sequence:3}]});
+assert.equal(reopened.chats[0].messages[0].delivery,'read','history must enrich a cached snapshot with receipt sequence');

@@ -31,7 +31,16 @@ fn valid_conversation(value: &str) -> bool {
         && value.len() <= 256
         && !value.chars().any(char::is_control)
         && value.trim() == value
-        && (value.starts_with("dm:") || value.starts_with("room:") || value.starts_with('#'))
+        && (value.starts_with("dm:")
+            || value.starts_with("room:")
+            || value.starts_with('#')
+            || value.strip_prefix("hosted:").is_some_and(|id| {
+                !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            }))
 }
 
 impl Drafts {

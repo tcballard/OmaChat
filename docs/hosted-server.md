@@ -281,3 +281,15 @@ through `tokio-tungstenite`.
   functionally, not under pressure.
 - No external security review has taken place. This document is the input to
   one.
+
+## Desktop metadata
+
+`list-conversations` now includes `workspaces` visible to the authenticated
+account, including empty workspaces, with `workspace_id`, `name`, and the
+account's `role`. Conversation summaries include persisted per-member
+`receipts`. These are additive response fields. The daemon's
+`hosted-conversations` forwards bounded workspace and receipt metadata within
+its shared IPC response budget. Server authorization remains authoritative;
+the desktop's owner-only choices do not grant permissions.
+
+See [hosted desktop evidence](hosted-desktop-evidence.md) for the slice 3 run.
