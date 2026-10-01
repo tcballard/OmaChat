@@ -179,6 +179,39 @@ class Session:
                        "error": "The daemon did not answer in time. The outcome is unknown; check before repeating it."})
 
 
+def read_theme(path):
+    """Read data only; reject malformed/oversized palettes without losing the last valid one."""
+    try:
+        with Path(path).open("rb") as stream:
+            raw = stream.read(16385)
+        if len(raw) > 16384:
+            return None
+        values = tomllib.loads(raw.decode())
+        return {key: value for key, value in values.items()
+                if key in ("background", "foreground", "accent", "color1", "color3")
+                and isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", value)}
+    except (OSError, UnicodeError, ValueError):
+        return None
+
+
+class ThemeWatcher:
+    def __init__(self, path):
+        self.path = path
+        self.current = None
+        self.next_check = 0
+
+    def poll(self, emit, now):
+        if now < self.next_check:
+            return
+        self.next_check = now + 1
+        palette = read_theme(self.path)
+        if palette is None:
+            palette = self.current if self.current is not None else {}
+        if palette != self.current:
+            self.current = palette
+            emit({"kind": "theme", "data": palette})
+
+
 def run(path):
     def emit(value):
         # One bounded frame at a time. Pipe backpressure stops socket reads,
@@ -187,23 +220,16 @@ def run(path):
         sys.stdout.buffer.flush()
 
     try:
-        # Read only the bounded, current desktop palette. Never parse executable
-        # theme files and never persist messages or keys in this adapter.
         theme_path = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "omarchy/current/theme/colors.toml"
-        try:
-            with theme_path.open("rb") as theme_file:
-                raw = theme_file.read(16385)
-            theme = tomllib.loads(raw.decode()) if len(raw) <= 16384 else {}
-            colors = {k: v for k, v in theme.items() if k in ("background", "foreground", "accent") and isinstance(v, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", v)}
-            emit({"kind": "theme", "data": colors})
-        except (OSError, UnicodeError, ValueError):
-            pass
+        theme = ThemeWatcher(theme_path)
+        theme.poll(emit, time.monotonic())
         with private_peer(path) as stream, selectors.DefaultSelector() as poll:
             session = Session(emit)
             incoming, commands = Lines(), Lines()
             poll.register(stream, selectors.EVENT_READ | selectors.EVENT_WRITE, "daemon")
             poll.register(sys.stdin, selectors.EVENT_READ, "ui")
             while True:
+                theme.poll(emit, time.monotonic())
                 session.check_deadlines()
                 poll.modify(stream, selectors.EVENT_READ | (selectors.EVENT_WRITE if session.output else 0), "daemon")
                 for key, flags in poll.select(0.1):

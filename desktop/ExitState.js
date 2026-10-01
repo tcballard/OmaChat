@@ -19,7 +19,8 @@ function describe(s) {
     var result = inspect(s), parts = [];
     if (s.settingsDirty) parts.push("Server settings have unapplied edits.");
     if (s.configBusy) parts.push("A configuration operation is still running.");
-    if (result.unsaved) parts.push(result.unsaved + " conversation(s) have unsaved draft changes.");
+    var drafts = result.unsaved - (s.settingsDirty ? 1 : 0);
+    if (drafts) parts.push(drafts === 1 ? "One conversation has unsaved draft changes." : drafts + " conversations have unsaved draft changes.");
     if (result.pending) parts.push("A save or send is still waiting for the daemon.");
     if (result.conflicts) parts.push("Resolve draft conflicts before saving and closing.");
     if (result.unknown) parts.push("A send has an unknown outcome. Check the conversation before resending.");

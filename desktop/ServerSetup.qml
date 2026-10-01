@@ -2,21 +2,20 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-Dialog {
+AppDialog {
     id: dialog
     required property var service
     readonly property var setup: service.setup
     property bool populating: false
+    property bool advanced: false
+    ThemeTokens { id: colors; source: dialog.service.theme }
+    theme: colors
+    dismissible: false
     objectName: "serverSetupDialog"
-    parent: Overlay.overlay
-    anchors.centerIn: parent
-    width: Math.min(560, parent.width - 24)
-    height: Math.min(660, parent.height - 24)
-    modal: true; focus: true
-    closePolicy: Popup.NoAutoClose
-    title: "Set up messaging"
+    title: "Connect to your server"
+    width: Math.min(560, parent.width - 32)
     function changed() { if (!populating && opened) service.settingsEdited(true) }
-    onOpened: { setup.read(config.text) }
+    onOpened: setup.read(config.text)
     Connections {
         target: dialog.setup
         function onLoaded() {
@@ -31,24 +30,42 @@ Dialog {
         }
     }
     contentItem: ScrollView {
-        id: scroll
-        clip: true
-        contentWidth: availableWidth
+        id: scroll; clip: true; contentWidth: availableWidth
+        implicitHeight: Math.min(form.implicitHeight, 510)
         ColumnLayout {
-            width: scroll.availableWidth; spacing: 12
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "1. Choose the config used by your daemon. If you start it with --config, select that same file here." }
-            TextField { id: config; objectName: "serverConfigPath"; Layout.fillWidth: true; placeholderText: "Default OmaChat configuration"; enabled: !dialog.setup.busy; onTextChanged: dialog.changed(); Accessible.name: "Daemon configuration file" }
-            Button { text: "Load file / discard unapplied edits"; enabled: !dialog.setup.busy; onClicked: dialog.setup.read(config.text) }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "2. Enter your server URL and the public key supplied by its operator. The operator can read messages. Saving does not test the connection." }
-            TextField { id: url; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "wss://chat.example"; Accessible.name: "Server URL"; onTextChanged: dialog.changed() }
-            TextField { id: pin; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "Server public key (64 hex characters)"; Accessible.name: "Pinned server public key"; onTextChanged: dialog.changed() }
-            TextField { id: displayName; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "Display name (optional)"; Accessible.name: "Display name"; onTextChanged: dialog.changed() }
-            TextField { id: invite; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "Invite code (optional)"; echoMode: TextInput.Password; Accessible.name: "Invite code"; onTextChanged: dialog.changed() }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; text: "Saving replaces retired transport settings with this server configuration. A private backup is created before replacement." }
-            Label { objectName: "setupError"; Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: !!text; text: dialog.setup.error }
-            Label { Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; visible: dialog.setup.restartRequired; text: "3. Settings saved. Restart the daemon using this configuration, then reconnect. This screen does not restart it.\n" + (dialog.setup.backup ? "Backup: " + dialog.setup.backup : "") }
-            Button { objectName: "saveServerSettings"; text: dialog.setup.busy ? "Working…" : "Save server settings"; enabled: !dialog.setup.busy && !!dialog.setup.configRevision && config.text === dialog.setup.path; onClicked: dialog.setup.save({url:url.text.trim(), pinned_server_public_key:pin.text.trim(), display_name:displayName.text.trim(), invite_code:invite.text.trim()}) }
-            Button { text: "Close / discard unapplied edits"; enabled: !dialog.setup.busy; onClicked: { dialog.service.settingsEdited(false); dialog.close() } }
+            id: form; width: scroll.availableWidth; spacing: 10
+            Label { Layout.fillWidth: true; text: "Get the address and public key from your server’s operator."; color: colors.muted; font.pixelSize: 13; wrapMode: Text.WordWrap }
+            Label { text: "Server address"; color: colors.ink; font.pixelSize: 13; Layout.topMargin: 10 }
+            AppField { id: url; objectName: "serverUrl"; theme: colors; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "wss://chat.example"; Accessible.name: "Server address"; onTextChanged: dialog.changed() }
+            Label { text: "Server public key"; color: colors.ink; font.pixelSize: 13; Layout.topMargin: 4 }
+            AppField { id: pin; objectName: "serverPin"; theme: colors; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "64 hexadecimal characters"; maximumLength: 64; Accessible.name: "Server public key"; onTextChanged: dialog.changed() }
+            Label { Layout.fillWidth: true; text: "This key verifies you’re connecting to the right server."; color: colors.muted; font.pixelSize: 12; wrapMode: Text.WordWrap }
+            Label { text: "Display name · optional"; color: colors.ink; font.pixelSize: 13; Layout.topMargin: 4 }
+            AppField { id: displayName; theme: colors; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "How people will see you"; maximumLength: 80; Accessible.name: "Display name, optional"; onTextChanged: dialog.changed() }
+            Label { text: "Invite code · optional"; color: colors.ink; font.pixelSize: 13; Layout.topMargin: 4 }
+            AppField { id: invite; theme: colors; enabled: !dialog.setup.busy; Layout.fillWidth: true; placeholderText: "If your server requires an invitation"; maximumLength: 128; echoMode: TextInput.Password; Accessible.name: "Invite code, optional"; onTextChanged: dialog.changed() }
+            Label { Layout.fillWidth: true; text: "The server operator can read messages. Your existing settings are backed up before saving."; color: colors.muted; font.pixelSize: 12; wrapMode: Text.WordWrap; Layout.topMargin: 8 }
+            AppButton { theme: colors; quiet: true; text: dialog.advanced ? "Hide configuration file" : "Choose configuration file…"; onClicked: dialog.advanced = !dialog.advanced }
+            ColumnLayout {
+                visible: dialog.advanced; Layout.fillWidth: true; spacing: 8
+                Label { text: "Use the same file as your daemon."; color: colors.muted; font.pixelSize: 12 }
+                AppField { id: config; objectName: "serverConfigPath"; theme: colors; Layout.fillWidth: true; placeholderText: "Default OmaChat configuration"; enabled: !dialog.setup.busy; onTextChanged: dialog.changed(); Accessible.name: "Daemon configuration file" }
+                AppButton { theme: colors; text: "Load file / discard edits"; enabled: !dialog.setup.busy; onClicked: dialog.setup.read(config.text) }
+            }
+        }
+    }
+    footer: Item {
+        implicitHeight: footerContent.implicitHeight + 32
+        ColumnLayout {
+            id: footerContent; anchors.fill: parent; anchors.margins: 16; spacing: 10
+            Label { objectName: "setupError"; Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: !!text; text: dialog.setup.error; textFormat: Text.PlainText; color: colors.warning; font.pixelSize: 13; Accessible.role: Accessible.AlertMessage }
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: dialog.setup.restartRequired; text: "Settings saved. Restart OmaChat’s daemon to connect with these settings."; color: colors.accent; font.pixelSize: 13 }
+            RowLayout {
+                Layout.fillWidth: true
+                AppButton { theme: colors; text: dialog.setup.restartRequired ? "Done" : "Cancel"; enabled: !dialog.setup.busy; onClicked: { dialog.service.settingsEdited(false); dialog.close() } }
+                Item { Layout.fillWidth: true }
+                AppButton { objectName: "saveServerSettings"; theme: colors; primary: true; text: dialog.setup.busy ? "Saving…" : "Save settings"; enabled: !dialog.setup.busy && !!dialog.setup.configRevision && config.text === dialog.setup.path && !!url.text.trim() && /^[0-9a-fA-F]{64}$/.test(pin.text.trim()); onClicked: dialog.setup.save({url:url.text.trim(), pinned_server_public_key:pin.text.trim(), display_name:displayName.text.trim(), invite_code:invite.text.trim()}) }
+            }
         }
     }
 }

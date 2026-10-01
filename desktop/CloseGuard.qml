@@ -53,34 +53,41 @@ Item {
             guard.failure = "Not all changes could be saved or acknowledged within 35 seconds. Keep editing to resolve offline, storage, conflict, or pending send states. Your text is still here."
         }
     }
-    Dialog {
+    ThemeTokens { id: colors; source: guard.service.theme }
+    AppDialog {
+        theme: colors; dismissible: false
         id: prompt
         objectName: "closeGuardDialog"
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(480, parent.width - 32)
-        modal: true; focus: true
         title: "Finish before closing?"
         closePolicy: Popup.NoAutoClose
-        contentItem: ColumnLayout {
+        contentItem: ScrollView {
+            id: closeScroll
+            contentWidth: availableWidth
+            implicitHeight: closeColumn.implicitHeight
+            ColumnLayout {
+            id: closeColumn; width: closeScroll.availableWidth
             spacing: 14
             Label {
-                Layout.fillWidth: true; wrapMode: Text.WordWrap
+                Layout.fillWidth: true; wrapMode: Text.WordWrap; color: colors.ink; font.pixelSize: 14
                 text: { guard.service.revision; return ExitState.describe(guard.service.state) }
             }
-            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; visible: !!guard.failure; text: guard.failure }
-            Button {
-                objectName: "saveAndClose"
+            Label { Layout.fillWidth: true; wrapMode: Text.WordWrap; color: colors.warning; font.pixelSize: 13; visible: !!guard.failure; text: guard.failure }
+            AppButton {
+                theme: colors; Layout.fillWidth: true;
+                objectName: "saveAndClose"; primary: true
                 text: guard.waiting ? "Waiting for saved changes…" : "Save and close"
                 enabled: !guard.waiting && guard.supportsSave && !guard.work.conflicts && !guard.work.unknown
                 onClicked: guard.saveAndClose()
             }
-            Button {
+            AppButton {
+                theme: colors; Layout.fillWidth: true;
                 objectName: "keepEditing"
                 text: "Keep editing"; focus: true
                 onClicked: { guard.waiting = false; deadline.stop(); prompt.close() }
             }
-            Button { objectName: "closeAnyway"; text: "Close anyway"; onClicked: guard.finish() }
+            AppButton {
+                theme: colors; Layout.fillWidth: true; destructive: true; quiet: true; objectName: "closeAnyway"; text: "Close anyway"; onClicked: guard.finish() }
+            }
         }
     }
 }

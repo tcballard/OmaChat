@@ -20,3 +20,17 @@ See [the delivery plan](../docs/hosted-server-plan.md) for deployment and securi
 Tests: `node desktop/tests/test_state.js`, `node desktop/tests/test_drafts.js`,
 `node desktop/tests/test_hosted.js`, and `QT_QPA_PLATFORM=offscreen python -m unittest discover -s desktop/tests`.
 The Qt tests require PySide6. `python scripts/test-hosted-desktop.py` drives two real daemons.
+
+## Appearance
+
+OmaChat follows the current Omarchy palette in
+`$XDG_CONFIG_HOME/omarchy/current/theme/colors.toml` (default `~/.config`).
+Changes, including theme symlink switches, apply within about one second while
+connected to the local daemon. A missing palette uses Qt's system palette;
+malformed updates retain the last valid palette. Background and accent hues
+come from the user's setup; text contrast is adjusted for readability.
+The window, dialogs, dropdowns, focus indicators and selection colors share
+these tokens. Changing theme preserves the active draft, selection and focus.
+
+See the [UX review and screenshots](../docs/desktop-ux-review.md).
+Run `node desktop/tests/test_theme.js` for palette contrast checks.
