@@ -43,6 +43,9 @@ jobs:
       - name: Build binaries
         run: cargo build --workspace --bins --locked
 
+      - name: Hosted desktop adapters against two real daemons
+        run: python3 scripts/test-hosted-desktop.py
+
       - name: Check binary version contract
         run: ./scripts/check-version-contract.sh
 

@@ -21,7 +21,7 @@ import tomllib
 VERSION = 2
 LIMIT = 65536
 TOPICS = ["status", "conversations", "messages", "delivery"]
-ALLOWED = {"send", "status", "list-rooms", "join-room", "leave-room", "room-members", "list-drafts", "get-draft", "save-draft"}
+ALLOWED = {"send", "status", "list-rooms", "join-room", "leave-room", "room-members", "list-drafts", "get-draft", "save-draft", "hosted-conversations", "hosted-history", "hosted-mark-read", "hosted-open-dm", "hosted-claim-handle", "hosted-resolve-handle", "hosted-create-workspace", "hosted-create-channel", "hosted-add-member"}
 # Relay round trips (connect and response timeouts of 20 s each in the daemon)
 # take longer than local storage or status requests.
 DEADLINES = {"send": 30, "join-room": 30, "leave-room": 30}
@@ -111,7 +111,7 @@ class Session:
         if not self.ready or method not in ALLOWED:
             self.emit({"kind": "response", "id": identity, "ok": False, "error": "Daemon is not ready or command is unsupported"})
             return
-        self.request(method, value.get("params"), identity, DEADLINES.get(method))
+        self.request(method, value.get("params"), identity, 30 if method.startswith("hosted-") else DEADLINES.get(method))
 
     def receive(self, value):
         if value.get("version") != VERSION:
@@ -157,7 +157,11 @@ class Session:
                 self.emit({"kind": "event", "data": event})
             self.events.clear()
             self.request("list-rooms", target="rooms")
-        elif target == "rooms":
+            if result.get("status", {}).get("hosted", {}).get("state") == "connected":
+                self.request("hosted-conversations", target="hosted-list", deadline=30)
+        elif target == "hosted-list":
+            self.emit({"kind": "hosted-list", "ok": ok, "data": result, "error": error if not ok else ""})
+        elif target in ("rooms", "hosted-list"):
             if ok:
                 self.emit({"kind": "rooms", "data": result})
         else:
@@ -174,7 +178,7 @@ class Session:
                 raise TimeoutError("Daemon stopped answering; pending delivery may be unknown")
             del self.pending[identity]
             self.expired[identity] = target
-            if target == "rooms":
+            if target in ("rooms", "hosted-list"):
                 continue
             self.emit({"kind": "response", "id": target, "ok": False, "unknown": True,
                        "error": "The daemon did not answer in time. The outcome is unknown; check before repeating it."})

@@ -30,8 +30,8 @@ deployment profile and the exact list of verified claims are in
 [docs/hosted-server.md](docs/hosted-server.md). `omachatd` connects to such a
 server when its `hosted` configuration is set, pins the server key, and exposes
 hosted conversations to every IPC client through `send` and the `hosted-*`
-commands. No server is deployed; the desktop does not yet use the hosted
-commands. The remaining work is listed in
+commands. No server is deployed. The desktop supports hosted history, handles, receipts
+and workspace administration; see [hosted desktop evidence](docs/hosted-desktop-evidence.md). The remaining work is listed in
 [docs/hosted-server-plan.md](docs/hosted-server-plan.md).
 
 ## Desktop preview

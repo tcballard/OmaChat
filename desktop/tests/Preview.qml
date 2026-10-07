@@ -32,6 +32,12 @@ ApplicationWindow {
         property var state: State.create()
         property int revision: 0
         property var theme: ({})
+        property var hosted: ({state:"unconfigured"})
+        property bool hostedConnected: false
+        property var workspaces: []
+        function refreshHosted() {}
+        function loadHistory(older) {}
+        function administer(method, workspace, value) {}
         readonly property bool ready: { revision; return state.ready }
         readonly property string notice: { revision; return state.notice }
         readonly property var chats: { revision; return state.chats.slice() }
