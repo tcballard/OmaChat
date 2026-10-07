@@ -43,6 +43,9 @@ jobs:
       - name: Build binaries
         run: cargo build --workspace --bins --locked
 
+      - name: Verify hosted first-install secret permissions
+        run: sudo bash scripts/test-hosted-setup.sh target/debug/omachat-serverd
+
       - name: Hosted desktop adapters against two real daemons
         run: python3 scripts/test-hosted-desktop.py
 

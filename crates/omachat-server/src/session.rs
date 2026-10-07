@@ -314,7 +314,20 @@ where
         })
         .await;
     let frame = match result {
-        Ok(value) => success_frame(&request.id, value),
+        Ok(value) => {
+            let frame = success_frame(&request.id, value);
+            if frame.len() <= MAX_FRAME_BYTES {
+                frame
+            } else {
+                failure_frame(
+                    &request.id,
+                    &ServerError::new(
+                        ErrorCode::TooLarge,
+                        "response exceeds frame budget; use a paged request",
+                    ),
+                )
+            }
+        }
         Err(error) => failure_frame(&request.id, &error),
     };
     send_text(socket, frame).await?;
@@ -576,6 +589,12 @@ async fn send_text<S>(socket: &mut WebSocketStream<S>, frame: String) -> Result<
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    if frame.len() > MAX_FRAME_BYTES {
+        return Err(SessionError::Service(ServerError::new(
+            ErrorCode::TooLarge,
+            "outgoing frame exceeds wire budget",
+        )));
+    }
     socket
         .send(Message::Text(frame.into()))
         .await

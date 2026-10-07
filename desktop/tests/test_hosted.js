@@ -25,3 +25,19 @@ state.snapshot(reopened,{status:{hosted:{state:'connected',account_id:'alice'}},
 state.hostedList(reopened,{conversations:[{conversation:'hosted:c',receipts:[{conversation:'hosted:c',account_id:'bob',read_sequence:3}]}]});
 state.hostedHistory(reopened,{conversation:'hosted:c',messages:[{id:'cached',conversation:'hosted:c',text:'cached snapshot',outgoing:true,delivery:'stored',sequence:3}]});
 assert.equal(reopened.chats[0].messages[0].delivery,'read','history must enrich a cached snapshot with receipt sequence');
+
+const paged = state.create();
+const cursor = 'c:' + 'a'.repeat(32);
+state.hostedList(paged, {workspaces:[{workspace_id:'w',name:'Team',role:'owner'}],conversations:[],next_cursor:cursor});
+assert.equal(state.nextHostedPage(paged,{next_cursor:cursor},true),cursor);
+state.hostedList(paged, {workspaces:[],conversations:[{conversation:'hosted:later',name:'Later channel'}],next_cursor:null});
+assert.equal(paged.workspaces.length,1,'continuation cannot erase earlier workspaces');
+assert.equal(paged.chats[0].id,'hosted:later');
+assert.equal(state.nextHostedPage(paged,{next_cursor:cursor},false),null,'repeated cursor must stop');
+assert.match(paged.notice,/repeated cursor/);
+assert.equal(state.nextHostedPage(paged,{next_cursor:'invalid'},true),null);
+state.hostedHistory(paged,{conversation:'hosted:later',messages:[{id:'last',conversation:'hosted:later',text:'all',outgoing:true,delivery:'stored',sequence:5}],next_before_sequence:null});
+assert.equal(paged.chats[0].hasOlder,false,'last nonempty page must stop paging');
+state.hostedConversation(paged,{conversation:'hosted:later',peer_read_sequence:5,members_truncated:true,member_count:65});
+assert.equal(paged.chats[0].messages[0].delivery,'read','receipts outside roster preview still count');
+console.log('PASS: paged workspace preservation, cursor bounds, final history page, large-roster receipts');

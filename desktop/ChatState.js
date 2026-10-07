@@ -111,14 +111,35 @@ function hostedConversation(s, value) {
     c.lastSequence = Math.max(c.lastSequence || 0, value.last_sequence || 0);
     c.readSequence = Math.max(c.readSequence || 0, value.read_sequence || 0);
     c.unread = Math.max(0, c.lastSequence - c.readSequence);
+    c.peerRead = Math.max(c.peerRead || 0, value.peer_read_sequence || 0);
+    c.peerDelivered = Math.max(c.peerDelivered || 0, value.peer_delivered_sequence || 0);
+    hostedReceipts(s, c);
     (value.receipts || []).forEach(function(p) { hostedReceipt(s, p); });
     return c;
 }
 function hostedList(s, data) {
-    s.workspaces = (data.workspaces || []).slice(0, 128);
+    (data.workspaces || []).forEach(function(w) {
+        var index = s.workspaces.findIndex(function(old) { return old.workspace_id === w.workspace_id; });
+        if (index >= 0) s.workspaces[index] = w;
+        else if (s.workspaces.length < 128) s.workspaces.push(w);
+        else s.notice = "This session has reached its 128-workspace limit.";
+    });
     (data.conversations || []).forEach(function(v) { hostedConversation(s, v); });
+    if ((data.conversations || []).some(function(v) { return !s.chats.some(function(c) { return c.id === v.conversation; }); })) s.notice = "This session has reached its 128-conversation limit; some conversations cannot be shown.";
     if (!s.active && s.chats.length) select(s, s.chats[0].id);
-    if (data.truncated) s.notice = "Hosted conversation list is incomplete; server limits apply.";
+    if (data.truncated && !data.next_cursor) s.notice = "Hosted conversation list is incomplete; server limits apply.";
+}
+function nextHostedPage(s, data, first) {
+    if (first || !s.hostedPaging) s.hostedPaging = {count:0, seen:{}};
+    s.hostedPaging.count++;
+    var cursor = data.next_cursor;
+    if (!cursor) return null;
+    if (typeof cursor !== "string" || !/^[wc]:[a-fA-F0-9]{32}$/.test(cursor) || s.hostedPaging.seen[cursor] || s.hostedPaging.count >= 128) {
+        s.notice = "Conversation refresh stopped at an invalid or repeated cursor or its paging limit; reconnect to retry.";
+        return null;
+    }
+    s.hostedPaging.seen[cursor] = true;
+    return cursor;
 }
 function hostedReceipts(s, c) {
     c.messages.forEach(function(m) {
@@ -143,6 +164,6 @@ function hostedHistory(s, data) {
     var c = ensure(s, data.conversation); if (!c) return;
     (data.messages || []).forEach(function(m) { applyMessage(s, m, true, false); });
     c.historyLoaded = true;
-    c.hasOlder = !!data.truncated || (data.messages || []).length > 0;
+    c.hasOlder = !!data.truncated || (Object.prototype.hasOwnProperty.call(data, "next_before_sequence") ? data.next_before_sequence !== null : (data.messages || []).length > 0);
     c.unread = Math.max(0, (c.lastSequence || 0) - (c.readSequence || 0));
 }

@@ -326,7 +326,10 @@ impl DaemonCore {
                 )?;
                 Ok(confirmation_issue_value(&issued))
             }
-            Command::HostedConversations => self.hosted_conversations().await,
+            Command::HostedConversations => self.hosted_conversations(None).await,
+            Command::HostedConversationsPage { cursor } => {
+                self.hosted_conversations(Some(cursor)).await
+            }
             Command::HostedHistory {
                 conversation,
                 before_sequence,
@@ -395,6 +398,7 @@ impl DaemonCore {
         if text.trim().is_empty() || text.len() > 4096 {
             return Err(CoreError::InvalidMessage);
         }
+        omachat_proto::hosted::validate_text(text).map_err(CoreError::Hosted)?;
         let id = parse_hosted_conversation(conversation).ok_or(CoreError::InvalidConversation)?;
         self.send_hosted(id, text, unix_time()?).await
     }
@@ -737,22 +741,45 @@ impl DaemonCore {
         let Ok(handle) = self.hosted_handle() else {
             return;
         };
-        let Ok(list) = handle
-            .call("list-conversations", serde_json::Value::Null)
-            .await
-        else {
-            return;
-        };
-        let summaries = self.replace_hosted_conversations(&list);
-        for summary in summaries {
-            self.publish_topic_event(
-                omachat_proto::ipc::Topic::Conversations,
-                self.hosted_conversation_value(&summary),
-            );
+        let mut cursor = None;
+        // Bounded background refresh; clients can explicitly page further.
+        for _ in 0..128 {
+            let result = match &cursor {
+                None => {
+                    handle
+                        .call("list-conversations", serde_json::Value::Null)
+                        .await
+                }
+                Some(value) => {
+                    handle
+                        .call(
+                            "list-conversations-page",
+                            serde_json::json!({"cursor": value}),
+                        )
+                        .await
+                }
+            };
+            let Ok(list) = result else {
+                return;
+            };
+            for summary in self.cache_hosted_conversations(&list) {
+                self.publish_topic_event(
+                    omachat_proto::ipc::Topic::Conversations,
+                    self.hosted_conversation_value(&summary),
+                );
+            }
+            let next = list
+                .get("next_cursor")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            if next.is_none() || next == cursor {
+                break;
+            }
+            cursor = next;
         }
     }
 
-    fn replace_hosted_conversations(&self, list: &serde_json::Value) -> Vec<serde_json::Value> {
+    fn cache_hosted_conversations(&self, list: &serde_json::Value) -> Vec<serde_json::Value> {
         let Some(conversations) = list
             .get("conversations")
             .and_then(serde_json::Value::as_array)
@@ -764,7 +791,6 @@ impl DaemonCore {
             .hosted_conversations
             .lock()
             .expect("hosted conversations mutex poisoned");
-        cache.clear();
         for summary in conversations {
             if let Some(id) = summary
                 .get("conversation_id")
@@ -773,7 +799,7 @@ impl DaemonCore {
                 cache.insert(id.to_owned(), summary.clone());
             }
         }
-        cache.values().cloned().collect()
+        conversations.clone()
     }
 
     /// IPC shape of a server conversation summary. Direct conversations are
@@ -814,7 +840,10 @@ impl DaemonCore {
             "delivered_sequence": summary.get("delivered_sequence").cloned().unwrap_or(serde_json::Value::Null),
             "read_sequence": summary.get("read_sequence").cloned().unwrap_or(serde_json::Value::Null),
             "receipts": summary.get("receipts").and_then(serde_json::Value::as_array).map(|receipts| receipts.iter().take(HOSTED_MEMBERS_PER_CONVERSATION).map(hosted_receipt_value).collect::<Vec<_>>()).unwrap_or_default(),
-            "member_count": members.len(),
+            "member_count": summary.get("member_count").cloned().unwrap_or_else(|| serde_json::json!(members.len())),
+            "members_truncated": summary.get("members_truncated").cloned().unwrap_or(serde_json::Value::Bool(false)),
+            "peer_delivered_sequence": summary.get("peer_delivered_sequence").cloned().unwrap_or(serde_json::Value::Null),
+            "peer_read_sequence": summary.get("peer_read_sequence").cloned().unwrap_or(serde_json::Value::Null),
             "members": members.iter().take(HOSTED_MEMBERS_PER_CONVERSATION).cloned().collect::<Vec<_>>(),
         })
     }
@@ -1133,26 +1162,46 @@ impl DaemonCore {
             .map_err(hosted_error)
     }
 
-    async fn hosted_conversations(&self) -> Result<serde_json::Value, CoreError> {
-        let list = self
-            .hosted_call("list-conversations", serde_json::Value::Null)
-            .await?;
+    async fn hosted_conversations(
+        &self,
+        cursor: Option<String>,
+    ) -> Result<serde_json::Value, CoreError> {
+        let list = match cursor {
+            None => {
+                self.hosted_call("list-conversations", serde_json::Value::Null)
+                    .await?
+            }
+            Some(cursor) => {
+                if cursor.len() != 34
+                    || !matches!(cursor.get(..2), Some("w:" | "c:"))
+                    || !cursor.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
+                {
+                    return Err(CoreError::Hosted(omachat_proto::hosted::ServerError::new(
+                        omachat_proto::hosted::ErrorCode::InvalidRequest,
+                        "invalid conversation cursor",
+                    )));
+                }
+                self.hosted_call(
+                    "list-conversations-page",
+                    serde_json::json!({"cursor": cursor}),
+                )
+                .await?
+            }
+        };
         let conversations = self
-            .replace_hosted_conversations(&list)
+            .cache_hosted_conversations(&list)
             .iter()
             .map(|summary| self.hosted_conversation_value(summary))
             .collect::<Vec<_>>();
-        let (conversations, truncated) =
-            fit_ipc_budget_limit(conversations, false, HOSTED_IPC_BUDGET_BYTES * 3 / 4);
         let workspaces = list
             .get("workspaces")
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let (workspaces, workspace_truncated) =
-            fit_ipc_budget_limit(workspaces, false, HOSTED_IPC_BUDGET_BYTES / 4);
+        // The entire server page is below 16 KiB; the IPC projection fits its
+        // 48 KiB budget without dropping rows or invalidating the cursor.
         Ok(
-            serde_json::json!({"conversations": conversations, "workspaces": workspaces, "truncated": truncated || workspace_truncated}),
+            serde_json::json!({"conversations": conversations, "workspaces": workspaces, "next_cursor": list.get("next_cursor").cloned().unwrap_or(serde_json::Value::Null), "truncated": list.get("next_cursor").is_some_and(serde_json::Value::is_string)}),
         )
     }
 
@@ -1204,6 +1253,7 @@ impl DaemonCore {
             "conversation": conversation,
             "messages": messages,
             "truncated": truncated,
+            "next_before_sequence": result.get("next_before_sequence").cloned().unwrap_or(serde_json::Value::Null),
         }))
     }
 

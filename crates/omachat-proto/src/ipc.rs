@@ -50,6 +50,9 @@ pub enum Command {
     },
     /// Hosted server (ADR 0007): every conversation the account belongs to.
     HostedConversations,
+    HostedConversationsPage {
+        cursor: String,
+    },
     /// Hosted server: page backwards through one conversation's history.
     HostedHistory {
         conversation: String,
@@ -171,6 +174,11 @@ enum StrictRequestWire {
         version: u16,
         id: String,
     },
+    HostedConversationsPage {
+        version: u16,
+        id: String,
+        params: HostedPageParams,
+    },
     HostedHistory {
         version: u16,
         id: String,
@@ -257,6 +265,12 @@ struct ConfirmationParams {
 #[serde(deny_unknown_fields)]
 struct SubscribeParams {
     topics: Vec<Topic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostedPageParams {
+    cursor: String,
 }
 
 #[derive(Deserialize)]
@@ -362,6 +376,17 @@ impl From<StrictRequestWire> for Request {
             StrictRequestWire::HostedConversations { version, id } => {
                 (version, id, Command::HostedConversations)
             }
+            StrictRequestWire::HostedConversationsPage {
+                version,
+                id,
+                params,
+            } => (
+                version,
+                id,
+                Command::HostedConversationsPage {
+                    cursor: params.cursor,
+                },
+            ),
             StrictRequestWire::HostedHistory {
                 version,
                 id,

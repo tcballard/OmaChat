@@ -627,3 +627,100 @@ async fn panic_quiesces_hosted_transport_before_erasing_credentials() {
     daemon.shutdown().await;
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn daemon_preserves_cursors_and_every_large_history_message() {
+    let directory = tempdir().unwrap();
+    let server = TestServer::start(directory.path(), None).await;
+    let alice = Daemon::start(hosted_config(server.address, server.public_key, "Alice")).await;
+    alice.wait_connected().await;
+    let workspace = alice
+        .ok(Command::HostedCreateWorkspace {
+            name: "Paging".into(),
+        })
+        .await["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut expected = std::collections::BTreeSet::new();
+    for index in 0..40 {
+        let result = alice
+            .ok(Command::HostedCreateChannel {
+                workspace_id: workspace.clone(),
+                name: format!("channel{index}"),
+            })
+            .await;
+        expected.insert(format!(
+            "hosted:{}",
+            result["conversation_id"].as_str().unwrap()
+        ));
+    }
+    let mut result = alice.ok(Command::HostedConversations).await;
+    let mut got = std::collections::BTreeSet::new();
+    let mut cursors = std::collections::HashSet::new();
+    loop {
+        assert!(result.to_string().len() < omachat_proto::ipc::MAX_LINE_BYTES);
+        for row in result["conversations"].as_array().unwrap() {
+            assert!(got.insert(row["conversation"].as_str().unwrap().to_owned()));
+        }
+        let Some(cursor) = result["next_cursor"].as_str().map(str::to_owned) else {
+            break;
+        };
+        assert!(cursors.insert(cursor.clone()));
+        result = alice.ok(Command::HostedConversationsPage { cursor }).await;
+    }
+    assert!(!cursors.is_empty());
+    assert_eq!(got, expected);
+    let conversation = got.first().unwrap().clone();
+    for index in 0..5 {
+        alice
+            .ok(Command::Send {
+                conversation: conversation.clone(),
+                text: format!("{index}{}", "x".repeat(4095)),
+            })
+            .await;
+    }
+    let mut before = None;
+    let mut sequences = std::collections::BTreeSet::new();
+    loop {
+        let page = alice
+            .ok(Command::HostedHistory {
+                conversation: conversation.clone(),
+                before_sequence: before,
+                limit: Some(50),
+            })
+            .await;
+        for message in page["messages"].as_array().unwrap() {
+            assert_eq!(message["text"].as_str().unwrap().len(), 4096);
+            assert!(sequences.insert(message["sequence"].as_u64().unwrap()));
+        }
+        before = page["next_before_sequence"].as_u64();
+        if before.is_none() {
+            break;
+        }
+    }
+    assert_eq!(sequences, std::collections::BTreeSet::from([1, 2, 3, 4, 5]));
+    assert!(
+        alice
+            .request(Command::HostedConversationsPage {
+                cursor: "x".repeat(20000)
+            })
+            .await
+            .is_err()
+    );
+    assert!(
+        alice
+            .request(Command::Send {
+                conversation: conversation.clone(),
+                text: "\u{0000}".repeat(2200)
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        alice.ok(Command::Status).await["hosted"]["state"],
+        "connected"
+    );
+    alice.shutdown().await;
+    server.stop().await;
+}

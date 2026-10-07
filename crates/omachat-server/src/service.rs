@@ -19,6 +19,7 @@ use crate::{
     },
 };
 use omachat_crypto::{DisplayName, GlobalHandle};
+use omachat_proto::hosted::{MAX_PAGE_ITEMS, MAX_RESULT_BYTES};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
@@ -401,15 +402,38 @@ impl Service {
                     })?;
                 Ok(conversation_json(&summary))
             }
-            Command::ListConversations => {
-                let list = self
+            Command::ListConversations => self.conversation_page(account_id, None),
+            Command::ListConversationsPage { cursor } => {
+                self.conversation_page(account_id, cursor.as_deref())
+            }
+            Command::ConversationMembers {
+                conversation_id,
+                after_account_id,
+            } => {
+                self.require_member(&conversation_id, account_id)?;
+                let after = after_account_id.as_deref().unwrap_or_default();
+                validate_page_id(after)?;
+                let rows = self
                     .storage
-                    .conversations_for(account_id)
+                    .members_page(&conversation_id, after, MAX_PAGE_ITEMS + 1)
                     .map_err(storage_error)?;
-                Ok(json!({
-                    "conversations": list.iter().map(conversation_json).collect::<Vec<_>>(),
-                    "workspaces": self.storage.workspaces_for(account_id).map_err(storage_error)?.iter().map(|(id, name, role)| json!({"workspace_id": id, "name": name, "role": role})).collect::<Vec<_>>(),
-                }))
+                let mut page =
+                    json!({"conversation_id": conversation_id, "members": [], "next_cursor": null});
+                let total = rows.len();
+                for (index, (member, receipt)) in rows.into_iter().enumerate() {
+                    let entry = json!({"account_id": member.account_id, "handle": member.handle, "display_name": member.display_name, "delivered_sequence": receipt.delivered_sequence, "read_sequence": receipt.read_sequence});
+                    if index == MAX_PAGE_ITEMS as usize
+                        || !push_page_item(&mut page, "members", entry)
+                    {
+                        break;
+                    }
+                    page["next_cursor"] = if index + 1 < total {
+                        json!(member.account_id)
+                    } else {
+                        Value::Null
+                    };
+                }
+                Ok(page)
             }
             Command::Send {
                 conversation_id,
@@ -459,12 +483,36 @@ impl Service {
                     .clamp(1, MAX_HISTORY_LIMIT);
                 let messages = self
                     .storage
-                    .history(&conversation_id, before_sequence.unwrap_or(u64::MAX), limit)
+                    .history(
+                        &conversation_id,
+                        before_sequence.unwrap_or(u64::MAX),
+                        limit + 1,
+                    )
                     .map_err(storage_error)?;
-                Ok(json!({
-                    "conversation_id": conversation_id,
-                    "messages": messages.iter().map(message_json).collect::<Vec<_>>(),
-                }))
+                let total = messages.len();
+                let mut page = json!({"conversation_id": conversation_id, "messages": [], "next_before_sequence": null});
+                // Admit newest first so every omitted older row remains reachable.
+                for (index, message) in messages.iter().rev().enumerate() {
+                    if index == limit as usize
+                        || !push_page_item(&mut page, "messages", message_json(message))
+                    {
+                        break;
+                    }
+                    page["next_before_sequence"] = if index + 1 < total {
+                        json!(message.sequence)
+                    } else {
+                        Value::Null
+                    };
+                }
+                let accepted = page["messages"].as_array_mut().expect("page array");
+                if accepted.is_empty() && total != 0 {
+                    return Err(ServerError::new(
+                        ErrorCode::TooLarge,
+                        "stored message cannot fit the history frame; no messages were skipped",
+                    ));
+                }
+                accepted.reverse();
+                Ok(page)
             }
             Command::MarkDelivered {
                 conversation_id,
@@ -475,6 +523,70 @@ impl Service {
                 sequence,
             } => self.receipt(account_id, &conversation_id, sequence, true),
         }
+    }
+
+    fn conversation_page(
+        &self,
+        account_id: &str,
+        cursor: Option<&str>,
+    ) -> Result<Value, ServerError> {
+        let (kind, after) = match cursor {
+            None => ("w", ""),
+            Some(cursor) => cursor.split_once(':').ok_or_else(|| {
+                ServerError::new(ErrorCode::InvalidRequest, "invalid conversation cursor")
+            })?,
+        };
+        if !matches!(kind, "w" | "c") {
+            return Err(ServerError::new(
+                ErrorCode::InvalidRequest,
+                "invalid conversation cursor",
+            ));
+        }
+        validate_page_id(after)?;
+        let mut entries = Vec::new();
+        if kind == "w" {
+            for (id, name, role) in self
+                .storage
+                .workspaces_page(account_id, after, MAX_PAGE_ITEMS + 1)
+                .map_err(storage_error)?
+            {
+                entries.push((
+                    format!("w:{id}"),
+                    "workspaces",
+                    json!({"workspace_id": id, "name": name, "role": role}),
+                ));
+            }
+        }
+        if entries.len() <= MAX_PAGE_ITEMS as usize {
+            for summary in self
+                .storage
+                .conversations_page(
+                    account_id,
+                    if kind == "c" { after } else { "" },
+                    MAX_PAGE_ITEMS + 1,
+                )
+                .map_err(storage_error)?
+            {
+                entries.push((
+                    format!("c:{}", summary.id),
+                    "conversations",
+                    conversation_json(&summary),
+                ));
+            }
+        }
+        let total = entries.len();
+        let mut page = json!({"conversations": [], "workspaces": [], "next_cursor": null});
+        for (index, (cursor, field, entry)) in entries.into_iter().enumerate() {
+            if index == MAX_PAGE_ITEMS as usize || !push_page_item(&mut page, field, entry) {
+                break;
+            }
+            page["next_cursor"] = if index + 1 < total {
+                json!(cursor)
+            } else {
+                Value::Null
+            };
+        }
+        Ok(page)
     }
 
     fn receipt(
@@ -645,6 +757,10 @@ pub fn conversation_json(summary: &ConversationSummary) -> Value {
         "last_sequence": summary.last_sequence,
         "delivered_sequence": summary.delivered_sequence,
         "read_sequence": summary.read_sequence,
+        "member_count": summary.member_count,
+        "members_truncated": summary.member_count > summary.members.len() as u64,
+        "peer_delivered_sequence": summary.peer_delivered_sequence,
+        "peer_read_sequence": summary.peer_read_sequence,
         "receipts": summary.receipts.iter().map(receipt_json).collect::<Vec<_>>(),
         "members": summary.members.iter().map(|member| json!({
             "account_id": member.account_id,
@@ -652,6 +768,27 @@ pub fn conversation_json(summary: &ConversationSummary) -> Value {
             "display_name": member.display_name,
         })).collect::<Vec<_>>(),
     })
+}
+
+fn validate_page_id(value: &str) -> Result<(), ServerError> {
+    if !value.is_empty() && (value.len() != 32 || !value.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return Err(ServerError::new(
+            ErrorCode::InvalidRequest,
+            "invalid page cursor",
+        ));
+    }
+    Ok(())
+}
+
+fn push_page_item(page: &mut Value, field: &str, entry: Value) -> bool {
+    page[field].as_array_mut().expect("page array").push(entry);
+    // Reserve more than the longest cursor, including its JSON quoting.
+    if page.to_string().len() + 128 > MAX_RESULT_BYTES {
+        page[field].as_array_mut().expect("page array").pop();
+        false
+    } else {
+        true
+    }
 }
 
 #[must_use]

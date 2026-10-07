@@ -64,6 +64,15 @@ pub enum Command {
         handle: String,
     },
     ListConversations,
+    ListConversationsPage {
+        #[serde(default)]
+        cursor: Option<String>,
+    },
+    ConversationMembers {
+        conversation_id: String,
+        #[serde(default)]
+        after_account_id: Option<String>,
+    },
     /// Append one message. `client_id` makes the request idempotent per
     /// device: repeating it after an unknown outcome returns the original
     /// sequence instead of a duplicate.
@@ -103,6 +112,8 @@ impl Command {
             Self::CreateChannel { .. } => "create-channel",
             Self::OpenDm { .. } => "open-dm",
             Self::ListConversations => "list-conversations",
+            Self::ListConversationsPage { .. } => "list-conversations-page",
+            Self::ConversationMembers { .. } => "conversation-members",
             Self::Send { .. } => "send",
             Self::History { .. } => "history",
             Self::MarkDelivered { .. } => "mark-delivered",

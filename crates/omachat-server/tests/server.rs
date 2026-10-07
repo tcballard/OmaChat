@@ -19,7 +19,10 @@ use tokio::{
     task::JoinHandle,
     time::timeout,
 };
-use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
+use tokio_tungstenite::{
+    WebSocketStream, client_async, client_async_with_config,
+    tungstenite::{Message, protocol::WebSocketConfig},
+};
 use zeroize::Zeroizing;
 
 const STORAGE_KEY: [u8; 32] = [42_u8; 32];
@@ -90,9 +93,13 @@ struct Client {
 impl Client {
     async fn connect(address: SocketAddr) -> Self {
         let stream = TcpStream::connect(address).await.unwrap();
-        let (socket, _) = client_async(format!("ws://{address}/"), stream)
-            .await
-            .unwrap();
+        let mut config = WebSocketConfig::default();
+        config.max_message_size = Some(MAX_FRAME_BYTES);
+        config.max_frame_size = Some(MAX_FRAME_BYTES);
+        let (socket, _) =
+            client_async_with_config(format!("ws://{address}/"), stream, Some(config))
+                .await
+                .unwrap();
         Self {
             socket,
             next_id: 1,
@@ -112,6 +119,10 @@ impl Client {
                 .expect("server answered within five seconds")?;
             match message {
                 Ok(Message::Text(text)) => {
+                    assert!(
+                        text.len() <= MAX_FRAME_BYTES,
+                        "server frame exceeded wire budget"
+                    );
                     return Some(serde_json::from_str(text.as_str()).unwrap());
                 }
                 Ok(Message::Close(_)) | Err(_) => return None,
@@ -784,4 +795,193 @@ async fn shutdown_closes_clients_gracefully() {
     assert!(ada.next_frame().await.is_none());
     assert_eq!(report.authenticated_sessions, 1);
     assert!(!report.forced_shutdown);
+}
+
+#[tokio::test]
+async fn history_pages_keep_every_large_message_and_reject_encoded_overflow() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = TestServer::start(directory.path(), Registration::Open, fast_limits()).await;
+    let (mut ada, _) = Client::login(&server, &[1; 32], Some("Ada"), None).await;
+    let workspace = text(
+        &ada.ok("create-workspace", json!({"name":"team"})).await,
+        "workspace_id",
+    );
+    let channel = text(
+        &ada.ok(
+            "create-channel",
+            json!({"workspace_id":workspace,"name":"general"}),
+        )
+        .await,
+        "conversation_id",
+    );
+    let bodies = [
+        "x".repeat(MAX_TEXT_BYTES),
+        "🦀".repeat(MAX_TEXT_BYTES / 4),
+        "\"".repeat(6000),
+    ];
+    for (index, body) in bodies.iter().enumerate() {
+        ada.ok(
+            "send",
+            json!({"conversation_id":channel,"client_id":format!("large{index}"),"text":body}),
+        )
+        .await;
+    }
+    // Fits the incoming 16 KiB frame, but exceeds the encoded body budget.
+    assert_eq!(
+        ada.err(
+            "send",
+            json!({"conversation_id":channel,"client_id":"escaped","text":"\u{0000}".repeat(2200)})
+        )
+        .await,
+        "too-large"
+    );
+    let mut before = Value::Null;
+    let mut rows = Vec::new();
+    loop {
+        let page = ada
+            .ok(
+                "history",
+                json!({"conversation_id":channel,"limit":200,"before_sequence":before}),
+            )
+            .await;
+        let messages = page["messages"].as_array().unwrap();
+        assert!(!messages.is_empty(), "cursor must always make progress");
+        rows.extend(messages.iter().cloned());
+        let next = page["next_before_sequence"].clone();
+        if next.is_null() {
+            break;
+        }
+        assert_ne!(next, before);
+        before = next;
+    }
+    rows.sort_by_key(|m| m["sequence"].as_u64().unwrap());
+    assert_eq!(rows.len(), 3);
+    for (index, row) in rows.iter().enumerate() {
+        assert_eq!(row["sequence"], json!(index + 1));
+        assert_eq!(row["text"], json!(bodies[index]));
+    }
+    ada.ok("status", Value::Null).await;
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn listings_and_large_rosters_page_without_disclosing_other_accounts() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut storage = Storage::open(
+        &directory.path().join("messages.db"),
+        Zeroizing::new(STORAGE_KEY),
+    )
+    .unwrap();
+    let key = SigningKey::from_bytes(&[1; 32]).verifying_key().to_bytes();
+    let owner = storage.create_account(&key, "Owner", 1).unwrap();
+    let team = storage.create_workspace("Team", &owner.id, 1).unwrap();
+    let mut channel_ids = std::collections::BTreeSet::new();
+    for index in 0..40 {
+        channel_ids.insert(
+            storage
+                .create_channel(&team, &format!("channel{index}"), 1)
+                .unwrap(),
+        );
+    }
+    let mut workspace_ids = std::collections::BTreeSet::from([team.clone()]);
+    for index in 0..35 {
+        workspace_ids.insert(
+            storage
+                .create_workspace(&format!("empty{index}"), &owner.id, 1)
+                .unwrap(),
+        );
+    }
+    let channel = channel_ids.first().unwrap().clone();
+    let mut member_ids = std::collections::BTreeSet::from([owner.id.clone()]);
+    for index in 2..=65 {
+        let account = storage
+            .create_account(&[index; 32], &"z".repeat(64), 1)
+            .unwrap();
+        storage.add_workspace_member(&team, &account.id).unwrap();
+        member_ids.insert(account.id);
+    }
+    storage
+        .append_message(&channel, &owner.id, &key, "m", "hello", 1)
+        .unwrap();
+    // A peer outside the summary preview must still contribute to restored receipts.
+    let last_peer = member_ids.iter().rev().find(|id| **id != owner.id).unwrap();
+    storage
+        .advance_receipt(&channel, last_peer, 1, true)
+        .unwrap();
+    drop(storage);
+    let server = TestServer::start(directory.path(), Registration::Open, fast_limits()).await;
+    let (mut ada, _) = Client::login(&server, &[1; 32], None, None).await;
+    let mut page = ada.ok("list-conversations", Value::Null).await;
+    let mut channels = std::collections::BTreeSet::new();
+    let mut workspaces = std::collections::BTreeSet::new();
+    let mut cursors = std::collections::HashSet::new();
+    loop {
+        for c in page["conversations"].as_array().unwrap() {
+            assert!(
+                channels.insert(text(c, "conversation_id")),
+                "duplicate page row"
+            );
+            assert_eq!(c["member_count"], json!(65));
+            assert_eq!(c["members_truncated"], true);
+            assert!(c["members"].as_array().unwrap().len() <= 8);
+            if c["conversation_id"] == channel {
+                assert_eq!(c["peer_read_sequence"], 1);
+            }
+        }
+        for w in page["workspaces"].as_array().unwrap() {
+            assert!(workspaces.insert(text(w, "workspace_id")));
+        }
+        let Some(cursor) = page["next_cursor"].as_str() else {
+            break;
+        };
+        assert!(cursors.insert(cursor.to_owned()));
+        page = ada
+            .ok("list-conversations-page", json!({"cursor":cursor}))
+            .await;
+    }
+    assert_eq!(channels, channel_ids);
+    assert_eq!(workspaces, workspace_ids);
+    let mut members = std::collections::BTreeSet::new();
+    let mut after = Value::Null;
+    loop {
+        let page = ada
+            .ok(
+                "conversation-members",
+                json!({"conversation_id":channel,"after_account_id":after}),
+            )
+            .await;
+        for m in page["members"].as_array().unwrap() {
+            assert!(members.insert(text(m, "account_id")));
+        }
+        after = page["next_cursor"].clone();
+        if after.is_null() {
+            break;
+        }
+    }
+    assert_eq!(members, member_ids);
+    let (mut outsider, _) = Client::login(&server, &[99; 32], None, None).await;
+    assert!(
+        outsider
+            .ok(
+                "list-conversations-page",
+                json!({"cursor":format!("c:{channel}")})
+            )
+            .await["conversations"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        outsider
+            .err("conversation-members", json!({"conversation_id":channel}))
+            .await,
+        "not-found"
+    );
+    assert_eq!(
+        ada.err("list-conversations-page", json!({"cursor":"w:garbage"}))
+            .await,
+        "invalid-request"
+    );
+    ada.ok("status", Value::Null).await;
+    server.stop().await;
 }

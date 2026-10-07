@@ -1,6 +1,11 @@
 # OmaChat
 
-OmaChat is a hosted text collaboration client for Arch Linux and Omarchy,
+<a href="https://github.com/tcballard/omarchy-badges"><img src="https://raw.githubusercontent.com/tcballard/omarchy-badges/75975e5b5bf75e7ede3764bcd2950046f7abfe2c/badges/v1/omarchy-app.svg" alt="Omarchy App" height="20"></a>
+
+OmaChat aims to replace everyday Slack and Discord workflows with a self-hostable
+service and native Omarchy client. See the [replacement roadmap](docs/slack-discord-roadmap.md).
+
+Today it is a hosted text collaboration development preview for Arch Linux and Omarchy,
 with workspaces, channels, direct messages, history, and delivered/read receipts.
 The Quickshell desktop and terminal client connect through a local Rust daemon.
 
@@ -29,3 +34,9 @@ All implementation changes use pull requests. Pull requests are not merged witho
 
 See [security and privacy](SECURITY.md). Licensed under [Zero-Clause BSD](LICENSE).
 The project name remains provisional pending a separate adoption-grade clearance review.
+
+For source-run rollback, stop the preview and return to a compatible checkout;
+preserve daemon configuration, keys, sealed history and drafts. Closing the
+desktop leaves the daemon running. Server data and secrets must survive
+uninstall; see [server operations](ops/server/README.md). No physical Omarchy
+version was validated by the October transport-hardening work.

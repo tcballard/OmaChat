@@ -1,6 +1,8 @@
 # Hosted server: delivery plan
 
-Status: working plan, maintained on `feat/hosted-server`
+Status: implementation inventory for the hosted PR stack.
+Product target: [Slack and Discord replacement](slack-discord-roadmap.md),
+accepted in [ADR 0009](adr/0009-slack-discord-replacement.md).
 Decision record: [ADR 0007](adr/0007-hosted-server-data-plane.md)
 Review input: [hosted-server.md](hosted-server.md)
 
@@ -222,6 +224,8 @@ outstanding and are not implied by this retirement.
 
 ## What is deliberately not on this list
 
-Federation between hosted servers, bridging hosted conversations to Nostr,
-mobile clients, a web client, and single sign-on. Each is real work; none is
-needed for a team on Omarchy to stop using Slack.
+Federation, a Nostr bridge and single sign-on are outside the initial pilot.
+Phone and non-Omarchy access are product requirements for broader adoption;
+voice/video/screen sharing belong to the Discord replacement milestone. See
+the replacement roadmap for ordering and acceptance, rather than treating
+these capabilities as permanently out of scope.

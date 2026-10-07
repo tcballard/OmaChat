@@ -118,6 +118,9 @@ async fn attached(
                     match connect(socket).await {
                         Ok((connected, snapshot, events)) => {
                             model.apply_snapshot(&snapshot);
+                            if snapshot["hosted_list_incomplete"] == true {
+                                model.status = "Conversation list incomplete; retry /conversations".into();
+                            }
                             client = Some(connected);
                             daemon_events = Some(events);
                             backoff = Duration::from_secs(1);
@@ -203,7 +206,9 @@ async fn connect(
         && let Ok(response) = client.request(Command::HostedConversations).await
         && let ResponseOutcome::Ok { result } = response.outcome
     {
+        let result = conversation_pages(&mut client, result).await;
         snapshot["conversations"] = result["conversations"].clone();
+        snapshot["hosted_list_incomplete"] = result["truncated"].clone();
     }
     Ok((client, snapshot, events))
 }
@@ -302,6 +307,7 @@ async fn submit(client: &mut Client, model: &mut UiModel, line: &str) -> bool {
         Ok(Some(command)) => match omachat_ctl::request_with_confirmation(client, command).await {
             Ok(response) => match response.outcome {
                 ResponseOutcome::Ok { result } => {
+                    let result = conversation_pages(client, result).await;
                     if result["erased"] == true {
                         model.conversations.clear();
                         model.selected = 0;
@@ -325,6 +331,49 @@ async fn submit(client: &mut Client, model: &mut UiModel, line: &str) -> bool {
         Err(error) => model.status = error,
     }
     true
+}
+
+/// Fetch conversation continuation pages with an overall deadline and a page
+/// cap. Failure preserves the already received rows and reports incompleteness.
+async fn conversation_pages(
+    client: &mut Client,
+    mut result: serde_json::Value,
+) -> serde_json::Value {
+    if !result["conversations"].is_array() {
+        return result;
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut seen = std::collections::HashSet::new();
+    while let Some(cursor) = result["next_cursor"].as_str().map(str::to_owned) {
+        if seen.len() >= 128 || !seen.insert(cursor.clone()) {
+            result["truncated"] = true.into();
+            break;
+        }
+        let response = tokio::time::timeout_at(
+            deadline,
+            client.request(Command::HostedConversationsPage { cursor }),
+        )
+        .await;
+        let Ok(Ok(response)) = response else {
+            result["truncated"] = true.into();
+            break;
+        };
+        let ResponseOutcome::Ok { result: page } = response.outcome else {
+            result["truncated"] = true.into();
+            break;
+        };
+        if let Some(rows) = page["conversations"].as_array() {
+            result["conversations"]
+                .as_array_mut()
+                .expect("conversation list")
+                .extend(rows.iter().cloned());
+        }
+        result["next_cursor"] = page["next_cursor"].clone();
+    }
+    if result["next_cursor"].is_null() {
+        result["truncated"] = false.into();
+    }
+    result
 }
 
 /// A terminal drives its own geometry; a pipe keeps the fixed frame so

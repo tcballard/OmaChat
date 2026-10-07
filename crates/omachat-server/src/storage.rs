@@ -23,6 +23,7 @@ pub const KIND_CHANNEL: &str = "channel";
 pub const KIND_DM: &str = "dm";
 pub const ROLE_OWNER: &str = "owner";
 pub const ROLE_MEMBER: &str = "member";
+pub const SUMMARY_MEMBERS: u32 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountRecord {
@@ -50,6 +51,9 @@ pub struct ConversationSummary {
     pub read_sequence: u64,
     pub members: Vec<MemberSummary>,
     pub receipts: Vec<Receipt>,
+    pub member_count: u64,
+    pub peer_delivered_sequence: u64,
+    pub peer_read_sequence: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -370,14 +374,16 @@ impl Storage {
     // ----- workspaces -----
 
     /// Only workspaces visible to this account, including empty workspaces.
-    pub fn workspaces_for(
+    pub fn workspaces_page(
         &self,
         account_id: &str,
+        after: &str,
+        limit: u32,
     ) -> Result<Vec<(String, String, String)>, StorageError> {
         let mut statement = self.connection.prepare(
-            "SELECT w.id, w.name, m.role FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id WHERE m.account_id = ?1 ORDER BY w.created_at, w.id",
+            "SELECT w.id, w.name, m.role FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id WHERE m.account_id = ?1 AND w.id > ?2 ORDER BY w.id LIMIT ?3",
         )?;
-        let rows = statement.query_map(params![account_id], |row| {
+        let rows = statement.query_map(params![account_id, after, limit], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
         rows.collect::<Result<_, _>>().map_err(StorageError::from)
@@ -568,46 +574,80 @@ impl Storage {
         match base {
             None => Ok(None),
             Some(mut summary) => {
-                summary.members = self.members(&summary.id)?;
-                summary.receipts = self.receipts(&summary.id)?;
+                self.fill_summary(&mut summary, viewer_account_id)?;
                 Ok(Some(summary))
             }
         }
     }
 
-    pub fn conversations_for(
+    pub fn conversations_page(
         &self,
         viewer_account_id: &str,
+        after: &str,
+        limit: u32,
     ) -> Result<Vec<ConversationSummary>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT c.id, c.kind, c.workspace_id, c.name, c.last_sequence,
                     m.delivered_sequence, m.read_sequence
              FROM conversations c
              JOIN conversation_members m ON m.conversation_id = c.id
-             WHERE m.account_id = ?1
-             ORDER BY c.created_at, c.id",
+             WHERE m.account_id = ?1 AND c.id > ?2
+             ORDER BY c.id LIMIT ?3",
         )?;
-        let rows = statement.query_map(params![viewer_account_id], conversation_row)?;
+        let rows =
+            statement.query_map(params![viewer_account_id, after, limit], conversation_row)?;
         let mut summaries: Vec<ConversationSummary> = rows.collect::<Result<_, _>>()?;
         for summary in &mut summaries {
-            summary.members = self.members(&summary.id)?;
-            summary.receipts = self.receipts(&summary.id)?;
+            self.fill_summary(summary, viewer_account_id)?;
         }
         Ok(summaries)
     }
 
-    fn members(&self, conversation_id: &str) -> Result<Vec<MemberSummary>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT a.id, a.handle, a.display_name
-             FROM conversation_members m JOIN accounts a ON a.id = m.account_id
-             WHERE m.conversation_id = ?1 ORDER BY a.id",
+    fn fill_summary(
+        &self,
+        summary: &mut ConversationSummary,
+        viewer: &str,
+    ) -> Result<(), StorageError> {
+        let (count, delivered, read) = self.connection.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(CASE WHEN account_id != ?2 THEN delivered_sequence END), 0), COALESCE(MAX(CASE WHEN account_id != ?2 THEN read_sequence END), 0) FROM conversation_members WHERE conversation_id = ?1",
+            params![summary.id, viewer],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
         )?;
-        let rows = statement.query_map(params![conversation_id], |row| {
-            Ok(MemberSummary {
-                account_id: row.get(0)?,
-                handle: row.get(1)?,
-                display_name: row.get(2)?,
-            })
+        summary.member_count = from_i64(count);
+        summary.peer_delivered_sequence = from_i64(delivered);
+        summary.peer_read_sequence = from_i64(read);
+        for (member, receipt) in self.members_page(&summary.id, "", SUMMARY_MEMBERS)? {
+            summary.members.push(member);
+            summary.receipts.push(receipt);
+        }
+        Ok(())
+    }
+
+    pub fn members_page(
+        &self,
+        conversation_id: &str,
+        after: &str,
+        limit: u32,
+    ) -> Result<Vec<(MemberSummary, Receipt)>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT a.id, a.handle, a.display_name, m.delivered_sequence, m.read_sequence
+             FROM conversation_members m JOIN accounts a ON a.id = m.account_id
+             WHERE m.conversation_id = ?1 AND a.id > ?2 ORDER BY a.id LIMIT ?3",
+        )?;
+        let rows = statement.query_map(params![conversation_id, after, limit], |row| {
+            Ok((
+                MemberSummary {
+                    account_id: row.get(0)?,
+                    handle: row.get(1)?,
+                    display_name: row.get(2)?,
+                },
+                Receipt {
+                    conversation_id: conversation_id.to_owned(),
+                    account_id: row.get(0)?,
+                    delivered_sequence: from_i64(row.get(3)?),
+                    read_sequence: from_i64(row.get(4)?),
+                },
+            ))
         })?;
         rows.collect::<Result<_, _>>().map_err(StorageError::from)
     }
@@ -880,6 +920,9 @@ fn conversation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationSum
         read_sequence: from_i64(row.get(6)?),
         members: Vec::new(),
         receipts: Vec::new(),
+        member_count: 0,
+        peer_delivered_sequence: 0,
+        peer_read_sequence: 0,
     })
 }
 
@@ -1097,7 +1140,7 @@ mod tests {
         let (second, created) = storage.open_dm(&bob.id, &ada.id, 3).unwrap();
         assert!(!created);
         assert_eq!(first, second);
-        let list = storage.conversations_for(&ada.id).unwrap();
+        let list = storage.conversations_page(&ada.id, "", 32).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].members.len(), 2);
     }

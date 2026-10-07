@@ -15,6 +15,12 @@ fn round_trip(command: Command, expected: serde_json::Value) {
 #[test]
 fn hosted_requests_round_trip_through_the_strict_wire_contract() {
     round_trip(
+        Command::HostedConversationsPage {
+            cursor: format!("c:{}", "a".repeat(32)),
+        },
+        json!({"version": VERSION, "id": "hosted-1", "method": "hosted-conversations-page", "params": {"cursor": format!("c:{}", "a".repeat(32))}}),
+    );
+    round_trip(
         Command::HostedConversations,
         json!({"version": VERSION, "id": "hosted-1", "method": "hosted-conversations"}),
     );

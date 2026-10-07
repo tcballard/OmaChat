@@ -15,6 +15,11 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
 /// Upper bound for one chat message body in bytes of UTF-8.
 pub const MAX_TEXT_BYTES: usize = 8 * 1024;
+/// Leave room for message metadata and envelopes after JSON escaping.
+pub const MAX_ENCODED_TEXT_BYTES: usize = 12 * 1024;
+/// Result budget reserves space for the response envelope and escaped request ID.
+pub const MAX_RESULT_BYTES: usize = MAX_FRAME_BYTES - 1024;
+pub const MAX_PAGE_ITEMS: u32 = 32;
 pub const MAX_REQUEST_ID_BYTES: usize = 64;
 pub const MAX_CLIENT_ID_BYTES: usize = 64;
 pub const MAX_NAME_BYTES: usize = 64;
@@ -169,10 +174,17 @@ pub fn validate_text(value: &str) -> Result<&str, ServerError> {
             "message text is empty",
         ));
     }
-    if value.len() > MAX_TEXT_BYTES {
+    if value.len() > MAX_TEXT_BYTES
+        || serde_json::to_string(value)
+            .expect("string serialization")
+            .len()
+            > MAX_ENCODED_TEXT_BYTES
+    {
         return Err(ServerError::new(
             ErrorCode::TooLarge,
-            format!("message text exceeds {MAX_TEXT_BYTES} bytes"),
+            format!(
+                "message text exceeds {MAX_TEXT_BYTES} UTF-8 bytes or {MAX_ENCODED_TEXT_BYTES} JSON bytes"
+            ),
         ));
     }
     Ok(value)
