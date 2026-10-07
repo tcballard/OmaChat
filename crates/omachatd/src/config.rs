@@ -181,6 +181,61 @@ impl RelayListPublicationConfig {
     }
 }
 
+/// Hosted server transport (ADR 0007). The server public key is pinned
+/// independently from the URL so a rogue or mis-issued TLS certificate cannot
+/// impersonate the server during authentication. Omission keeps the hosted
+/// transport disabled; a change requires a daemon restart.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HostedConfig {
+    /// `wss://` URL, or numeric-loopback `ws://` for local testing.
+    pub url: String,
+    /// Hex-encoded Ed25519 public key of the server, obtained out of band.
+    pub pinned_server_public_key: String,
+    /// Display name sent when this device registers a new account. The
+    /// server keeps the first name it stored for the account.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Invite code sent when this device registers on an invite-only server.
+    #[serde(default)]
+    pub invite_code: Option<String>,
+}
+
+impl HostedConfig {
+    pub fn pinned_server_public_key_bytes(&self) -> Result<[u8; 32], CoreError> {
+        let mut public_key = [0_u8; 32];
+        hex::decode_to_slice(&self.pinned_server_public_key, &mut public_key)
+            .map_err(|_| CoreError::InvalidConfig)?;
+        let verifying_key =
+            VerifyingKey::from_bytes(&public_key).map_err(|_| CoreError::InvalidConfig)?;
+        if verifying_key.is_weak() {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(public_key)
+    }
+
+    pub fn canonical_url(&self) -> Result<String, CoreError> {
+        canonical_publication_url(&self.url)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        self.canonical_url()?;
+        self.pinned_server_public_key_bytes()?;
+        if let Some(display_name) = &self.display_name {
+            omachat_proto::hosted::validate_name(display_name)
+                .map_err(|_| CoreError::InvalidConfig)?;
+        }
+        if self.invite_code.as_ref().is_some_and(|code| {
+            code.is_empty()
+                || code.len() > omachat_proto::hosted::MAX_INVITE_CODE_BYTES
+                || code.chars().any(char::is_control)
+        }) {
+            return Err(CoreError::InvalidConfig);
+        }
+        Ok(())
+    }
+}
+
 /// NIP-29 room relays. Each relay is bound to the signing identity its NIP-11
 /// document declares and reduced independently; a URL change with the same
 /// verified key is the same relay, the same group ID under another key is a
@@ -265,6 +320,9 @@ pub struct DaemonConfig {
     /// Optional NIP-29 room relays. Omission means no rooms; the geochat and
     /// private-message relay sets are never reused for rooms.
     pub rooms: Option<RoomsConfig>,
+    /// Optional hosted server transport. Omission is a truthful disabled
+    /// state; conversations then exist only over the Nostr transports.
+    pub hosted: Option<HostedConfig>,
 }
 
 impl DaemonConfig {
@@ -318,6 +376,9 @@ impl DaemonConfig {
         if let Some(rooms) = &self.rooms {
             rooms.validate()?;
         }
+        if let Some(hosted) = &self.hosted {
+            hosted.validate()?;
+        }
         if self
             .nickname
             .as_ref()
@@ -364,6 +425,50 @@ mod tests {
             config.rooms.expect("rooms").anchor_provider,
             RoomAnchorProviderConfig::File
         );
+    }
+
+    #[test]
+    fn hosted_config_requires_a_secure_url_and_a_valid_pin() {
+        let key = hex::encode(
+            ed25519_dalek::SigningKey::from_bytes(&[7_u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        );
+        let valid: DaemonConfig = serde_json::from_str(&format!(
+            r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","display_name":"Tom","invite_code":"welcome"}}}}"#
+        ))
+        .expect("config");
+        valid.validate().expect("valid hosted config");
+        for bad in [
+            format!(
+                r#"{{"hosted":{{"url":"ws://chat.example","pinned_server_public_key":"{key}"}}}}"#
+            ),
+            format!(
+                r#"{{"hosted":{{"url":"wss://chat.example?x=1","pinned_server_public_key":"{key}"}}}}"#
+            ),
+            r#"{"hosted":{"url":"wss://chat.example","pinned_server_public_key":"00"}}"#.to_owned(),
+            format!(
+                r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","display_name":" padded"}}}}"#
+            ),
+            format!(
+                r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","invite_code":""}}}}"#
+            ),
+            format!(
+                r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","extra":1}}}}"#
+            ),
+        ] {
+            let parsed = serde_json::from_str::<DaemonConfig>(&bad);
+            assert!(
+                parsed.is_err()
+                    || matches!(parsed.unwrap().validate(), Err(CoreError::InvalidConfig)),
+                "{bad} must be rejected"
+            );
+        }
+        let loopback: DaemonConfig = serde_json::from_str(&format!(
+            r#"{{"hosted":{{"url":"ws://127.0.0.1:7448","pinned_server_public_key":"{key}"}}}}"#
+        ))
+        .expect("config");
+        loopback.validate().expect("loopback is allowed for tests");
     }
 
     #[test]

@@ -32,3 +32,11 @@ allow = ["Zlib"]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+# The pinned ratatui and SQLite stacks reach foldhash through hashbrown, which
+# ratatui-core layout caches and rusqlite's hashlink depend on unconditionally.
+# Zlib is permissive and carries no source obligation, but it stays scoped to
+# this one crate rather than widening the workspace allow list.
+[[licenses.exceptions]]
+name = "foldhash"
+allow = ["Zlib"]

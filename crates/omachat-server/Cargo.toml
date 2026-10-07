@@ -1,0 +1,38 @@
+[package]
+name = "omachat-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hosted OmaChat chat server: accounts, workspaces, channels, direct messages and receipts over one WebSocket"
+
+[[bin]]
+name = "omachat-serverd"
+path = "src/bin/omachat-serverd.rs"
+
+[[bin]]
+name = "omachat-server-cli"
+path = "src/bin/omachat-server-cli.rs"
+
+[dependencies]
+chacha20poly1305 = "=0.10.1"
+ed25519-dalek = "=2.2.0"
+futures-util = "=0.3.34"
+getrandom = "=0.4.3"
+hex = "=0.4.3"
+omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+rustix = { version = "=1.1.4", features = ["fs"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "handshake", "rustls-tls-native-roots"] }
+zeroize = "=1.9.0"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[lints]
+workspace = true

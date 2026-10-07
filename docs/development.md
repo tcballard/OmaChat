@@ -1,6 +1,6 @@
 # Development contract
 
-OmaChat 0.0.1 is a Rust workspace containing eleven crates. The toolchain is
+OmaChat 0.0.1 is a Rust workspace containing twelve crates. The toolchain is
 locked to Rust 1.98.0 in `rust-toolchain.toml`; the workspace manifest declares
 Rust 1.98 as its minimum supported Rust version (MSRV). Changing either value
 requires a pull request that updates both together and demonstrates the full
@@ -20,6 +20,7 @@ check suite on the proposed toolchain.
 | `omachatd` | binary | Headless daemon |
 | `omachat-tui` | binary package | `omachat` terminal client |
 | `omachat-ctl` | binary | Control and scripting client |
+| `omachat-server` | library and binaries | Hosted chat server (`omachat-serverd`) and its operator client (`omachat-server-cli`); see `docs/hosted-server.md` |
 
 The workspace now contains protocol, cryptographic, registry, registry-service,
 storage, daemon, IPC, CLI/TUI, and packaging implementation. Hardware,

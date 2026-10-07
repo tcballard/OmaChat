@@ -84,6 +84,25 @@ observe timing, routing tags, expiration, and ciphertext size. Full bridge
 claims remain feature-gated until pinned Swift live tests prove carrier type 28,
 `r`/optional `m` rendezvous events, loop prevention, and identity separation.
 
+## Hosted server
+
+`omachat-serverd` (ADR 0007) is a conventional server: its operator, its host
+and anyone who compromises either can read, alter or delete every message and
+the account directory. Message bodies are sealed at rest under an
+operator-held key with the conversation, sequence and message identifier as
+associated data, which protects a copied database file and nothing else.
+Clients authenticate by signing a fresh per-connection challenge with their
+Ed25519 device key; the server signs the same challenge so clients can pin its
+identity independently of TLS. The listener is loopback-only behind a TLS
+reverse proxy. Handles, membership, sequences, timestamps and device public
+keys are stored in the clear. There is no account recovery, multi-device,
+message deletion or retention policy in the current slice. The daemon's
+hosted transport verifies the pinned server key before signing anything and
+uses the device's existing Ed25519 signing key under a domain-separated
+transcript, so a hosted-server signature can never stand in for a local
+account binding or the reverse. The full threat model is in
+`docs/hosted-server.md`.
+
 ## Panic erase
 
 `omachat-ctl panic --confirm ERASE` rejects new work, removes the selected

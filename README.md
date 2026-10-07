@@ -18,6 +18,22 @@ only feature by feature: its release has no courier/prekey/current-bridge
 surface. Proprietary private envelopes are not standard Nostr DMs. Bridge
 advertising must remain disabled until its live health gate succeeds.
 
+## Hosted server preview
+
+[ADR 0007](docs/adr/0007-hosted-server-data-plane.md) adds a conventional
+hosted server, `omachat-serverd`, alongside the Nostr transport: accounts
+authenticated by device key, workspaces, channels, direct messages,
+server-ordered history, delivered and read receipts, and idempotent sends.
+**The operator of that server can read every message**; bodies are sealed at
+rest but this is not end-to-end encryption. The protocol, threat model,
+deployment profile and the exact list of verified claims are in
+[docs/hosted-server.md](docs/hosted-server.md). `omachatd` connects to such a
+server when its `hosted` configuration is set, pins the server key, and exposes
+hosted conversations to every IPC client through `send` and the `hosted-*`
+commands. No server is deployed; the desktop does not yet use the hosted
+commands. The remaining work is listed in
+[docs/hosted-server-plan.md](docs/hosted-server-plan.md).
+
 ## Desktop preview
 
 A standalone conversation window is now available on this development branch.
@@ -43,7 +59,7 @@ This is a source-run preview, not an official Omarchy default or a release.
 
 ## Development
 
-The repository is an eleven-crate Rust workspace pinned to Rust 1.98.0. It now
+The repository is a twelve-crate Rust workspace pinned to Rust 1.98.0. It now
 contains bounded protocol codecs, distinct device/account/recovery keys, sealed
 persistence, daemon IPC, CLI/TUI surfaces, and pre-release
 packaging assets. Size-optimized release builds of the three installed binaries

@@ -2,6 +2,7 @@
 
 pub mod agent_loop;
 pub mod geohash;
+pub mod hosted;
 pub mod ipc;
 
 /// Frozen upstream compatibility profile identifier.

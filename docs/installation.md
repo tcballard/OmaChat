@@ -122,6 +122,27 @@ stopped before they can concurrently reduce or persist that relay's state.
 OmaChat bootstrap relay does not implement NIP-29; configure a NIP-29 relay
 explicitly.
 
+`hosted` is an opt-in object for a hosted OmaChat server (ADR 0007):
+
+```json
+"hosted": {
+  "url": "wss://chat.example.org",
+  "pinned_server_public_key": "<64 hex characters, published by the operator>",
+  "display_name": "Tom",
+  "invite_code": "<only for invite-only servers>"
+}
+```
+
+The pin is mandatory and is checked against the server's signed hello on
+every connection before the daemon signs anything, so a mis-issued or rogue
+TLS certificate cannot impersonate the server. The device credential is the
+daemon's existing Ed25519 signing key; nothing new is stored. `display_name`
+is used only when the device registers a new account, and `invite_code` only
+on invite-only servers. Conversations are addressed as
+`hosted:CONVERSATION_ID` and listed by `omachat-ctl hosted-conversations`.
+The operator of that server can read every message; see
+[hosted-server.md](hosted-server.md). Changes require a daemon restart.
+
 ## Storage provider
 
 Automatic mode prefers Secret Service and otherwise chooses file mode on first

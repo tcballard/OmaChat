@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 ed25519-dalek = "=2.2.0"
+futures-util = "=0.3.34"
 getrandom = "=0.4.3"
 hex = "=0.4.3"
 libc = "=0.2.189"
@@ -20,15 +21,16 @@ omachat-store = { path = "../omachat-store", version = "=0.0.1" }
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
-tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 url = "=2.5.8"
 
 [dev-dependencies]
-futures-util = "=0.3.34"
 k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 omachat-registry-host = { path = "../omachat-registry-host", version = "=0.0.1" }
+omachat-server = { path = "../omachat-server", version = "=0.0.1" }
 tempfile = "=3.27.0"
-tokio-tungstenite = "=0.30.0"
+zeroize = "=1.9.0"
 
 [lints]
 workspace = true

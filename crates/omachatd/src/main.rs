@@ -58,6 +58,7 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         options.anchor_directory(),
         options.anchors.is_some(),
     )?;
+    let hosted = core.start_hosted()?;
     let (inbound_sender, mut inbound_receiver) = tokio::sync::mpsc::channel(256);
     let geo_relays = core.start_geo_relays(inbound_sender.clone())?;
     let relays = core.relay_urls();
@@ -139,6 +140,9 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     signal_task.abort();
     let _ = signal_task.await;
     core.prepare_for_shutdown().await;
+    if let Some(service) = hosted {
+        service.shutdown().await;
+    }
     if let Some(service) = geo_relays {
         service.shutdown().await;
     }
