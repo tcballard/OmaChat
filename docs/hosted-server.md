@@ -83,7 +83,9 @@ Event, unsolicited, only after authentication:
 | `add-member` | `workspace_id, handle` | `{workspace_id, account_id, channels_joined}` | workspace owner |
 | `create-channel` | `workspace_id, name` | `{conversation_id, name}` | workspace owner; name unique per workspace |
 | `open-dm` | `handle` | conversation summary | any two distinct accounts; idempotent per pair |
-| `list-conversations` | none | `{conversations: [...]}` | member |
+| `list-conversations` | none | First byte-bounded page of workspaces and conversations, `next_cursor` | member |
+| `list-conversations-page` | `cursor` | Next page; null `next_cursor` ends traversal | member, rechecked per page |
+| `conversation-members` | `conversation_id, after_account_id?` | Bounded member/receipt page, `next_cursor` | member |
 | `send` | `conversation_id, client_id, text` | `{conversation_id, sequence, id, sent_at, duplicate}` | member |
 | `history` | `conversation_id, before_sequence?, limit?` | `{messages: [...]}` ascending, at most 200 | member |
 | `mark-delivered` | `conversation_id, sequence` | receipt | member; never beyond last sequence |
@@ -92,7 +94,7 @@ Event, unsolicited, only after authentication:
 Handles follow `omachat-crypto`'s rule: 3 to 32 characters, lowercase
 letters, digits and `_`, starting with a letter. Names are 1 to 64 bytes
 without control characters or surrounding whitespace. Text is 1 to 8192
-bytes. `client_id` is 1 to 64 characters of `[A-Za-z0-9_-]`.
+UTF-8 bytes and at most 12288 bytes when JSON-encoded (including quotes). `client_id` is 1 to 64 characters of `[A-Za-z0-9_-]`.
 
 ### Ordering, idempotency and receipts
 
@@ -275,8 +277,8 @@ through `tokio-tungstenite`.
   loopback `ws://`, not over TLS; the `wss://` path uses the same Rustls
   stack as the other hosted clients but has not been run
   against a real certificate.
-- The desktop does not call the `hosted-*` commands yet; that is slice 3 in
-  `docs/hosted-server-plan.md`.
+- Hosted desktop support exists in the proposed stack; physical Omarchy
+  acceptance remains outstanding. See `hosted-desktop-evidence.md`.
 - Load, soak and fuzz testing are absent; the limits above are asserted
   functionally, not under pressure.
 - No external security review has taken place. This document is the input to
@@ -293,3 +295,25 @@ its shared IPC response budget. Server authorization remains authoritative;
 the desktop's owner-only choices do not grant permissions.
 
 See [hosted desktop evidence](hosted-desktop-evidence.md) for the slice 3 run.
+
+## Bounded paging (October hardening)
+
+Server result payloads reserve 1 KiB of the 16 KiB frame for envelopes and
+escaped request IDs. History returns a contiguous suffix in ascending order
+and `next_before_sequence`; pass that as `before_sequence` until null. The
+row limit is a maximum, not a promise of page length. Stored oversize legacy
+messages produce `too-large` without skipping them or closing the connection.
+
+Conversation pages contain at most 32 combined workspace/conversation rows.
+Workspaces precede conversations, each ordered by ID; cursors are exclusive
+`w:ID` or `c:ID` positions. No authorization is granted by knowing a cursor.
+Rows inserted before a passed cursor appear on the next full refresh.
+The protocol is additive: old clients get only the first list page and must
+upgrade to follow `next_cursor`. Daemon IPC exposes continuation through
+`hosted-conversations-page {cursor}`; CLI uses `hosted-conversations --cursor CURSOR`.
+
+Conversation summaries carry at most eight member/receipt previews, exact
+`member_count`, `members_truncated`, and full-roster aggregate
+`peer_delivered_sequence`/`peer_read_sequence` excluding the viewer. Fetch full
+rosters via `conversation-members` with its returned cursor as
+`after_account_id`. Every page rechecks membership.

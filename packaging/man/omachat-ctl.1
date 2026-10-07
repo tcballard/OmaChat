@@ -6,7 +6,7 @@ omachat-ctl \- control the local hosted messaging daemon
 [--socket PATH] COMMAND
 .SH COMMANDS
 status [--json], fingerprint [--qr], send CONVERSATION TEXT,
-hosted-conversations, hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT],
+hosted-conversations [--cursor CURSOR], hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT],
 hosted-mark-read CONVERSATION SEQUENCE, hosted-open-dm HANDLE, hosted-claim-handle HANDLE,
 hosted-resolve-handle HANDLE, hosted-create-workspace NAME,
 hosted-create-channel WORKSPACE_ID NAME, hosted-add-member WORKSPACE_ID HANDLE.

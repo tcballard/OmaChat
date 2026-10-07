@@ -21,7 +21,7 @@ import tomllib
 VERSION = 3
 LIMIT = 65536
 TOPICS = ["status", "conversations", "messages", "delivery"]
-ALLOWED = {"send", "status", "list-drafts", "get-draft", "save-draft", "hosted-conversations", "hosted-history", "hosted-mark-read", "hosted-open-dm", "hosted-claim-handle", "hosted-resolve-handle", "hosted-create-workspace", "hosted-create-channel", "hosted-add-member"}
+ALLOWED = {"send", "status", "list-drafts", "get-draft", "save-draft", "hosted-conversations", "hosted-conversations-page", "hosted-history", "hosted-mark-read", "hosted-open-dm", "hosted-claim-handle", "hosted-resolve-handle", "hosted-create-workspace", "hosted-create-channel", "hosted-add-member"}
 # Hosted network requests take longer than local storage or status requests.
 DEADLINES = {"send": 30}
 MAX_EXPIRED = 64

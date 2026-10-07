@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | send CONVERSATION TEXT | hosted-conversations [--json] | hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT] [--json] | hosted-mark-read CONVERSATION SEQUENCE | hosted-open-dm HANDLE [--json] | hosted-claim-handle HANDLE | hosted-resolve-handle HANDLE [--json] | hosted-create-workspace NAME | hosted-create-channel WORKSPACE_ID NAME | hosted-add-member WORKSPACE_ID HANDLE | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | send CONVERSATION TEXT | hosted-conversations [--cursor CURSOR] [--json] | hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT] [--json] | hosted-mark-read CONVERSATION SEQUENCE | hosted-open-dm HANDLE [--json] | hosted-claim-handle HANDLE | hosted-resolve-handle HANDLE [--json] | hosted-create-workspace NAME | hosted-create-channel WORKSPACE_ID NAME | hosted-add-member WORKSPACE_ID HANDLE | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -132,6 +132,9 @@ fn parse_hosted_command(name: &str, rest: &[&str]) -> Result<(Command, OutputMod
     };
     let command = match (name, rest) {
         ("hosted-conversations", []) => Command::HostedConversations,
+        ("hosted-conversations", ["--cursor", cursor]) => Command::HostedConversationsPage {
+            cursor: (*cursor).to_owned(),
+        },
         ("hosted-history", [conversation, options @ ..]) => {
             let mut before_sequence = None;
             let mut limit = None;

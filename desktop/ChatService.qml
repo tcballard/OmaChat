@@ -66,6 +66,12 @@ Item {
         helper.write(JSON.stringify({id:id, method:method, params:params}) + "\n")
     }
     function refreshHosted() { hostedRequest("hosted-conversations", undefined, "list") }
+    function acceptHostedPage(data, first) {
+        State.hostedList(state, data)
+        var cursor = State.nextHostedPage(state, data, first)
+        if (cursor) hostedRequest("hosted-conversations-page", {cursor:cursor}, "list")
+        if (!State.current(state) || !State.current(state).historyLoaded) loadHistory(false)
+    }
     function loadHistory(older) {
         var c = State.current(state)
         if (!c || c.id.indexOf("hosted:") !== 0) return
@@ -112,11 +118,11 @@ Item {
             if (value.data.topic === "conversations" && value.data.payload.transport === "hosted") refreshHosted()
             markViewed()
         }
-        else if (value.kind === "hosted-list") { if (value.ok) { State.hostedList(state, value.data); loadHistory(false) } else state.notice = value.error }
+        else if (value.kind === "hosted-list") { if (value.ok) { if (!Object.keys(hostedPending).some(function(id) { return hostedPending[id].key === "list" })) acceptHostedPage(value.data, true) } else state.notice = value.error }
         else if (value.kind === "response" && hostedPending[value.id]) {
             var job = hostedPending[value.id]; delete hostedPending[value.id]
             if (!value.ok) state.notice = value.error || "Hosted request failed; retry when connected."
-            else if (job.method === "hosted-conversations") { State.hostedList(state, value.data); if (!State.current(state) || !State.current(state).historyLoaded) loadHistory(false) }
+            else if (job.method === "hosted-conversations" || job.method === "hosted-conversations-page") acceptHostedPage(value.data, job.method === "hosted-conversations")
             else if (job.method === "hosted-history") {
                 if (job.params.before_sequence && value.data.messages && value.data.messages.length) { var pageChat = State.ensure(state, job.params.conversation); if (pageChat) pageChat.messages = [] }
                 State.hostedHistory(state, value.data); markViewed()
