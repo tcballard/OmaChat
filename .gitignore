@@ -1,5 +1,4 @@
 /target/
-/conformance/probes/arti/target/
 __pycache__/
 
 /fuzz/target/

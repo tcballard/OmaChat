@@ -73,18 +73,18 @@ def main():
         root = Path(directory)
         socket = root / "ipc" / "omachat.sock"
         config = root / "config.json"
-        config.write_text(json.dumps({"storage_provider": "file", "joined_geohashes": ["gcpvj"]}))
+        config.write_text(json.dumps({"storage_provider": "file"}))
         log = open(root / "daemon.log", "wb")
         daemon = None
         client = None
 
         def start_daemon():
-            process = subprocess.Popen([str(binaries / "omachatd"), "--config", str(config), "--state", str(root / "state"), "--socket", str(socket)], stdout=log, stderr=log)
+            process = subprocess.Popen([str(binaries / "omachatd"), "--config", str(config), "--state", str(root / "state"), "--socket", str(socket)], stdout=log, stderr=log, env=dict(os.environ, XDG_RUNTIME_DIR=str(root)))
             for _ in range(100):
                 if socket.exists():
                     return process
                 if process.poll() is not None:
-                    raise AssertionError("daemon failed to start")
+                    raise AssertionError("daemon failed to start: " + (root / "daemon.log").read_text())
                 time.sleep(0.05)
             process.terminate()
             raise AssertionError("daemon socket not ready")
@@ -107,17 +107,12 @@ def main():
                 client = subprocess.Popen([str(binaries / "omachat"), "--socket", str(socket)], stdin=slave, stdout=slave, stderr=slave, preexec_fn=terminal_session)
                 read_until(master, b"connected")
                 assert not termios.tcgetattr(slave)[3] & termios.ICANON
-                marker = f"external-{ending}"
-                ctl("send", "#gcpvj", marker)
-                read_until(master, marker.encode())
                 if ending == "detach":
                     daemon.terminate()
                     daemon.wait(timeout=10)
                     read_until(master, b"disconnected")
                     daemon = start_daemon()
                     read_until(master, b"connected", 15)
-                    ctl("send", "#gcpvj", "after-reconnect")
-                    read_until(master, b"after-reconnect")
                     os.write(master, b"/detach\r")
                 else:
                     client.send_signal(getattr(signal, ending))
@@ -127,7 +122,7 @@ def main():
                 os.close(master)
                 os.close(slave)
                 client = None
-            print("PASS: live messages, restart/reattach, detach, SIGINT/SIGTERM and terminal restoration")
+            print("PASS: restart/reattach, detach, SIGINT/SIGTERM and terminal restoration")
         finally:
             if client and client.poll() is None:
                 client.kill()

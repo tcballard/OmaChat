@@ -20,9 +20,9 @@ class ProtocolTests(unittest.TestCase):
         frames = []
         session = bridge.Session(frames.append)
         session.output.clear()
-        session.receive({"version": 2, "id": "1", "status": "ok", "result": {}})
+        session.receive({"version": 3, "id": "1", "status": "ok", "result": {}})
         session.output.clear()
-        session.receive({"version": 2, "id": "2", "status": "ok", "result": {"status": {}, "messages": []}})
+        session.receive({"version": 3, "id": "2", "status": "ok", "result": {"status": {}, "messages": []}})
         session.output.clear()
         return session, frames
 
@@ -39,15 +39,15 @@ class ProtocolTests(unittest.TestCase):
     def test_snapshot_precedes_buffered_event(self):
         frames = []
         session = bridge.Session(frames.append)
-        session.receive({"version": 2, "id": "1", "status": "ok", "result": {}})
-        event = {"version": 2, "sequence": 1, "topic": "messages", "payload": {"text": "live"}}
+        session.receive({"version": 3, "id": "1", "status": "ok", "result": {}})
+        event = {"version": 3, "sequence": 1, "topic": "messages", "payload": {"text": "live"}}
         session.receive(event)
         self.assertEqual(frames, [])
-        session.receive({"version": 2, "id": "2", "status": "ok", "result": {"messages": []}})
+        session.receive({"version": 3, "id": "2", "status": "ok", "result": {"messages": []}})
         self.assertEqual([v["kind"] for v in frames], ["snapshot", "event"])
 
     def test_rejects_old_version_and_wrong_correlation(self):
-        for frame in [{"version": 1}, {"version": 2, "id": "alien", "status": "ok"}]:
+        for frame in [{"version": 1}, {"version": 3, "id": "alien", "status": "ok"}]:
             session, _ = self.ready_session()
             with self.assertRaises(ValueError): session.receive(frame)
 
@@ -61,17 +61,17 @@ class ProtocolTests(unittest.TestCase):
         session, frames = self.ready_session()
         session.command({"id": "ui-7", "method": "send", "params": {"conversation": "dm:key", "text": "hello"}})
         request = json.loads(session.output)
-        session.receive({"version": 2, "id": request["id"], "status": "error", "error": {"message": "refused"}})
+        session.receive({"version": 3, "id": request["id"], "status": "error", "error": {"message": "refused"}})
         self.assertEqual(frames[-1]["id"], "ui-7")
         self.assertFalse(frames[-1]["ok"])
         session.pending["timeout"] = ("snapshot", time.monotonic() - 1)
         with self.assertRaises(TimeoutError): session.check_deadlines()
         session, frames = self.ready_session()
-        session.pending["rooms-late"] = ("rooms", time.monotonic() - 1)
+        session.pending["hosted-late"] = ("hosted-list", time.monotonic() - 1)
         count = len(frames)
         session.check_deadlines()  # a slow startup room listing is dropped, not fatal
         self.assertEqual(len(frames), count)
-        self.assertEqual(session.expired, {"rooms-late": "rooms"})
+        self.assertEqual(session.expired, {"hosted-late": "hosted-list"})
 
     def test_slow_ui_request_becomes_unknown_without_ending_session(self):
         session, frames = self.ready_session()
@@ -85,11 +85,11 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(frames[-1], {"kind": "response", "id": "ui-7", "ok": False, "unknown": True, "error": frames[-1]["error"]})
         self.assertNotIn(request["id"], session.pending)
         # The late daemon reply is discarded; a following event still flows.
-        session.receive({"version": 2, "id": request["id"], "status": "ok", "result": {"id": "e", "delivery": "stored"}})
-        session.receive({"version": 2, "sequence": 1, "topic": "delivery", "payload": {"id": "e", "delivery": "stored"}})
+        session.receive({"version": 3, "id": request["id"], "status": "ok", "result": {"id": "e", "delivery": "stored"}})
+        session.receive({"version": 3, "sequence": 1, "topic": "delivery", "payload": {"id": "e", "delivery": "stored"}})
         self.assertEqual(frames[-1]["kind"], "event")
         self.assertEqual(session.expired, {})
-        with self.assertRaises(ValueError): session.receive({"version": 2, "id": request["id"], "status": "ok"})
+        with self.assertRaises(ValueError): session.receive({"version": 3, "id": request["id"], "status": "ok"})
         session.output.clear()
         session.command({"id": "ui-8", "method": "get-draft", "params": {"conversation": "dm:key"}})
         _, deadline = session.pending[json.loads(session.output)["id"]]
@@ -110,7 +110,7 @@ class ProtocolTests(unittest.TestCase):
             for i in range(40): session.command({"id": f"ui-{i}", "method": "status"})
         session = bridge.Session(lambda value: None)
         with self.assertRaises(ValueError):
-            for i in range(65): session.receive({"version": 2, "sequence": i, "topic": "messages", "payload": {}})
+            for i in range(65): session.receive({"version": 3, "sequence": i, "topic": "messages", "payload": {}})
 
     def test_private_socket_permissions(self):
         with tempfile.TemporaryDirectory() as directory, socket.socket(socket.AF_UNIX) as server:
@@ -133,14 +133,13 @@ class ProtocolTests(unittest.TestCase):
                     reader = conn.makefile("rb")
                     def reply(result):
                         request = json.loads(reader.readline())
-                        conn.sendall(bridge.encode({"version": 2, "id": request["id"], "status": "ok", "result": result}))
+                        conn.sendall(bridge.encode({"version": 3, "id": request["id"], "status": "ok", "result": result}))
                         return request
                     self.assertEqual(reply({})["method"], "hello")
                     self.assertEqual(reply({"status": {}, "messages": []})["method"], "subscribe")
-                    self.assertEqual(reply({"relays": []})["method"], "list-rooms")
                     process.stdin.write(bridge.encode({"id": "ui-9", "method": "send", "params": {"conversation": "dm:" + "a" * 64, "text": "hello"}})); process.stdin.flush()
                     self.assertEqual(reply({"id": "event-1", "delivery": "queued"})["method"], "send")
-                    conn.sendall(bridge.encode({"version": 2, "topic": "messages", "sequence": 1, "payload": {"id": "event-2", "text": "reply"}}))
+                    conn.sendall(bridge.encode({"version": 3, "topic": "messages", "sequence": 1, "payload": {"id": "event-2", "text": "reply"}}))
                     reader.close()
                 process.wait(timeout=3)
                 frames = [json.loads(line) for line in process.stdout.read().splitlines()]

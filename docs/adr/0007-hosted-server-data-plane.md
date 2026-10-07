@@ -1,5 +1,7 @@
 # ADR 0007: Hosted server data plane alongside Nostr
 
+> Retention decision superseded by [ADR 0008](0008-hosted-only.md). Nostr is retired.
+
 - Status: Proposed; server and daemon transport slices implemented
 - Date: 2026-09-30
 - Depends on: ADR 0002 (account/control-plane separation)

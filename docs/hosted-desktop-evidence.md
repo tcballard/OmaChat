@@ -1,3 +1,5 @@
+> Evidence for the initial dual-transport desktop. The hosted-only removal and current validation are recorded in [hosted-only evidence](hosted-only-evidence.md).
+
 # Hosted desktop acceptance
 
 Validated on 2026-10-01, on `feat/hosted-desktop`, after merging main's

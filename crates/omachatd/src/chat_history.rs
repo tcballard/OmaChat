@@ -33,9 +33,12 @@ impl ChatHistory {
 
     fn expire(&mut self, now: u64) {
         self.messages.retain(|message| {
-            message["cached_at"]
-                .as_u64()
-                .is_some_and(|at| at <= now && now.saturating_sub(at) < MAX_AGE)
+            message["conversation"]
+                .as_str()
+                .is_some_and(|id| crate::parse_hosted_conversation(id).is_some())
+                && message["cached_at"]
+                    .as_u64()
+                    .is_some_and(|at| at <= now && now.saturating_sub(at) < MAX_AGE)
         });
     }
 
@@ -64,7 +67,7 @@ impl ChatHistory {
                 self.messages.remove(index);
             }
         } else if let Some(index) = index {
-            // Relay echoes and retry acknowledgements enrich, never duplicate,
+            // Server echoes and retry acknowledgements enrich, never duplicate,
             // the original message or reset its local retention deadline.
             let old = self.messages[index]
                 .as_object_mut()
@@ -120,7 +123,7 @@ mod tests {
             .await
             .unwrap();
         let mut history = ChatHistory::load(&store, 100).unwrap();
-        history.update(&store, json!({"id":"one", "conversation":"dm:peer", "text":"secret plaintext", "delivery":"queued"}), 100).unwrap();
+        history.update(&store, json!({"id":"one", "conversation":"hosted:peer", "text":"secret plaintext", "delivery":"queued"}), 100).unwrap();
         history
             .update(&store, json!({"id":"one", "delivery":"stored"}), 101)
             .unwrap();
@@ -135,7 +138,7 @@ mod tests {
             history
                 .update(
                     &store,
-                    json!({"id":i.to_string(), "conversation":"#gcpvj", "text":"x".repeat(4096)}),
+                    json!({"id":i.to_string(), "conversation":"hosted:test", "text":"x".repeat(4096)}),
                     103,
                 )
                 .unwrap();

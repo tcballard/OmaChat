@@ -5,7 +5,7 @@ vm.runInContext(fs.readFileSync('desktop/ChatState.js', 'utf8'), S);
 vm.runInContext(fs.readFileSync('desktop/Drafts.js', 'utf8'), D);
 function fixture(text = '') {
     const s = S.create(); S.snapshot(s, {status:{drafts_version:1},messages:[]});
-    S.select(s, '#gcpvj'); D.reset(s); D.next(s); // metadata request
+    S.select(s, 'hosted:general'); D.reset(s); D.next(s); // metadata request
     const c = S.current(s), req = D.next(s);
     D.response(s,{id:req.id,ok:true,data:{conversation:c.id,text,revision:2}},S.ensure);
     return {s,c};
@@ -40,7 +40,7 @@ function reply(s, request, text, revision, saved = true) {
 }
 {
     const s=S.create(); S.snapshot(s,{status:{drafts_version:1},messages:[]});
-    S.select(s,'#gcpvj'); D.reset(s); D.next(s); const get=D.next(s),c=S.current(s);
+    S.select(s,'hosted:general'); D.reset(s); D.next(s); const get=D.next(s),c=S.current(s);
     D.edit(c,'typed while loading'); reply(s,get,'saved elsewhere',2);
     assert.equal(c.draft,'typed while loading'); assert.ok(D.meta(c).conflict);
 }
@@ -77,10 +77,10 @@ function reply(s, request, text, revision, saved = true) {
 console.log('PASS: recovery, late acknowledgements, conflicts, reconnects, UTF-8 limits, failures, unknown outcomes and clear-after-send');
 {
     const {s,c}=fixture();
-    const background=S.ensure(s,'#other'); D.edit(background,'background text');
-    const get=D.next(s); assert.equal(get.params.conversation,'#other');
+    const background=S.ensure(s,'hosted:other'); D.edit(background,'background text');
+    const get=D.next(s); assert.equal(get.params.conversation,'hosted:other');
     reply(s,get,'',3); const save=D.next(s);
-    assert.equal(save.params.conversation,'#other'); assert.equal(save.params.text,'background text');
+    assert.equal(save.params.conversation,'hosted:other'); assert.equal(save.params.text,'background text');
 }
 const E={};vm.createContext(E);vm.runInContext(fs.readFileSync('desktop/ExitState.js','utf8'),E);
 {

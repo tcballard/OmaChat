@@ -25,7 +25,7 @@ each item there is a product decision that needs its own ADR before code.
 | 4. Deployment | Not started; needs a host, a name and an operator | |
 | 5. Security review | Not started; needs the reviewers named | |
 | 6. Product features | Not started; each needs an ADR | |
-| 7. Nostr code decision | Deferred by ADR 0007 until slice 4 has run for a while | |
+| 7. Nostr retirement | Implemented on `feat/hosted-only`; pending review | [Retirement decision](adr/0008-hosted-only.md) |
 
 ## Slice 1: server (done)
 
@@ -43,7 +43,7 @@ logging, administrative endpoints.
 
 ## Slice 2: daemon transport (done on this branch)
 
-Goal: `omachatd` connects to a hosted server so that any IPC v2 client, the
+Goal: `omachatd` connects to a hosted server so that any IPC v3 client, the
 desktop included, can use hosted conversations without knowing the server
 protocol.
 
@@ -53,12 +53,9 @@ Scope:
   loopback `ws://` for tests), the pinned server public key (required), an
   optional display name and invite code. A change requires a daemon restart,
   like every other transport setting.
-- The device credential is the daemon's existing Ed25519 signing key, the
-  same key that signs the local account binding. The hosted account is
-  therefore bound to the `device_id` the daemon already reports. The two
-  transcripts are domain-separated (`omachat-server-auth-v1` against the
-  local binding domain), so a signature for one can never be a signature for
-  the other. No new secret is stored.
+- The device credential is the daemon's existing Ed25519 signing key. The
+  hosted account remains bound to that key after retirement; no new secret
+  is stored. Retired Noise/Nostr roots and local account bindings are unused.
 - A hosted service task owns one WebSocket: connect, verify the server's
   hello signature against the pin, sign the challenge, authenticate,
   multiplex requests, forward events, and reconnect with backoff (1 s
@@ -119,7 +116,7 @@ Scope:
   carries per-conversation sequences rather than per-message ids, so the
   state module derives per-message state from them.
 - "New direct message" accepts a handle when the daemon reports a hosted
-  connection, alongside the existing npub path.
+  connection. Nostr contact links are retired.
 - Channel list grouped by workspace; unread counts from
   `last_sequence` against `read_sequence`; `hosted-mark-read` when a
   conversation is focused.
@@ -210,13 +207,10 @@ the review document updated, and the desktop change in its own PR.
 
 ## Slice 7: what happens to the Nostr code
 
-ADR 0007 keeps `omachat-nostr`, the relay operations profile and the
-geohash/bitchat compatibility work in the tree and makes no decision about
-the default build. Revisit after slice 4 has run for long enough to know
-whether anyone uses the Nostr transport. Options, in order of how much they
-remove: keep both in the default build; put Nostr behind a Cargo feature
-that the package enables; move it to a separate package. The size ceiling
-and the installed-set check decide what is affordable.
+The owner has decided to remove Nostr now. Hosted messaging is the sole
+transport; there is no optional Nostr build, fallback or compatibility path.
+See [ADR 0008](adr/0008-hosted-only.md). Deployment and security review remain
+outstanding and are not implied by this retirement.
 
 ## Open decisions for the owner
 
@@ -224,10 +218,7 @@ and the installed-set check decide what is affordable.
    nothing technical and was the only real argument for a fork.
 2. Registration policy for the first real instance: `invite` is the
    recommendation and the default in the deployment profile.
-3. Whether the central registry of ADR 0002 and this server become one
-   service. The ADR leaves it open; the server enforces handle uniqueness
-   in its own database today.
-4. Who reviews. Slice 5 needs named people and a date.
+3. Who reviews. Slice 5 needs named people and a date.
 
 ## What is deliberately not on this list
 

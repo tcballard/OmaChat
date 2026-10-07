@@ -18,22 +18,22 @@ class SetupTests(unittest.TestCase):
         self.path = Path(self.directory.name) / "config.json"
 
     def request(self, token="missing"):
-        return {"revision": token, "dm_relays": ["wss://relay.test"], "room_relays": []}
+        return {"revision": token, "hosted": {"url":"wss://chat.test", "pinned_server_public_key":"11" * 32}}
 
     def test_first_run_reopen_and_private_permissions(self):
         self.assertFalse(setup.snapshot(self.path)["exists"])
         result = setup.apply(self.path, self.request())
         self.assertTrue(result["restart_required"])
-        self.assertEqual(setup.snapshot(self.path)["dm_relays"], ["wss://relay.test/"])
+        self.assertEqual(setup.snapshot(self.path)["hosted"]["url"], "wss://chat.test/")
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
-    def test_preserve_unrelated_fields_and_original_backup(self):
+    def test_replace_retired_settings_and_keep_private_backup(self):
         original = b'{"nickname":"Tom","future":{"do_not_lose":true},"rooms":{"relays":[],"anchor_provider":"secret-service"}}'
         self.path.write_bytes(original)
         result = setup.apply(self.path, self.request(setup.snapshot(self.path)["revision"]))
         value = json.loads(self.path.read_text())
-        self.assertEqual(value["future"], {"do_not_lose": True})
-        self.assertEqual(value["rooms"]["anchor_provider"], "secret-service")
+        self.assertNotIn("future", value)
+        self.assertNotIn("rooms", value)
         backup = Path(result["backup"])
         self.assertEqual(backup.read_bytes(), original)
         self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
@@ -70,10 +70,10 @@ class SetupTests(unittest.TestCase):
 
     def test_relay_policy_and_duplicates(self):
         for value in ["https://relay.test", "ws://relay.test", "wss://user:pass@relay.test", "wss://relay.test?q=x", "wss://relay.test#x", "wss://relay.test:99999", "wss://relay.test:0", "wss://relay.test/path with space"]:
-            with self.assertRaises(ValueError, msg=value): setup.relays([value])
-        with self.assertRaises(ValueError): setup.relays(["wss://RELAY.test:443", "wss://relay.test/"])
-        self.assertEqual(setup.relays(["ws://127.0.0.1:8080", "ws://[::1]:8081"]), ["ws://127.0.0.1:8080/", "ws://[::1]:8081/"])
-        with self.assertRaises(ValueError): setup.relays(["wss://relay.test"] * 17)
+            with self.assertRaises(ValueError, msg=value): setup.server_urls([value])
+        with self.assertRaises(ValueError): setup.server_urls(["wss://RELAY.test:443", "wss://relay.test/"])
+        self.assertEqual(setup.server_urls(["ws://127.0.0.1:8080", "ws://[::1]:8081"]), ["ws://127.0.0.1:8080/", "ws://[::1]:8081/"])
+        with self.assertRaises(ValueError): setup.server_urls(["wss://relay.test"] * 17)
 
     def test_termination_unwinds_for_cleanup(self):
         with self.assertRaises(SystemExit): setup.interrupted(15, None)

@@ -1,73 +1,31 @@
 # OmaChat
 
-OmaChat is a tiny, work-in-progress text-collaboration client for Arch Linux and
-Omarchy. Its direction is persistent user accounts, workspaces, channels, and
-direct messages: a central identity/control plane supplies globally unique
-handles and membership, while Nostr relays carry end-to-end encrypted content.
-The repository also retains bounded bitchat-compatible geohash and Bluetooth
-work, but Bluetooth/mesh is substantially deferred from the critical path.
+OmaChat is a hosted text collaboration client for Arch Linux and Omarchy,
+with workspaces, channels, direct messages, history, and delivered/read receipts.
+The Quickshell desktop and terminal client connect through a local Rust daemon.
 
-**No release is available yet.** Version 0.0.1 remains under development. The
-client now has a sealed, restart-stable local account foundation, but no central
-registry is deployed and a configured handle is only a local candidate—not a
-claim of global uniqueness. Do not treat this branch as an unconditional
-interoperability, availability, or security claim.
+**Development preview; no release or hosted instance is deployed.** The server
+operator can read messages. Storage is sealed at rest; messaging is not end-to-end encrypted.
+Nostr, relay rooms, geohash chat and the standalone registry are retired by
+[ADR 0008](docs/adr/0008-hosted-only.md).
 
-Compatibility is pinned to bitchat Swift v1.7.1. Android v2.0.1 is supported
-only feature by feature: its release has no courier/prekey/current-bridge
-surface. Proprietary private envelopes are not standard Nostr DMs. Bridge
-advertising must remain disabled until its live health gate succeeds.
+Build with Rust 1.98.0: `cargo build --workspace --bins`. Configure one server
+URL and its independently obtained public key in `omachatd`'s `hosted` settings.
+See [desktop setup](desktop/README.md), [server operations](ops/server/README.md),
+and [the delivery plan](docs/hosted-server-plan.md).
 
-## Hosted server preview
+The workspace contains protocol, crypto, sealed store, hosted server, daemon,
+CLI and TUI crates. The installed client binaries retain a 10 MiB aggregate
+release size ceiling. IPC v3 rejects pre-retirement clients; update clients
+and daemon together. Existing hosted device signing credentials remain valid.
+Desktop setup replaces retired configuration fields after making a private backup.
 
-[ADR 0007](docs/adr/0007-hosted-server-data-plane.md) adds a conventional
-hosted server, `omachat-serverd`, alongside the Nostr transport: accounts
-authenticated by device key, workspaces, channels, direct messages,
-server-ordered history, delivered and read receipts, and idempotent sends.
-**The operator of that server can read every message**; bodies are sealed at
-rest but this is not end-to-end encryption. The protocol, threat model,
-deployment profile and the exact list of verified claims are in
-[docs/hosted-server.md](docs/hosted-server.md). `omachatd` connects to such a
-server when its `hosted` configuration is set, pins the server key, and exposes
-hosted conversations to every IPC client through `send` and the `hosted-*`
-commands. No server is deployed. The desktop supports hosted history, handles, receipts
-and workspace administration; see [hosted desktop evidence](docs/hosted-desktop-evidence.md). The remaining work is listed in
-[docs/hosted-server-plan.md](docs/hosted-server-plan.md).
-
-## Desktop preview
-
-A standalone conversation window is now available on this development branch.
-It builds on the live IPC v2 trial in PR #230: DMs, recent history, delivery
-updates, Nostr contact links, sealed per-chat drafts, reconnect recovery and
-configured-room joining. Draft persistence requires the matching daemon capability;
-wait for saved status before closing.
-See [Desktop setup and limits](desktop/README.md), the
-[product roadmap](docs/desktop-roadmap.md), and [test evidence](docs/desktop-evidence.md).
-This is a source-run preview, not an official Omarchy default or a release.
-
-## Planning
-
-- [Upstream validation](docs/upstream-validation.md)
-- [0.0.1 compatibility profile](docs/compatibility-profile.md)
-- [Build backlog](docs/build-backlog.md)
-- [Account registry and text-collaboration ADR](docs/adr/0002-account-registry-and-text-collaboration.md)
-- [Current implementation/evidence status](docs/implementation-status.md)
-- [Development contract](docs/development.md)
-- [Conformance fixture contract](conformance/README.md)
-- [Security and privacy](SECURITY.md)
-- [Installation and service lifecycle](docs/installation.md)
-
-## Development
-
-The repository is a twelve-crate Rust workspace pinned to Rust 1.98.0. It now
-contains bounded protocol codecs, distinct device/account/recovery keys, sealed
-persistence, daemon IPC, CLI/TUI surfaces, and pre-release
-packaging assets. Size-optimized release builds of the three installed binaries
-are held to a 10 MiB aggregate CI ceiling. The central registry, workspace
-surface, target-host validation, and live conformance evidence remain gated;
-see the development contract and build backlog for the exact boundary.
+Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo test --workspace`, and `python3 scripts/test-hosted-desktop.py` after building.
+Desktop tests and limits are described in its README. Deployment, security review,
+account recovery and multi-device support remain outstanding.
 
 All implementation changes use pull requests. Pull requests are not merged without explicit owner approval.
 
-OmaChat is licensed under the [Zero-Clause BSD license](LICENSE). The project name remains provisional pending a separate adoption-grade clearance review.
-
+See [security and privacy](SECURITY.md). Licensed under [Zero-Clause BSD](LICENSE).
+The project name remains provisional pending a separate adoption-grade clearance review.

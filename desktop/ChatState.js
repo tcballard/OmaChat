@@ -6,8 +6,8 @@ function shortKey(key) { return key.length > 20 ? key.slice(0, 10) + "…" + key
 function ensure(s, id) {
     var chat = s.chats.find(function(c) { return c.id === id; });
     if (chat) return chat;
-    if (typeof id !== "string" || id.length > 512 || s.chats.length >= 128) return null;
-    chat = { id: id, title: id.indexOf("dm:") === 0 ? shortKey(id.slice(3)) : id,
+    if (typeof id !== "string" || !/^hosted:[a-zA-Z0-9_-]{1,128}$/.test(id) || s.chats.length >= 128) return null;
+    chat = { id: id, title: id,
              messages: [], draft: "", unread: 0, busy: false, uncertain: false, error: "" };
     s.chats.push(chat);
     return chat;
@@ -35,12 +35,11 @@ function applyMessage(s, p, historical, focused) {
 }
 function snapshot(s, value) {
     // Replace the recent view; preserve session drafts, selection and unknown sends.
-    var changedIdentity = s.status.nostr_public_key && value.status && s.status.nostr_public_key !== value.status.nostr_public_key;
+    var changedIdentity = s.status.device_public_key && value.status && s.status.device_public_key !== value.status.device_public_key;
     if (changedIdentity) { s.chats = []; s.active = ""; s.pending = {}; s.workspaces = []; }
     s.chats.forEach(function(c) { c.messages = []; });
     s.status = value.status || {};
     (value.messages || []).forEach(function(p) { applyMessage(s, p, true, true); });
-    (s.status.joined_geohashes || []).forEach(function(g) { ensure(s, "#" + g); });
     s.ready = true; s.notice = changedIdentity ? "Daemon identity changed; previous conversations and drafts were cleared." : "Connected to local daemon";
     if (!s.active && s.chats.length) select(s, s.chats[0].id);
 }
@@ -65,9 +64,6 @@ function utf8Length(text) {
 function beginSend(s) {
     var c = current(s);
     if (!s.ready || !c || c.busy || c.uncertain || !c.draft.trim()) return null;
-    if (c.id.indexOf("dm:") === 0 && !(s.status.dm_relay_count > 0)) {
-        c.error = "Configure a NIP-17 DM relay and restart the daemon before sending. See desktop/README.md."; return null;
-    }
     if (c.id.indexOf("hosted:") === 0 && (!s.status.hosted || s.status.hosted.state !== "connected")) { c.error = "Hosted server is disconnected; draft kept."; return null; }
     if (utf8Length(c.draft) > 4096) { c.error = "Keep this message within 4,096 UTF-8 bytes."; return null; }
     var id = "ui-" + (++s.serial);
@@ -104,13 +100,8 @@ function disconnected(s, reason) {
 }
 function deliveryLabel(value, hosted) {
     if (hosted && value === "stored") return "Stored by server";
-    return { delivered: "Delivered to a member", read: "Read by a member", queued: "Queued by daemon", stored: "Stored by relay", failed: "Failed", created: "Created locally", received: "", unknown: "Accepted · delivery unknown" }[value] || "Delivery unknown";
+    return { delivered: "Delivered to a member", read: "Read by a member", queued: "Queued by daemon", stored: "Stored by server", failed: "Failed", created: "Created locally", received: "", unknown: "Accepted · delivery unknown" }[value] || "Delivery unknown";
 }
-function dmKey(value) {
-    var key = value.trim().replace(/^dm:/, "");
-    return /^[0-9a-fA-F]{64}$/.test(key) ? key.toLowerCase() : "";
-}
-
 // Hosted sequences are per conversation; never apply another member's receipt
 // to our unread cursor. Delivery labels mean at least one other member.
 function hostedConversation(s, value) {
