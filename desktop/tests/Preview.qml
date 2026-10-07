@@ -92,7 +92,7 @@ ApplicationWindow {
                 { id: "3", conversation: "hosted:" + "b".repeat(64), sender: "Sam", text: "Agreed. Let’s start there.", delivery: "received" }
             ] })
             State.current(state).title = "Sam"
-            var room = State.ensure(state, "hosted:channel"); room.title = "OmaChat development"
+            var room = State.ensure(state, "hosted:channel"); room.title = "development"; room.workspaceId = "team"
             revision++
         }
     }

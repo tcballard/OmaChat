@@ -15,6 +15,39 @@ bridge = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bridge)
 
 
+class ThemeTests(unittest.TestCase):
+    def test_live_symlink_switch_and_partial_write_retains_last_good_theme(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dark = root / "dark.toml"; light = root / "light.toml"
+            dark.write_text('background = "#1a1b26"\nforeground = "#c0caf5"\n')
+            light.write_text('background = "#eff1f5"\nforeground = "#4c4f69"\n')
+            current = root / "colors.toml"; current.symlink_to(dark)
+            watcher = bridge.ThemeWatcher(current); frames = []
+            watcher.poll(frames.append, 0)
+            watcher.poll(frames.append, .5)
+            self.assertEqual(len(frames), 1)
+            current.unlink(); current.symlink_to(light)
+            watcher.poll(frames.append, 1)
+            self.assertEqual(frames[-1]["data"]["background"], "#eff1f5")
+            light.write_text('background = "')
+            watcher.poll(frames.append, 2)
+            self.assertEqual(len(frames), 2)
+            light.write_text('background = "#282828"')
+            watcher.poll(frames.append, 3)
+            self.assertEqual(frames[-1]["data"]["background"], "#282828")
+
+    def test_theme_inputs_are_bounded_and_filtered(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "colors.toml"
+            frames = []; bridge.ThemeWatcher(path).poll(frames.append, 0)
+            self.assertEqual(frames, [{"kind":"theme", "data":{}}])
+            path.write_text('accent = "#abc123"\nbackground = "red"\ncommand = "ignored"\n')
+            self.assertEqual(bridge.read_theme(path), {"accent":"#abc123"})
+            path.write_text(" " * 16385)
+            self.assertIsNone(bridge.read_theme(path))
+
+
 class ProtocolTests(unittest.TestCase):
     def ready_session(self):
         frames = []
