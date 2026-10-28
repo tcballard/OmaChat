@@ -1,6 +1,7 @@
 # Reverse proxy for omachat-serverd. Replace chat.example.invalid with the
 # public name; Caddy obtains and renews the certificate. The server itself
-# listens on loopback only and never terminates TLS.
+# listens on loopback only and never terminates TLS. It speaks the handle
+# protocol on this WebSocket. Chat product traffic belongs on hosted-archive.
 chat.example.invalid {
 	encode zstd gzip
 	header {

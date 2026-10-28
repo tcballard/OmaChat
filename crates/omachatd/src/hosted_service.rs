@@ -32,35 +32,11 @@ use tokio_tungstenite::{
     tungstenite::{Message, protocol::WebSocketConfig},
 };
 
-/// IPC conversation identifiers for hosted conversations carry this prefix
-/// followed by the server's conversation identifier.
-pub const HOSTED_CONVERSATION_PREFIX: &str = "hosted:";
-const MAX_CONVERSATION_ID_BYTES: usize = 128;
 const REQUEST_QUEUE: usize = 64;
 /// A session that lasted at least this long resets the reconnect backoff.
 const STABLE_SESSION: Duration = Duration::from_secs(30);
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
-
-#[must_use]
-pub fn hosted_conversation_id(conversation_id: &str) -> String {
-    format!("{HOSTED_CONVERSATION_PREFIX}{conversation_id}")
-}
-
-/// Strip the hosted prefix and validate the remaining server identifier.
-#[must_use]
-pub fn parse_hosted_conversation(conversation: &str) -> Option<&str> {
-    let id = conversation.strip_prefix(HOSTED_CONVERSATION_PREFIX)?;
-    if id.is_empty()
-        || id.len() > MAX_CONVERSATION_ID_BYTES
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-    {
-        return None;
-    }
-    Some(id)
-}
 
 #[derive(Clone, Copy, Debug)]
 pub struct HostedTimeouts {
@@ -98,7 +74,6 @@ pub struct HostedServiceConfig {
     pub pinned_server_public_key: [u8; KEY_BYTES],
     pub device_public_key: [u8; KEY_BYTES],
     pub display_name: Option<String>,
-    pub invite_code: Option<String>,
     pub timeouts: HostedTimeouts,
 }
 
@@ -475,7 +450,6 @@ async fn handshake(
             "params": {
                 "signature": hex::encode(device_signature),
                 "display_name": config.display_name,
-                "invite_code": config.invite_code,
             },
         }),
     )
@@ -665,19 +639,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hosted_conversation_ids_round_trip_and_reject_hostile_values() {
-        assert_eq!(hosted_conversation_id("ab12"), "hosted:ab12");
-        assert_eq!(parse_hosted_conversation("hosted:ab12"), Some("ab12"));
-        assert_eq!(parse_hosted_conversation("hosted:"), None);
-        assert_eq!(parse_hosted_conversation("hosted:a/b"), None);
-        assert_eq!(parse_hosted_conversation("dm:ab12"), None);
-        assert_eq!(
-            parse_hosted_conversation(&format!("hosted:{}", "a".repeat(129))),
-            None
-        );
-    }
-
-    #[test]
     fn response_outcomes_distinguish_results_errors_and_garbage() {
         assert_eq!(
             response_outcome(json!({"ok": true, "result": {"x": 1}})).unwrap(),
@@ -706,7 +667,6 @@ mod tests {
             pinned_server_public_key: [1_u8; KEY_BYTES],
             device_public_key: [2_u8; KEY_BYTES],
             display_name: None,
-            invite_code: None,
             timeouts: HostedTimeouts::default(),
         };
         assert!(matches!(

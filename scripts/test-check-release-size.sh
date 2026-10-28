@@ -26,22 +26,20 @@ make_binary() {
 prepare_case() {
   case_directory=$1
   omachatd_bytes=$2
-  omachat_bytes=$3
-  omachat_ctl_bytes=$4
+  omachat_ctl_bytes=$3
   mkdir -p "$case_directory/release"
   make_binary "$case_directory/release/omachatd" "$omachatd_bytes"
-  make_binary "$case_directory/release/omachat" "$omachat_bytes"
   make_binary "$case_directory/release/omachat-ctl" "$omachat_ctl_bytes"
 }
 
 valid_directory=$test_directory/valid
 valid_output=$test_directory/valid.output
-prepare_case "$valid_directory" 1024 2048 4096
+prepare_case "$valid_directory" 1024 4096
 if ! CARGO_TARGET_DIR=$valid_directory "$checker" >"$valid_output" 2>&1; then
   cat "$valid_output" >&2
   fail "a valid aggregate was rejected"
 fi
-grep -Fq 'aggregate = 7168 bytes' "$valid_output" ||
+grep -Fq 'aggregate = 5120 bytes' "$valid_output" ||
   fail "the valid aggregate measurement was not reported"
 echo 'release-size-test: valid aggregate passes'
 
@@ -49,7 +47,6 @@ missing_directory=$test_directory/missing
 missing_output=$test_directory/missing.output
 mkdir -p "$missing_directory/release"
 make_binary "$missing_directory/release/omachatd" 1
-make_binary "$missing_directory/release/omachat" 1
 if CARGO_TARGET_DIR=$missing_directory "$checker" >"$missing_output" 2>&1; then
   fail "a missing installed binary was accepted"
 fi
@@ -59,7 +56,7 @@ echo 'release-size-test: missing binary fails'
 
 ceiling_directory=$test_directory/ceiling
 ceiling_output=$test_directory/ceiling.output
-prepare_case "$ceiling_directory" "$((maximum_total_bytes - 2))" 1 1
+prepare_case "$ceiling_directory" "$((maximum_total_bytes - 1))" 1
 if ! CARGO_TARGET_DIR=$ceiling_directory "$checker" >"$ceiling_output" 2>&1; then
   cat "$ceiling_output" >&2
   fail "an aggregate exactly at the ceiling was rejected"
@@ -70,7 +67,7 @@ echo 'release-size-test: exact ceiling passes'
 
 oversize_directory=$test_directory/oversize
 oversize_output=$test_directory/oversize.output
-prepare_case "$oversize_directory" "$((maximum_total_bytes - 1))" 1 1
+prepare_case "$oversize_directory" "$maximum_total_bytes" 1
 if CARGO_TARGET_DIR=$oversize_directory "$checker" >"$oversize_output" 2>&1; then
   fail "an aggregate above the ceiling was accepted"
 fi

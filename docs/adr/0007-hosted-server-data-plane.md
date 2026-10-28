@@ -1,6 +1,6 @@
 # ADR 0007: Hosted server data plane alongside Nostr
 
-> Retention decision superseded by [ADR 0008](0008-hosted-only.md). Nostr is retired.
+> The hosted data plane this ADR describes is archived on branch `hosted-archive` at `825cf07123`. [ADR 0010](0010-nostr-identity.md) supersedes ADR 0008 and returns Nostr identity to `main`.
 
 - Status: Proposed; server and daemon transport slices implemented
 - Date: 2026-09-30

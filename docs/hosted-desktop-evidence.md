@@ -1,3 +1,5 @@
+> Archived with the desktop on branch `hosted-archive` at `825cf07123`. Current direction is [ADR 0010](adr/0010-nostr-identity.md).
+
 > Evidence for the initial dual-transport desktop. The hosted-only removal and current validation are recorded in [hosted-only evidence](hosted-only-evidence.md).
 
 # Hosted desktop acceptance

@@ -1,6 +1,10 @@
 # ADR 0009: replace everyday Slack and Discord workflows
 
-- Status: Accepted product direction; implementation is staged
+> Status: Superseded by [ADR 0010](0010-nostr-identity.md). The Slack/Discord
+> replacement, including the desktop and terminal clients, is archived on
+> branch `hosted-archive` at `825cf07123`. The text below is unchanged history.
+
+- Status: Superseded by ADR 0010, 2026-10-28. Originally accepted product direction; implementation was staged on the archived branch
 - Date: 2026-10-07
 - Authority: owner instruction to address the hosted review findings and target a Slack/Discord replacement
 - Builds on: ADR 0007 and ADR 0008

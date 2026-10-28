@@ -1,6 +1,11 @@
 # ADR 0008: Hosted messaging is the sole transport
 
-Status: accepted by owner instruction, 2026-10-01.
+> Status: Superseded by [ADR 0010](0010-nostr-identity.md). The hosted chat
+> product this decision produced is archived on branch `hosted-archive` at
+> `825cf07123`. Nostr is the primary direction on `main` again. The text below
+> is the historical decision and is not edited.
+
+Status: superseded by ADR 0010, 2026-10-28. Originally accepted by owner instruction, 2026-10-01.
 Supersedes ADR 0007's retention decision and the Nostr transport/registry work in ADRs 0001–0005.
 
 Remove Nostr rather than keeping it behind a feature flag or maintaining a fallback.

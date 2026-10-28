@@ -1,11 +1,9 @@
-//! SQLite-backed persistence with message bodies encrypted at rest.
+//! SQLite persistence for accounts, devices and handles.
 //!
-//! Metadata (accounts, membership, sequences, receipts) is stored in the
-//! clear so the server can enforce authorization and ordering. Message text
-//! is sealed with XChaCha20-Poly1305 under the operator's storage key, with
-//! the conversation, sequence and message identifier as associated data, so a
-//! copied database file exposes structure but not content and rows cannot be
-//! moved between conversations.
+//! The hosted chat tables are gone. A database from that product (schema
+//! version 1) is refused so this process cannot open it by mistake. The
+//! storage key still seals a key-check record, so a copied database is useless
+//! without the operator's key, but account metadata itself is not encrypted.
 
 use chacha20poly1305::{
     Key, XChaCha20Poly1305, XNonce,
@@ -15,15 +13,9 @@ use rusqlite::{Connection, ErrorCode as SqliteCode, OptionalExtension, params};
 use std::{error::Error, fmt, os::unix::fs::PermissionsExt, path::Path};
 use zeroize::Zeroizing;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 const NONCE_BYTES: usize = 24;
 const KEY_CHECK_PLAINTEXT: &[u8] = b"omachat-server storage key check";
-
-pub const KIND_CHANNEL: &str = "channel";
-pub const KIND_DM: &str = "dm";
-pub const ROLE_OWNER: &str = "owner";
-pub const ROLE_MEMBER: &str = "member";
-pub const SUMMARY_MEMBERS: u32 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountRecord {
@@ -31,55 +23,6 @@ pub struct AccountRecord {
     pub handle: Option<String>,
     pub display_name: String,
     pub created_at: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MemberSummary {
-    pub account_id: String,
-    pub handle: Option<String>,
-    pub display_name: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConversationSummary {
-    pub id: String,
-    pub kind: String,
-    pub workspace_id: Option<String>,
-    pub name: Option<String>,
-    pub last_sequence: u64,
-    pub delivered_sequence: u64,
-    pub read_sequence: u64,
-    pub members: Vec<MemberSummary>,
-    pub receipts: Vec<Receipt>,
-    pub member_count: u64,
-    pub peer_delivered_sequence: u64,
-    pub peer_read_sequence: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoredMessage {
-    pub conversation_id: String,
-    pub sequence: u64,
-    pub id: String,
-    pub sender_account_id: String,
-    pub sender_device_public_key: [u8; 32],
-    pub client_id: String,
-    pub sent_at: u64,
-    pub text: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Receipt {
-    pub conversation_id: String,
-    pub account_id: String,
-    pub delivered_sequence: u64,
-    pub read_sequence: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppendOutcome {
-    pub message: StoredMessage,
-    pub duplicate: bool,
 }
 
 pub struct Storage {
@@ -142,49 +85,6 @@ impl Storage {
                 account_id TEXT NOT NULL REFERENCES accounts(id),
                 created_at INTEGER NOT NULL,
                 last_seen INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS workspaces (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                created_at INTEGER NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS workspace_members (
-                workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-                account_id TEXT NOT NULL REFERENCES accounts(id),
-                role TEXT NOT NULL,
-                PRIMARY KEY (workspace_id, account_id)
-            );
-            CREATE TABLE IF NOT EXISTS conversations (
-                id TEXT PRIMARY KEY,
-                kind TEXT NOT NULL,
-                workspace_id TEXT REFERENCES workspaces(id),
-                name TEXT,
-                dm_key TEXT UNIQUE,
-                created_at INTEGER NOT NULL,
-                last_sequence INTEGER NOT NULL DEFAULT 0,
-                UNIQUE (workspace_id, name)
-            );
-            CREATE TABLE IF NOT EXISTS conversation_members (
-                conversation_id TEXT NOT NULL REFERENCES conversations(id),
-                account_id TEXT NOT NULL REFERENCES accounts(id),
-                delivered_sequence INTEGER NOT NULL DEFAULT 0,
-                read_sequence INTEGER NOT NULL DEFAULT 0,
-                PRIMARY KEY (conversation_id, account_id)
-            );
-            CREATE INDEX IF NOT EXISTS conversation_members_by_account
-                ON conversation_members(account_id);
-            CREATE TABLE IF NOT EXISTS messages (
-                conversation_id TEXT NOT NULL REFERENCES conversations(id),
-                sequence INTEGER NOT NULL,
-                id TEXT NOT NULL UNIQUE,
-                sender_account_id TEXT NOT NULL REFERENCES accounts(id),
-                sender_device_public_key BLOB NOT NULL,
-                client_id TEXT NOT NULL,
-                sent_at INTEGER NOT NULL,
-                nonce BLOB NOT NULL,
-                ciphertext BLOB NOT NULL,
-                PRIMARY KEY (conversation_id, sequence),
-                UNIQUE (sender_device_public_key, client_id)
             );",
         )?;
         let version: Option<Vec<u8>> = self
@@ -203,6 +103,12 @@ impl Storage {
                 )?;
             }
             Some(value) if value == SCHEMA_VERSION.to_string().into_bytes() => {}
+            Some(value) if value == b"1" => {
+                return Err(StorageError::UnsupportedSchema(
+                    "1 (hosted chat database; run that product from the hosted-archive branch)"
+                        .to_owned(),
+                ));
+            }
             Some(value) => {
                 return Err(StorageError::UnsupportedSchema(
                     String::from_utf8_lossy(&value).into_owned(),
@@ -258,16 +164,6 @@ impl Storage {
                 },
             )
             .map_err(|_| StorageError::Corrupt)
-    }
-
-    fn message_associated_data(conversation_id: &str, sequence: u64, message_id: &str) -> Vec<u8> {
-        let mut data = Vec::with_capacity(conversation_id.len() + 8 + message_id.len() + 2);
-        data.extend_from_slice(conversation_id.as_bytes());
-        data.push(0);
-        data.extend_from_slice(&sequence.to_be_bytes());
-        data.push(0);
-        data.extend_from_slice(message_id.as_bytes());
-        data
     }
 
     // ----- accounts and devices -----
@@ -370,534 +266,6 @@ impl Storage {
             .optional()
             .map_err(StorageError::from)
     }
-
-    // ----- workspaces -----
-
-    /// Only workspaces visible to this account, including empty workspaces.
-    pub fn workspaces_page(
-        &self,
-        account_id: &str,
-        after: &str,
-        limit: u32,
-    ) -> Result<Vec<(String, String, String)>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT w.id, w.name, m.role FROM workspaces w JOIN workspace_members m ON m.workspace_id = w.id WHERE m.account_id = ?1 AND w.id > ?2 ORDER BY w.id LIMIT ?3",
-        )?;
-        let rows = statement.query_map(params![account_id, after, limit], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
-        rows.collect::<Result<_, _>>().map_err(StorageError::from)
-    }
-
-    pub fn create_workspace(
-        &mut self,
-        name: &str,
-        owner_account_id: &str,
-        now: u64,
-    ) -> Result<String, StorageError> {
-        let id = random_id()?;
-        let transaction = self.connection.transaction()?;
-        transaction.execute(
-            "INSERT INTO workspaces (id, name, created_at) VALUES (?1, ?2, ?3)",
-            params![id, name, to_i64(now)],
-        )?;
-        transaction.execute(
-            "INSERT INTO workspace_members (workspace_id, account_id, role) VALUES (?1, ?2, ?3)",
-            params![id, owner_account_id, ROLE_OWNER],
-        )?;
-        transaction.commit()?;
-        Ok(id)
-    }
-
-    pub fn workspace_role(
-        &self,
-        workspace_id: &str,
-        account_id: &str,
-    ) -> Result<Option<String>, StorageError> {
-        self.connection
-            .query_row(
-                "SELECT role FROM workspace_members WHERE workspace_id = ?1 AND account_id = ?2",
-                params![workspace_id, account_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(StorageError::from)
-    }
-
-    /// Add an account to a workspace and to every existing channel in it.
-    /// Returns the channel identifiers the account was added to.
-    pub fn add_workspace_member(
-        &mut self,
-        workspace_id: &str,
-        account_id: &str,
-    ) -> Result<Vec<String>, StorageError> {
-        let transaction = self.connection.transaction()?;
-        let inserted = transaction.execute(
-            "INSERT OR IGNORE INTO workspace_members (workspace_id, account_id, role) VALUES (?1, ?2, ?3)",
-            params![workspace_id, account_id, ROLE_MEMBER],
-        )?;
-        if inserted == 0 {
-            transaction.commit()?;
-            return Ok(Vec::new());
-        }
-        let channels: Vec<String> = {
-            let mut statement = transaction
-                .prepare("SELECT id FROM conversations WHERE workspace_id = ?1 AND kind = ?2")?;
-            let rows =
-                statement.query_map(params![workspace_id, KIND_CHANNEL], |row| row.get(0))?;
-            rows.collect::<Result<_, _>>()?
-        };
-        for channel in &channels {
-            transaction.execute(
-                "INSERT OR IGNORE INTO conversation_members (conversation_id, account_id) VALUES (?1, ?2)",
-                params![channel, account_id],
-            )?;
-        }
-        transaction.commit()?;
-        Ok(channels)
-    }
-
-    pub fn workspace_member_ids(&self, workspace_id: &str) -> Result<Vec<String>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT account_id FROM workspace_members WHERE workspace_id = ?1 ORDER BY account_id",
-        )?;
-        let rows = statement.query_map(params![workspace_id], |row| row.get(0))?;
-        rows.collect::<Result<_, _>>().map_err(StorageError::from)
-    }
-
-    // ----- conversations -----
-
-    pub fn create_channel(
-        &mut self,
-        workspace_id: &str,
-        name: &str,
-        now: u64,
-    ) -> Result<String, StorageError> {
-        let id = random_id()?;
-        let transaction = self.connection.transaction()?;
-        match transaction.execute(
-            "INSERT INTO conversations (id, kind, workspace_id, name, dm_key, created_at)
-             VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
-            params![id, KIND_CHANNEL, workspace_id, name, to_i64(now)],
-        ) {
-            Ok(_) => {}
-            Err(error) if is_constraint(&error) => return Err(StorageError::NameTaken),
-            Err(error) => return Err(error.into()),
-        }
-        transaction.execute(
-            "INSERT INTO conversation_members (conversation_id, account_id)
-             SELECT ?1, account_id FROM workspace_members WHERE workspace_id = ?2",
-            params![id, workspace_id],
-        )?;
-        transaction.commit()?;
-        Ok(id)
-    }
-
-    /// Find or create the direct conversation between two accounts.
-    pub fn open_dm(
-        &mut self,
-        first: &str,
-        second: &str,
-        now: u64,
-    ) -> Result<(String, bool), StorageError> {
-        let (low, high) = if first <= second {
-            (first, second)
-        } else {
-            (second, first)
-        };
-        let dm_key = format!("{low}\0{high}");
-        let existing: Option<String> = self
-            .connection
-            .query_row(
-                "SELECT id FROM conversations WHERE dm_key = ?1",
-                params![dm_key],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(id) = existing {
-            return Ok((id, false));
-        }
-        let id = random_id()?;
-        let transaction = self.connection.transaction()?;
-        transaction.execute(
-            "INSERT INTO conversations (id, kind, workspace_id, name, dm_key, created_at)
-             VALUES (?1, ?2, NULL, NULL, ?3, ?4)",
-            params![id, KIND_DM, dm_key, to_i64(now)],
-        )?;
-        for member in [low, high] {
-            transaction.execute(
-                "INSERT OR IGNORE INTO conversation_members (conversation_id, account_id) VALUES (?1, ?2)",
-                params![id, member],
-            )?;
-        }
-        transaction.commit()?;
-        Ok((id, true))
-    }
-
-    pub fn is_member(&self, conversation_id: &str, account_id: &str) -> Result<bool, StorageError> {
-        let found: Option<i64> = self
-            .connection
-            .query_row(
-                "SELECT 1 FROM conversation_members WHERE conversation_id = ?1 AND account_id = ?2",
-                params![conversation_id, account_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(found.is_some())
-    }
-
-    pub fn member_ids(&self, conversation_id: &str) -> Result<Vec<String>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT account_id FROM conversation_members WHERE conversation_id = ?1 ORDER BY account_id",
-        )?;
-        let rows = statement.query_map(params![conversation_id], |row| row.get(0))?;
-        rows.collect::<Result<_, _>>().map_err(StorageError::from)
-    }
-
-    pub fn conversation(
-        &self,
-        conversation_id: &str,
-        viewer_account_id: &str,
-    ) -> Result<Option<ConversationSummary>, StorageError> {
-        let base = self
-            .connection
-            .query_row(
-                "SELECT c.id, c.kind, c.workspace_id, c.name, c.last_sequence,
-                        m.delivered_sequence, m.read_sequence
-                 FROM conversations c
-                 JOIN conversation_members m ON m.conversation_id = c.id
-                 WHERE c.id = ?1 AND m.account_id = ?2",
-                params![conversation_id, viewer_account_id],
-                conversation_row,
-            )
-            .optional()?;
-        match base {
-            None => Ok(None),
-            Some(mut summary) => {
-                self.fill_summary(&mut summary, viewer_account_id)?;
-                Ok(Some(summary))
-            }
-        }
-    }
-
-    pub fn conversations_page(
-        &self,
-        viewer_account_id: &str,
-        after: &str,
-        limit: u32,
-    ) -> Result<Vec<ConversationSummary>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT c.id, c.kind, c.workspace_id, c.name, c.last_sequence,
-                    m.delivered_sequence, m.read_sequence
-             FROM conversations c
-             JOIN conversation_members m ON m.conversation_id = c.id
-             WHERE m.account_id = ?1 AND c.id > ?2
-             ORDER BY c.id LIMIT ?3",
-        )?;
-        let rows =
-            statement.query_map(params![viewer_account_id, after, limit], conversation_row)?;
-        let mut summaries: Vec<ConversationSummary> = rows.collect::<Result<_, _>>()?;
-        for summary in &mut summaries {
-            self.fill_summary(summary, viewer_account_id)?;
-        }
-        Ok(summaries)
-    }
-
-    fn fill_summary(
-        &self,
-        summary: &mut ConversationSummary,
-        viewer: &str,
-    ) -> Result<(), StorageError> {
-        let (count, delivered, read) = self.connection.query_row(
-            "SELECT COUNT(*), COALESCE(MAX(CASE WHEN account_id != ?2 THEN delivered_sequence END), 0), COALESCE(MAX(CASE WHEN account_id != ?2 THEN read_sequence END), 0) FROM conversation_members WHERE conversation_id = ?1",
-            params![summary.id, viewer],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
-        )?;
-        summary.member_count = from_i64(count);
-        summary.peer_delivered_sequence = from_i64(delivered);
-        summary.peer_read_sequence = from_i64(read);
-        for (member, receipt) in self.members_page(&summary.id, "", SUMMARY_MEMBERS)? {
-            summary.members.push(member);
-            summary.receipts.push(receipt);
-        }
-        Ok(())
-    }
-
-    pub fn members_page(
-        &self,
-        conversation_id: &str,
-        after: &str,
-        limit: u32,
-    ) -> Result<Vec<(MemberSummary, Receipt)>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT a.id, a.handle, a.display_name, m.delivered_sequence, m.read_sequence
-             FROM conversation_members m JOIN accounts a ON a.id = m.account_id
-             WHERE m.conversation_id = ?1 AND a.id > ?2 ORDER BY a.id LIMIT ?3",
-        )?;
-        let rows = statement.query_map(params![conversation_id, after, limit], |row| {
-            Ok((
-                MemberSummary {
-                    account_id: row.get(0)?,
-                    handle: row.get(1)?,
-                    display_name: row.get(2)?,
-                },
-                Receipt {
-                    conversation_id: conversation_id.to_owned(),
-                    account_id: row.get(0)?,
-                    delivered_sequence: from_i64(row.get(3)?),
-                    read_sequence: from_i64(row.get(4)?),
-                },
-            ))
-        })?;
-        rows.collect::<Result<_, _>>().map_err(StorageError::from)
-    }
-
-    // ----- messages -----
-
-    /// Append a message or return the message previously stored for the same
-    /// device and `client_id`. The sender's own receipt advances to the new
-    /// sequence.
-    pub fn append_message(
-        &mut self,
-        conversation_id: &str,
-        sender_account_id: &str,
-        sender_device_public_key: &[u8; 32],
-        client_id: &str,
-        text: &str,
-        now: u64,
-    ) -> Result<AppendOutcome, StorageError> {
-        if let Some(existing) = self.message_by_client_id(sender_device_public_key, client_id)? {
-            if existing.conversation_id != conversation_id {
-                return Err(StorageError::ClientIdReused);
-            }
-            return Ok(AppendOutcome {
-                message: existing,
-                duplicate: true,
-            });
-        }
-        let message_id = random_id()?;
-        let transaction = self.connection.transaction()?;
-        let last: i64 = transaction.query_row(
-            "SELECT last_sequence FROM conversations WHERE id = ?1",
-            params![conversation_id],
-            |row| row.get(0),
-        )?;
-        let sequence = last + 1;
-        let associated =
-            Self::message_associated_data(conversation_id, from_i64(sequence), &message_id);
-        let sealed = seal_with(&self.key, &associated, text.as_bytes())?;
-        let (nonce, ciphertext) = sealed.split_at(NONCE_BYTES);
-        transaction.execute(
-            "INSERT INTO messages (conversation_id, sequence, id, sender_account_id,
-                                   sender_device_public_key, client_id, sent_at, nonce, ciphertext)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![
-                conversation_id,
-                sequence,
-                message_id,
-                sender_account_id,
-                sender_device_public_key.as_slice(),
-                client_id,
-                to_i64(now),
-                nonce,
-                ciphertext
-            ],
-        )?;
-        transaction.execute(
-            "UPDATE conversations SET last_sequence = ?2 WHERE id = ?1",
-            params![conversation_id, sequence],
-        )?;
-        transaction.execute(
-            "UPDATE conversation_members
-             SET delivered_sequence = MAX(delivered_sequence, ?3),
-                 read_sequence = MAX(read_sequence, ?3)
-             WHERE conversation_id = ?1 AND account_id = ?2",
-            params![conversation_id, sender_account_id, sequence],
-        )?;
-        transaction.commit()?;
-        Ok(AppendOutcome {
-            message: StoredMessage {
-                conversation_id: conversation_id.to_owned(),
-                sequence: from_i64(sequence),
-                id: message_id,
-                sender_account_id: sender_account_id.to_owned(),
-                sender_device_public_key: *sender_device_public_key,
-                client_id: client_id.to_owned(),
-                sent_at: now,
-                text: text.to_owned(),
-            },
-            duplicate: false,
-        })
-    }
-
-    fn message_by_client_id(
-        &self,
-        sender_device_public_key: &[u8; 32],
-        client_id: &str,
-    ) -> Result<Option<StoredMessage>, StorageError> {
-        let row = self
-            .connection
-            .query_row(
-                "SELECT conversation_id, sequence, id, sender_account_id, sender_device_public_key,
-                        client_id, sent_at, nonce, ciphertext
-                 FROM messages WHERE sender_device_public_key = ?1 AND client_id = ?2",
-                params![sender_device_public_key.as_slice(), client_id],
-                raw_message_row,
-            )
-            .optional()?;
-        row.map(|raw| self.decode_message(raw)).transpose()
-    }
-
-    /// Messages before `before_sequence` (exclusive) in ascending order, at
-    /// most `limit` of them.
-    pub fn history(
-        &self,
-        conversation_id: &str,
-        before_sequence: u64,
-        limit: u32,
-    ) -> Result<Vec<StoredMessage>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT conversation_id, sequence, id, sender_account_id, sender_device_public_key,
-                    client_id, sent_at, nonce, ciphertext
-             FROM messages WHERE conversation_id = ?1 AND sequence < ?2
-             ORDER BY sequence DESC LIMIT ?3",
-        )?;
-        let rows = statement.query_map(
-            params![conversation_id, to_i64(before_sequence), i64::from(limit)],
-            raw_message_row,
-        )?;
-        let mut messages = rows
-            .map(|raw| self.decode_message(raw?))
-            .collect::<Result<Vec<_>, _>>()?;
-        messages.reverse();
-        Ok(messages)
-    }
-
-    fn decode_message(&self, raw: RawMessage) -> Result<StoredMessage, StorageError> {
-        let device: [u8; 32] = raw
-            .sender_device_public_key
-            .try_into()
-            .map_err(|_| StorageError::Corrupt)?;
-        let sequence = from_i64(raw.sequence);
-        let associated = Self::message_associated_data(&raw.conversation_id, sequence, &raw.id);
-        let mut sealed = raw.nonce;
-        sealed.extend_from_slice(&raw.ciphertext);
-        let text = self.open_sealed(&associated, &sealed)?;
-        Ok(StoredMessage {
-            conversation_id: raw.conversation_id,
-            sequence,
-            id: raw.id,
-            sender_account_id: raw.sender_account_id,
-            sender_device_public_key: device,
-            client_id: raw.client_id,
-            sent_at: from_i64(raw.sent_at),
-            text: String::from_utf8(text).map_err(|_| StorageError::Corrupt)?,
-        })
-    }
-
-    /// Raw stored bytes for one message, for tests that prove content is
-    /// not stored in the clear.
-    pub fn raw_ciphertext(&self, message_id: &str) -> Result<Option<Vec<u8>>, StorageError> {
-        self.connection
-            .query_row(
-                "SELECT ciphertext FROM messages WHERE id = ?1",
-                params![message_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(StorageError::from)
-    }
-
-    // ----- receipts -----
-
-    /// Advance the viewer's delivered (and optionally read) sequence. Values
-    /// never move backwards and may not exceed the conversation's last
-    /// sequence.
-    pub fn advance_receipt(
-        &mut self,
-        conversation_id: &str,
-        account_id: &str,
-        sequence: u64,
-        read: bool,
-    ) -> Result<Receipt, StorageError> {
-        let transaction = self.connection.transaction()?;
-        let last: i64 = transaction.query_row(
-            "SELECT last_sequence FROM conversations WHERE id = ?1",
-            params![conversation_id],
-            |row| row.get(0),
-        )?;
-        if to_i64(sequence) > last {
-            return Err(StorageError::SequenceAhead);
-        }
-        let read_sequence = if read { to_i64(sequence) } else { 0 };
-        let updated = transaction.execute(
-            "UPDATE conversation_members
-             SET delivered_sequence = MAX(delivered_sequence, ?3),
-                 read_sequence = MAX(read_sequence, ?4)
-             WHERE conversation_id = ?1 AND account_id = ?2",
-            params![conversation_id, account_id, to_i64(sequence), read_sequence],
-        )?;
-        if updated == 0 {
-            return Err(StorageError::NotFound);
-        }
-        let receipt = transaction.query_row(
-            "SELECT delivered_sequence, read_sequence FROM conversation_members
-             WHERE conversation_id = ?1 AND account_id = ?2",
-            params![conversation_id, account_id],
-            |row| {
-                Ok(Receipt {
-                    conversation_id: conversation_id.to_owned(),
-                    account_id: account_id.to_owned(),
-                    delivered_sequence: from_i64(row.get(0)?),
-                    read_sequence: from_i64(row.get(1)?),
-                })
-            },
-        )?;
-        transaction.commit()?;
-        Ok(receipt)
-    }
-
-    pub fn receipts(&self, conversation_id: &str) -> Result<Vec<Receipt>, StorageError> {
-        let mut statement = self.connection.prepare(
-            "SELECT account_id, delivered_sequence, read_sequence FROM conversation_members
-             WHERE conversation_id = ?1 ORDER BY account_id",
-        )?;
-        let rows = statement.query_map(params![conversation_id], |row| {
-            Ok(Receipt {
-                conversation_id: conversation_id.to_owned(),
-                account_id: row.get(0)?,
-                delivered_sequence: from_i64(row.get(1)?),
-                read_sequence: from_i64(row.get(2)?),
-            })
-        })?;
-        rows.collect::<Result<_, _>>().map_err(StorageError::from)
-    }
-}
-
-struct RawMessage {
-    conversation_id: String,
-    sequence: i64,
-    id: String,
-    sender_account_id: String,
-    sender_device_public_key: Vec<u8>,
-    client_id: String,
-    sent_at: i64,
-    nonce: Vec<u8>,
-    ciphertext: Vec<u8>,
-}
-
-fn raw_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawMessage> {
-    Ok(RawMessage {
-        conversation_id: row.get(0)?,
-        sequence: row.get(1)?,
-        id: row.get(2)?,
-        sender_account_id: row.get(3)?,
-        sender_device_public_key: row.get(4)?,
-        client_id: row.get(5)?,
-        sent_at: row.get(6)?,
-        nonce: row.get(7)?,
-        ciphertext: row.get(8)?,
-    })
 }
 
 fn account_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRecord> {
@@ -906,23 +274,6 @@ fn account_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRecord> {
         handle: row.get(1)?,
         display_name: row.get(2)?,
         created_at: from_i64(row.get(3)?),
-    })
-}
-
-fn conversation_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ConversationSummary> {
-    Ok(ConversationSummary {
-        id: row.get(0)?,
-        kind: row.get(1)?,
-        workspace_id: row.get(2)?,
-        name: row.get(3)?,
-        last_sequence: from_i64(row.get(4)?),
-        delivered_sequence: from_i64(row.get(5)?),
-        read_sequence: from_i64(row.get(6)?),
-        members: Vec::new(),
-        receipts: Vec::new(),
-        member_count: 0,
-        peer_delivered_sequence: 0,
-        peer_read_sequence: 0,
     })
 }
 
@@ -977,9 +328,6 @@ pub enum StorageError {
     NotFound,
     HandleTaken,
     HandleAlreadySet,
-    NameTaken,
-    ClientIdReused,
-    SequenceAhead,
 }
 
 impl From<rusqlite::Error> for StorageError {
@@ -1005,13 +353,6 @@ impl fmt::Display for StorageError {
             Self::NotFound => formatter.write_str("no such record"),
             Self::HandleTaken => formatter.write_str("handle already taken"),
             Self::HandleAlreadySet => formatter.write_str("account already has a handle"),
-            Self::NameTaken => formatter.write_str("name already used in this workspace"),
-            Self::ClientIdReused => {
-                formatter.write_str("client_id was already used for another conversation")
-            }
-            Self::SequenceAhead => {
-                formatter.write_str("sequence is ahead of the conversation's last message")
-            }
         }
     }
 }
@@ -1060,95 +401,9 @@ mod tests {
     }
 
     #[test]
-    fn channels_membership_and_idempotent_messages() {
-        let mut storage = storage();
-        let ada = storage.create_account(&[1_u8; 32], "Ada", 1).unwrap();
-        let bob = storage.create_account(&[2_u8; 32], "Bob", 1).unwrap();
-        let workspace = storage.create_workspace("Team", &ada.id, 2).unwrap();
-        let general = storage.create_channel(&workspace, "general", 3).unwrap();
-        assert!(matches!(
-            storage.create_channel(&workspace, "general", 3),
-            Err(StorageError::NameTaken)
-        ));
-        assert!(storage.is_member(&general, &ada.id).unwrap());
-        assert!(!storage.is_member(&general, &bob.id).unwrap());
-        let joined = storage.add_workspace_member(&workspace, &bob.id).unwrap();
-        assert_eq!(joined, vec![general.clone()]);
-        assert!(storage.is_member(&general, &bob.id).unwrap());
-        assert!(
-            storage
-                .add_workspace_member(&workspace, &bob.id)
-                .unwrap()
-                .is_empty()
-        );
-
-        let first = storage
-            .append_message(&general, &ada.id, &[1_u8; 32], "c1", "hello", 5)
-            .unwrap();
-        assert_eq!(first.message.sequence, 1);
-        assert!(!first.duplicate);
-        let again = storage
-            .append_message(&general, &ada.id, &[1_u8; 32], "c1", "hello", 6)
-            .unwrap();
-        assert!(again.duplicate);
-        assert_eq!(again.message, first.message);
-        assert!(matches!(
-            storage.append_message("other", &ada.id, &[1_u8; 32], "c1", "hello", 6),
-            Err(StorageError::ClientIdReused)
-        ));
-        let second = storage
-            .append_message(&general, &bob.id, &[2_u8; 32], "c1", "hi", 7)
-            .unwrap();
-        assert_eq!(second.message.sequence, 2);
-
-        let history = storage.history(&general, u64::MAX, 10).unwrap();
-        assert_eq!(
-            history.iter().map(|m| m.sequence).collect::<Vec<_>>(),
-            vec![1, 2]
-        );
-        assert_eq!(history[0].text, "hello");
-        let page = storage.history(&general, 2, 10).unwrap();
-        assert_eq!(page.len(), 1);
-
-        let raw = storage.raw_ciphertext(&first.message.id).unwrap().unwrap();
-        assert!(!raw.windows(5).any(|window| window == b"hello"));
-
-        let summary = storage.conversation(&general, &bob.id).unwrap().unwrap();
-        assert_eq!(summary.last_sequence, 2);
-        assert_eq!(summary.read_sequence, 2, "sender's own receipt advances");
-        let ada_view = storage.conversation(&general, &ada.id).unwrap().unwrap();
-        assert_eq!(ada_view.read_sequence, 1);
-        let receipt = storage
-            .advance_receipt(&general, &ada.id, 2, false)
-            .unwrap();
-        assert_eq!((receipt.delivered_sequence, receipt.read_sequence), (2, 1));
-        let receipt = storage.advance_receipt(&general, &ada.id, 1, true).unwrap();
-        assert_eq!((receipt.delivered_sequence, receipt.read_sequence), (2, 1));
-        assert!(matches!(
-            storage.advance_receipt(&general, &ada.id, 3, true),
-            Err(StorageError::SequenceAhead)
-        ));
-    }
-
-    #[test]
-    fn direct_conversations_are_unique_per_pair() {
-        let mut storage = storage();
-        let ada = storage.create_account(&[1_u8; 32], "Ada", 1).unwrap();
-        let bob = storage.create_account(&[2_u8; 32], "Bob", 1).unwrap();
-        let (first, created) = storage.open_dm(&ada.id, &bob.id, 2).unwrap();
-        assert!(created);
-        let (second, created) = storage.open_dm(&bob.id, &ada.id, 3).unwrap();
-        assert!(!created);
-        assert_eq!(first, second);
-        let list = storage.conversations_page(&ada.id, "", 32).unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].members.len(), 2);
-    }
-
-    #[test]
     fn wrong_storage_key_is_refused() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("messages.db");
+        let path = directory.path().join("server.db");
         drop(Storage::open(&path, Zeroizing::new([1_u8; 32])).unwrap());
         assert!(matches!(
             Storage::open(&path, Zeroizing::new([2_u8; 32])),

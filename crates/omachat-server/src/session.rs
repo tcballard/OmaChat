@@ -425,7 +425,6 @@ where
     let Command::Authenticate {
         signature,
         display_name,
-        invite_code,
     } = authenticate
     else {
         send_text(
@@ -471,7 +470,6 @@ where
         .call(ServiceRequest::Register {
             device_public_key,
             display_name,
-            invite_code,
             now: unix_now(),
         })
         .await

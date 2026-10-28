@@ -39,25 +39,25 @@ fn oversized_malformed_and_unknown_fields_fail_boundedly() {
     );
     assert_eq!(decoder.push(b"not-json\n"), Err(IpcError::MalformedJson));
     assert_eq!(
-        decoder.push(b"{\"version\":3,\"id\":\"x\",\"method\":\"status\",\"extra\":true}\n"),
+        decoder.push(b"{\"version\":4,\"id\":\"x\",\"method\":\"status\",\"extra\":true}\n"),
         Err(IpcError::MalformedJson)
     );
 }
 
 #[test]
 fn hello_negotiation_is_explicit() {
-    assert_eq!(negotiate(3, 3).expect("compatible").version, VERSION);
-    assert_eq!(negotiate(1, 3).expect("ranged").version, VERSION);
+    assert_eq!(negotiate(4, 4).expect("compatible").version, VERSION);
+    assert_eq!(negotiate(1, 4).expect("ranged").version, VERSION);
     assert!(
         matches!(
             negotiate(1, 1),
-            Err(IpcError::VersionMismatch { supported: 3, .. })
+            Err(IpcError::VersionMismatch { supported: 4, .. })
         ),
-        "version 1 destructive semantics are gone"
+        "older IPC versions are not this daemon"
     );
     assert!(matches!(
-        negotiate(4, 5),
-        Err(IpcError::VersionMismatch { supported: 3, .. })
+        negotiate(5, 6),
+        Err(IpcError::VersionMismatch { supported: 4, .. })
     ));
 }
 
@@ -67,36 +67,35 @@ fn requests_preserve_the_flat_wire_format() {
         (
             Command::Hello {
                 minimum_version: 1,
-                maximum_version: 3,
+                maximum_version: 4,
             },
-            r#"{"version":3,"id":"request","method":"hello","params":{"minimum_version":1,"maximum_version":3}}"#,
+            r#"{"version":4,"id":"request","method":"hello","params":{"minimum_version":1,"maximum_version":4}}"#,
         ),
         (
             Command::Status,
-            r#"{"version":3,"id":"request","method":"status"}"#,
+            r#"{"version":4,"id":"request","method":"status"}"#,
         ),
         (
             Command::Fingerprint,
-            r#"{"version":3,"id":"request","method":"fingerprint"}"#,
+            r#"{"version":4,"id":"request","method":"fingerprint"}"#,
         ),
         (
-            Command::Send {
-                conversation: "general".into(),
-                text: "hello".into(),
+            Command::HostedClaimHandle {
+                handle: "alice".into(),
             },
-            r#"{"version":3,"id":"request","method":"send","params":{"conversation":"general","text":"hello"}}"#,
+            r#"{"version":4,"id":"request","method":"hosted-claim-handle","params":{"handle":"alice"}}"#,
         ),
         (
             Command::Panic {
                 confirmation: "confirm".into(),
             },
-            r#"{"version":3,"id":"request","method":"panic","params":{"confirmation":"confirm"}}"#,
+            r#"{"version":4,"id":"request","method":"panic","params":{"confirmation":"confirm"}}"#,
         ),
         (
             Command::Subscribe {
                 topics: vec![Topic::Status, Topic::Messages],
             },
-            r#"{"version":3,"id":"request","method":"subscribe","params":{"topics":["status","messages"]}}"#,
+            r#"{"version":4,"id":"request","method":"subscribe","params":{"topics":["status","messages"]}}"#,
         ),
     ];
 
@@ -118,7 +117,7 @@ fn requests_preserve_the_flat_wire_format() {
 #[test]
 fn request_fields_may_arrive_in_any_order() {
     let request = serde_json::from_str::<Request>(
-        r#"{"params":{"text":"hello","conversation":"general"},"method":"send","id":"request","version":3}"#,
+        r#"{"params":{"handle":"alice"},"method":"hosted-claim-handle","id":"request","version":4}"#,
     )
     .expect("reordered request deserializes");
     assert_eq!(
@@ -126,9 +125,8 @@ fn request_fields_may_arrive_in_any_order() {
         Request {
             version: VERSION,
             id: "request".into(),
-            command: Command::Send {
-                conversation: "general".into(),
-                text: "hello".into(),
+            command: Command::HostedClaimHandle {
+                handle: "alice".into(),
             },
         }
     );
@@ -137,15 +135,16 @@ fn request_fields_may_arrive_in_any_order() {
 #[test]
 fn requests_reject_noncanonical_arms_and_fields() {
     let invalid = [
-        r#"{"version":3,"id":"x","method":"send"}"#,
-        r#"{"version":3,"id":"x","method":"send","params":null}"#,
-        r#"{"version":3,"id":"x","method":"status","params":null}"#,
-        r#"{"version":3,"id":"x","method":"status","params":{"conversation":"general","text":"hello"}}"#,
-        r#"{"version":3,"id":"x","method":"send","params":{"conversation":"general","text":"hello","extra":true}}"#,
-        r#"{"version":3,"id":"x","method":"send","params":{"conversation":"general","conversation":"other","text":"hello"}}"#,
-        r#"{"version":3,"id":"x","method":"status","extra":true}"#,
-        r#"{"version":3,"id":"x","method":"status","method":"status"}"#,
-        r#"{"version":3,"id":"x","method":"unknown"}"#,
+        r#"{"version":4,"id":"x","method":"hosted-claim-handle"}"#,
+        r#"{"version":4,"id":"x","method":"hosted-claim-handle","params":null}"#,
+        r#"{"version":4,"id":"x","method":"status","params":null}"#,
+        r#"{"version":4,"id":"x","method":"status","params":{"handle":"alice"}}"#,
+        r#"{"version":4,"id":"x","method":"hosted-claim-handle","params":{"handle":"alice","extra":true}}"#,
+        r#"{"version":4,"id":"x","method":"hosted-claim-handle","params":{"handle":"alice","handle":"bob"}}"#,
+        r#"{"version":4,"id":"x","method":"status","extra":true}"#,
+        r#"{"version":4,"id":"x","method":"status","method":"status"}"#,
+        r#"{"version":4,"id":"x","method":"send"}"#,
+        r#"{"version":4,"id":"x","method":"unknown"}"#,
     ];
 
     for wire in invalid {
@@ -168,7 +167,7 @@ fn responses_preserve_the_flat_wire_format_and_null_result() {
     let encoded = serde_json::to_string(&response).expect("response serializes");
     assert_eq!(
         encoded,
-        r#"{"version":3,"id":"response-1","status":"ok","result":null}"#
+        r#"{"version":4,"id":"response-1","status":"ok","result":null}"#
     );
     assert_eq!(
         serde_json::from_str::<Response>(&encoded).expect("null result deserializes"),
@@ -187,11 +186,11 @@ fn responses_preserve_the_flat_wire_format_and_null_result() {
     };
     assert_eq!(
         serde_json::to_string(&error).expect("error serializes"),
-        r#"{"version":3,"id":"response-2","status":"error","error":{"code":"unavailable","message":"offline"}}"#
+        r#"{"version":4,"id":"response-2","status":"error","error":{"code":"unavailable","message":"offline"}}"#
     );
     assert_eq!(
         serde_json::from_str::<Response>(
-            r#"{"error":{"message":"offline","code":"unavailable"},"status":"error","id":"response-2","version":3}"#
+            r#"{"error":{"message":"offline","code":"unavailable"},"status":"error","id":"response-2","version":4}"#
         )
         .expect("reordered response deserializes"),
         error
@@ -227,7 +226,7 @@ fn responses_reject_missing_wrong_unknown_and_duplicate_arms() {
 fn confirmation_request_commands_round_trip() {
     let mut decoder = RequestDecoder::default();
     let requests = decoder
-        .push(b"{\"version\":3,\"id\":\"1\",\"method\":\"request-panic-confirmation\"}\n")
+        .push(b"{\"version\":4,\"id\":\"1\",\"method\":\"request-panic-confirmation\"}\n")
         .expect("decode panic confirmation request");
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].command, Command::RequestPanicConfirmation);

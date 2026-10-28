@@ -1,5 +1,8 @@
 # Hosted-only retirement evidence
 
+> Historical. [ADR 0010](adr/0010-nostr-identity.md) archives this product on
+> branch `hosted-archive` at `825cf07123` and returns Nostr identity to `main`.
+
 Branch: `feat/hosted-only`, based on `feat/hosted-desktop`.
 Decision: [ADR 0008](adr/0008-hosted-only.md), owner-directed retirement of Nostr.
 

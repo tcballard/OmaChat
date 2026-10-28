@@ -2,8 +2,7 @@
 set -eu
 
 test -f packaging/systemd/omachatd.service
-test -f packaging/desktop/omachat.desktop
-for page in omachat.1 omachat-ctl.1 omachatd.8 omachat-protocol.7; do
+for page in omachat-ctl.1 omachatd.8 omachat-protocol.7; do
   test -s "packaging/man/$page"
 done
 test -s packaging/omarchy-quattro/manifest.json
@@ -14,16 +13,16 @@ test -x scripts/check-release-size.sh
 sh -n scripts/check-release-size.sh
 test -x scripts/test-check-release-size.sh
 sh -n scripts/test-check-release-size.sh
-for shell in omachat.bash omachat-ctl.bash _omachat _omachat-ctl omachat.fish omachat-ctl.fish; do
+for shell in omachat-ctl.bash _omachat-ctl omachat-ctl.fish; do
   test -s "packaging/completions/$shell"
 done
 for completion in omachat-ctl.bash _omachat-ctl; do
   grep -Fq -- '--qr' "packaging/completions/$completion"
 done
 grep -Fq -- '-l qr' packaging/completions/omachat-ctl.fish
-grep -Fqx "pkgdesc='Tiny encrypted text collaboration for Omarchy'" packaging/arch/omachat/PKGBUILD
-grep -Fqx "pkgdesc='Tiny encrypted text collaboration for Omarchy (git)'" packaging/arch/omachat-git/PKGBUILD
-grep -Fqx 'Description=OmaChat hosted messaging and IPC daemon' packaging/systemd/omachatd.service
+grep -Fqx "pkgdesc='Local identity daemon and handle server for Omarchy'" packaging/arch/omachat/PKGBUILD
+grep -Fqx "pkgdesc='Local identity daemon and handle server for Omarchy (git)'" packaging/arch/omachat-git/PKGBUILD
+grep -Fqx 'Description=OmaChat identity daemon and handle client' packaging/systemd/omachatd.service
 if command -v mandoc >/dev/null 2>&1; then
   for page in packaging/man/*; do mandoc -T lint "$page"; done
 fi

@@ -1,19 +1,19 @@
-.TH OMACHATD 8 "2026-10-01" "OmaChat"
+.TH OMACHATD 8 "2026-10-28" "OmaChat"
 .SH NAME
-omachatd \- hosted messaging and local IPC daemon
+omachatd \- local identity daemon and handle-server client
 .SH SYNOPSIS
 .B omachatd
 [--config PATH] [--state PATH] [--socket PATH] [--file-key]
 .SH DESCRIPTION
-Connects to one hosted server using a pinned Ed25519 server key and a sealed device credential.
-The server operator can read messages. This is not end-to-end encryption.
+Holds the sealed Ed25519 device credential and, when configured, connects to one
+handle server using a pinned Ed25519 server key.
 SIGINT and SIGTERM drain requests and shut down without erasing credentials.
 SIGHUP validates configuration; changing server or storage settings requires restart.
 .SH CONFIGURATION
 JSON fields: storage_provider (auto, secret-service, file) and hosted.
-The hosted object requires url and pinned_server_public_key; display_name and invite_code are optional.
+The hosted object requires url and pinned_server_public_key; display_name is optional.
 Use wss:// except numeric-loopback ws:// for tests. Obtain the server key from its operator.
-Retired transport settings are rejected. Desktop setup saves a private backup before replacing them.
+Retired chat and relay settings are rejected.
 .SH FILES
 Default configuration: $XDG_CONFIG_HOME/omachat/config.json.
 Default state: $XDG_STATE_HOME/omachat.

@@ -6,8 +6,8 @@ target_dir=${CARGO_TARGET_DIR:-target}
 check_dir=$(mktemp -d)
 trap 'rm -rf "$check_dir"' EXIT HUP INT TERM
 
-for binary in omachat omachatd omachat-ctl; do
-    expected="$binary $version (hosted-v1; ipc=3)"
+for binary in omachatd omachat-ctl; do
+    expected="$binary $version (ipc=4)"
     printf '%s\n' "$expected" > "$check_dir/expected"
 
     if ! "$target_dir/debug/$binary" --version \

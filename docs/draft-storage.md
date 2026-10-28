@@ -1,5 +1,8 @@
 # Sealed draft IPC (version 1)
 
+> Archived with the chat client on branch `hosted-archive` at `825cf07123`.
+> Draft commands are not in IPC v4. See [ADR 0010](adr/0010-nostr-identity.md).
+
 Stacked after desktop contact links. This layer adds the daemon contract; the
 composer integration is a separate follow-up. No desktop persistence is claimed
 until that integration lands.

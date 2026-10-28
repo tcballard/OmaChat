@@ -5,8 +5,6 @@ pub enum CoreError {
     Clock,
     ConfirmationExpired,
     ConfirmationRequired,
-    DraftCapacity,
-    Encoding,
     Hosted(omachat_proto::hosted::ServerError),
     HostedService(crate::HostedServiceError),
     HostedUnavailable,
@@ -14,9 +12,6 @@ pub enum CoreError {
     IdentityStore(omachat_store::IdentityStoreError),
     InvalidCommand,
     InvalidConfig,
-    InvalidConversation,
-    InvalidDraft,
-    InvalidMessage,
     Io(std::io::Error),
     PanicErase,
     Panicked,
@@ -35,30 +30,21 @@ impl CoreError {
                 | omachat_proto::hosted::ErrorCode::UnsupportedVersion => ErrorCode::InvalidRequest,
                 omachat_proto::hosted::ErrorCode::HandleTaken
                 | omachat_proto::hosted::ErrorCode::HandleAlreadySet
-                | omachat_proto::hosted::ErrorCode::NameTaken
-                | omachat_proto::hosted::ErrorCode::Forbidden
                 | omachat_proto::hosted::ErrorCode::AlreadyAuthenticated => ErrorCode::Conflict,
                 omachat_proto::hosted::ErrorCode::NotFound => ErrorCode::NotFound,
                 omachat_proto::hosted::ErrorCode::RateLimited
                 | omachat_proto::hosted::ErrorCode::Storage
-                | omachat_proto::hosted::ErrorCode::RegistrationClosed
-                | omachat_proto::hosted::ErrorCode::InvalidInvite
                 | omachat_proto::hosted::ErrorCode::InvalidSignature
                 | omachat_proto::hosted::ErrorCode::NotAuthenticated => ErrorCode::Unavailable,
                 omachat_proto::hosted::ErrorCode::Internal => ErrorCode::Internal,
             },
-            Self::InvalidConfig
-            | Self::InvalidCommand
-            | Self::InvalidMessage
-            | Self::InvalidConversation
-            | Self::InvalidDraft => ErrorCode::InvalidRequest,
+            Self::InvalidConfig | Self::InvalidCommand => ErrorCode::InvalidRequest,
             Self::HostedUnavailable | Self::HostedUnconfigured | Self::Panicked => {
                 ErrorCode::Unavailable
             }
-            Self::DraftCapacity
-            | Self::ConfirmationRequired
-            | Self::ConfirmationExpired
-            | Self::RestartRequired => ErrorCode::Conflict,
+            Self::ConfirmationRequired | Self::ConfirmationExpired | Self::RestartRequired => {
+                ErrorCode::Conflict
+            }
             _ => ErrorCode::Internal,
         }
     }
@@ -69,8 +55,6 @@ impl fmt::Display for CoreError {
             Self::Clock => f.write_str("system clock invalid"),
             Self::ConfirmationExpired => f.write_str("confirmation expired"),
             Self::ConfirmationRequired => f.write_str("confirmation required"),
-            Self::DraftCapacity => f.write_str("draft capacity reached"),
-            Self::Encoding => f.write_str("invalid stored data"),
             Self::Hosted(e) => write!(f, "Hosted: {e}"),
             Self::HostedService(e) => write!(f, "HostedService: {e}"),
             Self::HostedUnavailable => {
@@ -82,9 +66,6 @@ impl fmt::Display for CoreError {
             Self::InvalidConfig => {
                 f.write_str("invalid configuration; use storage_provider and hosted settings only")
             }
-            Self::InvalidConversation => f.write_str("invalid hosted conversation"),
-            Self::InvalidDraft => f.write_str("invalid draft"),
-            Self::InvalidMessage => f.write_str("message is empty or too large"),
             Self::Io(e) => write!(f, "Io: {e}"),
             Self::PanicErase => f.write_str("panic cleanup failed"),
             Self::Panicked => f.write_str("daemon is shutting down"),

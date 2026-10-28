@@ -6,7 +6,6 @@ members = [
     "crates/omachat-server",
     "crates/omachat-store",
     "crates/omachatd",
-    "crates/omachat-tui",
     "crates/omachat-ctl",
 ]
 
