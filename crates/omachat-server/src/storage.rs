@@ -13,7 +13,7 @@ use rusqlite::{Connection, ErrorCode as SqliteCode, OptionalExtension, params};
 use std::{error::Error, fmt, os::unix::fs::PermissionsExt, path::Path};
 use zeroize::Zeroizing;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 const NONCE_BYTES: usize = 24;
 const KEY_CHECK_PLAINTEXT: &[u8] = b"omachat-server storage key check";
 
@@ -95,15 +95,26 @@ impl Storage {
                 |row| row.get(0),
             )
             .optional()?;
-        match version {
-            None => {
+        match version.as_deref() {
+            None | Some(b"2") => {
+                self.connection.execute_batch(
+                    "ALTER TABLE accounts ADD COLUMN nostr_pubkey BLOB;
+                     CREATE UNIQUE INDEX IF NOT EXISTS accounts_nostr_pubkey
+                        ON accounts(nostr_pubkey) WHERE nostr_pubkey IS NOT NULL;
+                     CREATE TABLE IF NOT EXISTS nostr_proof_nonces (
+                        nonce BLOB PRIMARY KEY,
+                        account_id TEXT NOT NULL,
+                        seen_at INTEGER NOT NULL
+                     );",
+                )?;
                 self.connection.execute(
-                    "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)",
+                    "INSERT INTO meta (key, value) VALUES ('schema_version', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                     params![SCHEMA_VERSION.to_string().into_bytes()],
                 )?;
             }
-            Some(value) if value == SCHEMA_VERSION.to_string().into_bytes() => {}
-            Some(value) if value == b"1" => {
+            Some(value) if value == SCHEMA_VERSION.to_string().as_bytes() => {}
+            Some(b"1") => {
                 return Err(StorageError::UnsupportedSchema(
                     "1 (hosted chat database; run that product from the hosted-archive branch)"
                         .to_owned(),
@@ -111,7 +122,7 @@ impl Storage {
             }
             Some(value) => {
                 return Err(StorageError::UnsupportedSchema(
-                    String::from_utf8_lossy(&value).into_owned(),
+                    String::from_utf8_lossy(value).into_owned(),
                 ));
             }
         }
@@ -266,6 +277,88 @@ impl Storage {
             .optional()
             .map_err(StorageError::from)
     }
+
+    pub fn nostr_pubkey(&self, account_id: &str) -> Result<Option<[u8; 32]>, StorageError> {
+        let stored: Option<Option<Vec<u8>>> = self
+            .connection
+            .query_row(
+                "SELECT nostr_pubkey FROM accounts WHERE id = ?1",
+                params![account_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match stored {
+            None => Err(StorageError::NotFound),
+            Some(None) => Ok(None),
+            Some(Some(bytes)) => Ok(Some(fixed_key(&bytes)?)),
+        }
+    }
+
+    /// Bind `pubkey` to this account, replacing a previous binding. Rejects a
+    /// key that another account already holds.
+    pub fn bind_nostr(&mut self, account_id: &str, pubkey: &[u8; 32]) -> Result<(), StorageError> {
+        match self.connection.execute(
+            "UPDATE accounts SET nostr_pubkey = ?2 WHERE id = ?1",
+            params![account_id, pubkey.as_slice()],
+        ) {
+            Ok(0) => Err(StorageError::NotFound),
+            Ok(_) => Ok(()),
+            Err(error) if is_constraint(&error) => Err(StorageError::NostrPubkeyTaken),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// Returns whether a binding was removed.
+    pub fn unbind_nostr(&mut self, account_id: &str) -> Result<bool, StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE accounts SET nostr_pubkey = NULL WHERE id = ?1 AND nostr_pubkey IS NOT NULL",
+            params![account_id],
+        )?;
+        if self.account(account_id)?.is_none() {
+            return Err(StorageError::NotFound);
+        }
+        Ok(changed == 1)
+    }
+
+    pub fn nostr_for_handle(&self, handle: &str) -> Result<Option<[u8; 32]>, StorageError> {
+        let stored: Option<Option<Vec<u8>>> = self
+            .connection
+            .query_row(
+                "SELECT nostr_pubkey FROM accounts WHERE handle = ?1",
+                params![handle],
+                |row| row.get(0),
+            )
+            .optional()?;
+        match stored {
+            None | Some(None) => Ok(None),
+            Some(Some(bytes)) => Ok(Some(fixed_key(&bytes)?)),
+        }
+    }
+
+    /// Record a proof nonce. A repeat is a replay. Nonces older than the
+    /// freshness window are dropped so the table stays bounded; a late replay
+    /// is rejected by the timestamp check instead.
+    pub fn remember_proof_nonce(
+        &mut self,
+        nonce: &[u8; 32],
+        account_id: &str,
+        now: u64,
+        skew_seconds: u64,
+    ) -> Result<(), StorageError> {
+        let oldest = now.saturating_sub(skew_seconds);
+        self.connection.execute(
+            "DELETE FROM nostr_proof_nonces WHERE seen_at < ?1",
+            params![to_i64(oldest)],
+        )?;
+        match self.connection.execute(
+            "INSERT INTO nostr_proof_nonces (nonce, account_id, seen_at) VALUES (?1, ?2, ?3)",
+            params![nonce.as_slice(), account_id, to_i64(now)],
+        ) {
+            Ok(_) => Ok(()),
+            Err(error) if is_constraint(&error) => Err(StorageError::ReplayedProof),
+            Err(error) => Err(error.into()),
+        }
+    }
 }
 
 fn account_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<AccountRecord> {
@@ -317,6 +410,10 @@ fn from_i64(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
+fn fixed_key(bytes: &[u8]) -> Result<[u8; 32], StorageError> {
+    bytes.try_into().map_err(|_| StorageError::Corrupt)
+}
+
 #[derive(Debug)]
 pub enum StorageError {
     Sqlite(rusqlite::Error),
@@ -328,6 +425,8 @@ pub enum StorageError {
     NotFound,
     HandleTaken,
     HandleAlreadySet,
+    NostrPubkeyTaken,
+    ReplayedProof,
 }
 
 impl From<rusqlite::Error> for StorageError {
@@ -353,6 +452,8 @@ impl fmt::Display for StorageError {
             Self::NotFound => formatter.write_str("no such record"),
             Self::HandleTaken => formatter.write_str("handle already taken"),
             Self::HandleAlreadySet => formatter.write_str("account already has a handle"),
+            Self::NostrPubkeyTaken => formatter.write_str("nostr public key is already bound"),
+            Self::ReplayedProof => formatter.write_str("nostr proof nonce was already used"),
         }
     }
 }

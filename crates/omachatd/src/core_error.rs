@@ -10,6 +10,8 @@ pub enum CoreError {
     HostedUnavailable,
     HostedUnconfigured,
     IdentityStore(omachat_store::IdentityStoreError),
+    NostrMissing,
+    NostrStore(omachat_store::NostrStoreError),
     InvalidCommand,
     InvalidConfig,
     Io(std::io::Error),
@@ -30,6 +32,8 @@ impl CoreError {
                 | omachat_proto::hosted::ErrorCode::UnsupportedVersion => ErrorCode::InvalidRequest,
                 omachat_proto::hosted::ErrorCode::HandleTaken
                 | omachat_proto::hosted::ErrorCode::HandleAlreadySet
+                | omachat_proto::hosted::ErrorCode::NostrPubkeyTaken
+                | omachat_proto::hosted::ErrorCode::ReplayedProof
                 | omachat_proto::hosted::ErrorCode::AlreadyAuthenticated => ErrorCode::Conflict,
                 omachat_proto::hosted::ErrorCode::NotFound => ErrorCode::NotFound,
                 omachat_proto::hosted::ErrorCode::RateLimited
@@ -38,6 +42,8 @@ impl CoreError {
                 | omachat_proto::hosted::ErrorCode::NotAuthenticated => ErrorCode::Unavailable,
                 omachat_proto::hosted::ErrorCode::Internal => ErrorCode::Internal,
             },
+            Self::NostrMissing => ErrorCode::NotFound,
+            Self::NostrStore(omachat_store::NostrStoreError::AlreadyPresent) => ErrorCode::Conflict,
             Self::InvalidConfig | Self::InvalidCommand => ErrorCode::InvalidRequest,
             Self::HostedUnavailable | Self::HostedUnconfigured | Self::Panicked => {
                 ErrorCode::Unavailable
@@ -62,6 +68,8 @@ impl fmt::Display for CoreError {
             }
             Self::HostedUnconfigured => f.write_str("hosted server is not configured"),
             Self::IdentityStore(e) => write!(f, "IdentityStore: {e}"),
+            Self::NostrMissing => f.write_str("no nostr identity is stored"),
+            Self::NostrStore(e) => write!(f, "NostrStore: {e}"),
             Self::InvalidCommand => f.write_str("invalid command"),
             Self::InvalidConfig => {
                 f.write_str("invalid configuration; use storage_provider and hosted settings only")

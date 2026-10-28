@@ -25,6 +25,22 @@ and CLI crates. The installed client binaries (`omachatd`, `omachat-ctl`) retain
 a 10 MiB aggregate release size ceiling. IPC v4 rejects older clients; update
 the CLI and daemon together. Existing device signing credentials remain valid.
 
+```sh
+omachat-ctl identity generate
+omachat-ctl identity show
+omachat-ctl identity export
+omachat-ctl identity import nsec1...
+omachat-ctl hosted-claim-handle alice
+omachat-ctl identity bind
+curl -sI http://127.0.0.1:7448/.well-known/nostr.json?name=alice
+```
+
+`identity export` is the only command that prints an `nsec`. `identity show`
+prints the `npub`. Bind fails until the account has claimed a handle and the
+daemon is connected to the server. The curl above is against the loopback
+listener; through Caddy the same path is `https://<host>/.well-known/nostr.json?name=alice`
+and the response includes `Access-Control-Allow-Origin: *`.
+
 Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
 and `cargo test --workspace --locked` after building.
 Deployment, security review, account recovery and multi-device support remain outstanding.

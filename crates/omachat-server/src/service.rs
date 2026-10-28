@@ -6,11 +6,15 @@
 //! loop. Nothing in this process publishes chat events.
 
 use crate::{
-    auth::KEY_BYTES,
+    auth::{self, KEY_BYTES},
     protocol::{Command, ErrorCode, PROTOCOL_VERSION, ServerError},
     storage::{AccountRecord, Storage, StorageError},
 };
-use omachat_crypto::{DisplayName, GlobalHandle};
+use ed25519_dalek::{Signature, VerifyingKey};
+use omachat_crypto::{DisplayName, GlobalHandle, verify_nostr};
+use omachat_proto::hosted::{
+    NOSTR_PROOF_SKEW_SECONDS, nostr_bind_transcript, nostr_unbind_transcript,
+};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -29,6 +33,8 @@ const REQUEST_QUEUE_DEPTH: usize = 1024;
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
     pub server_public_key: [u8; KEY_BYTES],
+    /// Optional NIP-05 `relays` list. Empty omits the field.
+    pub nip05_relays: Vec<String>,
 }
 
 pub enum ServiceRequest {
@@ -47,6 +53,10 @@ pub enum ServiceRequest {
     Detach {
         account_id: String,
         session_id: u64,
+    },
+    /// `name` is the decoded NIP-05 local part, or empty when `name` is absent.
+    Nip05 {
+        name: String,
     },
     Command {
         account_id: String,
@@ -138,6 +148,7 @@ impl Service {
                     });
                 Ok(Value::Null)
             }
+            ServiceRequest::Nip05 { name } => self.nip05(&name),
             ServiceRequest::Detach {
                 account_id,
                 session_id,
@@ -199,7 +210,7 @@ impl Service {
         account_id: &str,
         device_public_key: &[u8; KEY_BYTES],
         command: Command,
-        _now: u64,
+        now: u64,
     ) -> Result<Value, ServerError> {
         match command {
             Command::Hello { .. } | Command::Authenticate { .. } => Err(ServerError::new(
@@ -208,6 +219,11 @@ impl Service {
             )),
             Command::Status => {
                 let account = self.account(account_id)?;
+                let nostr_public_key = self
+                    .storage
+                    .nostr_pubkey(account_id)
+                    .map_err(storage_error)?
+                    .map(hex::encode);
                 Ok(json!({
                     "protocol_version": PROTOCOL_VERSION,
                     "account_id": account.id,
@@ -215,6 +231,7 @@ impl Service {
                     "display_name": account.display_name,
                     "device_public_key": hex::encode(device_public_key),
                     "server_public_key": hex::encode(self.config.server_public_key),
+                    "nostr_public_key": nostr_public_key,
                 }))
             }
             Command::ClaimHandle { handle } => {
@@ -233,6 +250,36 @@ impl Service {
                     "display_name": account.display_name,
                 }))
             }
+            Command::BindNostr {
+                nostr_public_key,
+                nonce,
+                timestamp,
+                device_signature,
+                nostr_signature,
+            } => self.bind_nostr(
+                account_id,
+                device_public_key,
+                &BindProof {
+                    nostr_public_key: &nostr_public_key,
+                    nonce: &nonce,
+                    timestamp,
+                    device_signature: &device_signature,
+                    nostr_signature: &nostr_signature,
+                },
+                now,
+            ),
+            Command::UnbindNostr {
+                nonce,
+                timestamp,
+                device_signature,
+            } => self.unbind_nostr(
+                account_id,
+                device_public_key,
+                &nonce,
+                timestamp,
+                &device_signature,
+                now,
+            ),
         }
     }
 
@@ -248,6 +295,143 @@ impl Service {
             .resolve_handle(handle.as_str())
             .map_err(storage_error)?
             .ok_or_else(|| ServerError::new(ErrorCode::NotFound, "no account has that handle"))
+    }
+
+    fn bind_nostr(
+        &mut self,
+        account_id: &str,
+        device_public_key: &[u8; KEY_BYTES],
+        proof: &BindProof<'_>,
+        now: u64,
+    ) -> Result<Value, ServerError> {
+        let account = self.account(account_id)?;
+        let handle = account.handle.ok_or_else(|| {
+            ServerError::new(
+                ErrorCode::InvalidHandle,
+                "claim a handle before binding a nostr key",
+            )
+        })?;
+        let nostr_public_key = decode_nostr_key(proof.nostr_public_key)?;
+        let nonce = decode_nostr_key(proof.nonce)?;
+        let device_signature = auth::decode_signature(proof.device_signature).map_err(|_| {
+            ServerError::new(
+                ErrorCode::InvalidRequest,
+                "device_signature must be 128 hex characters",
+            )
+        })?;
+        let nostr_signature = auth::decode_signature(proof.nostr_signature).map_err(|_| {
+            ServerError::new(
+                ErrorCode::InvalidRequest,
+                "nostr_signature must be 128 hex characters",
+            )
+        })?;
+        fresh_timestamp(proof.timestamp, now)?;
+        let transcript = nostr_bind_transcript(
+            &self.config.server_public_key,
+            account_id,
+            &handle,
+            &nostr_public_key,
+            &nonce,
+            proof.timestamp,
+        );
+        verify_device(device_public_key, &transcript, &device_signature)?;
+        verify_nostr(&nostr_public_key, &transcript, &nostr_signature).map_err(|_| {
+            ServerError::new(
+                ErrorCode::InvalidSignature,
+                "the nostr schnorr signature did not verify",
+            )
+        })?;
+        self.storage
+            .remember_proof_nonce(&nonce, account_id, now, NOSTR_PROOF_SKEW_SECONDS)
+            .map_err(storage_error)?;
+        self.storage
+            .bind_nostr(account_id, &nostr_public_key)
+            .map_err(storage_error)?;
+        Ok(binding_json(&handle, &nostr_public_key))
+    }
+
+    fn unbind_nostr(
+        &mut self,
+        account_id: &str,
+        device_public_key: &[u8; KEY_BYTES],
+        nonce: &str,
+        timestamp: u64,
+        device_signature: &str,
+        now: u64,
+    ) -> Result<Value, ServerError> {
+        let account = self.account(account_id)?;
+        let handle = account.handle.clone().ok_or_else(|| {
+            ServerError::new(ErrorCode::InvalidHandle, "this account has no handle")
+        })?;
+        let bound = self
+            .storage
+            .nostr_pubkey(account_id)
+            .map_err(storage_error)?
+            .ok_or_else(|| ServerError::new(ErrorCode::NotFound, "no nostr key is bound"))?;
+        let nonce = decode_nostr_key(nonce)?;
+        let device_signature = auth::decode_signature(device_signature).map_err(|_| {
+            ServerError::new(
+                ErrorCode::InvalidRequest,
+                "device_signature must be 128 hex characters",
+            )
+        })?;
+        fresh_timestamp(timestamp, now)?;
+        let transcript = nostr_unbind_transcript(
+            &self.config.server_public_key,
+            account_id,
+            &handle,
+            &bound,
+            &nonce,
+            timestamp,
+        );
+        verify_device(device_public_key, &transcript, &device_signature)?;
+        self.storage
+            .remember_proof_nonce(&nonce, account_id, now, NOSTR_PROOF_SKEW_SECONDS)
+            .map_err(storage_error)?;
+        self.storage
+            .unbind_nostr(account_id)
+            .map_err(storage_error)?;
+        Ok(json!({"handle": handle, "nostr_public_key": Value::Null}))
+    }
+
+    fn nip05(&self, name: &str) -> Result<Value, ServerError> {
+        if name.is_empty() {
+            return Err(ServerError::new(
+                ErrorCode::InvalidRequest,
+                "name query parameter is required",
+            ));
+        }
+        let name = name.to_ascii_lowercase();
+        if name.len() > 64
+            || !name.bytes().all(|byte| {
+                byte.is_ascii_lowercase()
+                    || byte.is_ascii_digit()
+                    || matches!(byte, b'-' | b'_' | b'.')
+            })
+        {
+            return Err(ServerError::new(
+                ErrorCode::InvalidName,
+                "nip-05 names are 1 to 64 characters from a-z, 0-9, '-', '_' and '.'",
+            ));
+        }
+        let Some(public_key) = self
+            .storage
+            .nostr_for_handle(&name)
+            .map_err(storage_error)?
+        else {
+            return Err(ServerError::new(
+                ErrorCode::NotFound,
+                "no nostr key for that name",
+            ));
+        };
+        let hex_key = hex::encode(public_key);
+        let mut names = serde_json::Map::new();
+        names.insert(name, json!(hex_key));
+        let mut document = json!({"names": names});
+        if !self.config.nip05_relays.is_empty() {
+            document["relays"] = json!({ &hex_key: self.config.nip05_relays });
+        }
+        Ok(document)
     }
 
     #[allow(dead_code)]
@@ -273,6 +457,55 @@ impl Service {
     }
 }
 
+struct BindProof<'a> {
+    nostr_public_key: &'a str,
+    nonce: &'a str,
+    timestamp: u64,
+    device_signature: &'a str,
+    nostr_signature: &'a str,
+}
+
+fn binding_json(handle: &str, nostr_public_key: &[u8; KEY_BYTES]) -> Value {
+    json!({
+        "handle": handle,
+        "nostr_public_key": hex::encode(nostr_public_key),
+        "npub": omachat_crypto::npub_from_public_key(nostr_public_key).expect("bound key encodes"),
+    })
+}
+
+fn decode_nostr_key(value: &str) -> Result<[u8; KEY_BYTES], ServerError> {
+    auth::decode_key(value)
+        .map_err(|_| ServerError::new(ErrorCode::InvalidRequest, "expected 64 hex characters"))
+}
+
+fn fresh_timestamp(timestamp: u64, now: u64) -> Result<(), ServerError> {
+    let skew = NOSTR_PROOF_SKEW_SECONDS;
+    if timestamp <= now.saturating_add(skew) && now.saturating_sub(skew) <= timestamp {
+        Ok(())
+    } else {
+        Err(ServerError::new(
+            ErrorCode::InvalidRequest,
+            "nostr proof timestamp is outside the freshness window",
+        ))
+    }
+}
+
+fn verify_device(
+    device_public_key: &[u8; KEY_BYTES],
+    transcript: &[u8],
+    signature: &[u8; 64],
+) -> Result<(), ServerError> {
+    VerifyingKey::from_bytes(device_public_key)
+        .map_err(|_| ServerError::new(ErrorCode::InvalidRequest, "device key is not Ed25519"))?
+        .verify_strict(transcript, &Signature::from_bytes(signature))
+        .map_err(|_| {
+            ServerError::new(
+                ErrorCode::InvalidSignature,
+                "the device signature did not verify for this nostr proof",
+            )
+        })
+}
+
 fn parse_handle(value: &str) -> Result<GlobalHandle, ServerError> {
     GlobalHandle::parse(value).map_err(|_| {
         ServerError::new(
@@ -291,6 +524,14 @@ fn storage_error(error: StorageError) -> ServerError {
         StorageError::HandleAlreadySet => ServerError::new(
             ErrorCode::HandleAlreadySet,
             "this account already has a handle",
+        ),
+        StorageError::NostrPubkeyTaken => ServerError::new(
+            ErrorCode::NostrPubkeyTaken,
+            "that nostr public key is already bound to another handle",
+        ),
+        StorageError::ReplayedProof => ServerError::new(
+            ErrorCode::ReplayedProof,
+            "that nostr proof was already used",
         ),
         other => {
             eprintln!("omachat-serverd: storage failure: {other}");
@@ -323,6 +564,7 @@ mod tests {
             storage: Storage::open_in_memory(Zeroizing::new([5_u8; 32])).unwrap(),
             config: ServiceConfig {
                 server_public_key: [0_u8; KEY_BYTES],
+                nip05_relays: Vec::new(),
             },
             subscribers: HashMap::new(),
         }
@@ -397,5 +639,58 @@ mod tests {
             now: 2,
         });
         assert!(bad_name.is_err());
+    }
+
+    #[test]
+    fn nip05_includes_relays_only_when_configured() {
+        let mut service = service();
+        let account = account_id(
+            &service
+                .handle(ServiceRequest::Register {
+                    device_public_key: [1_u8; 32],
+                    display_name: Some("Ada".into()),
+                    now: 1,
+                })
+                .unwrap(),
+        );
+        service
+            .handle(ServiceRequest::Command {
+                account_id: account.clone(),
+                device_public_key: [1_u8; 32],
+                command: Command::ClaimHandle {
+                    handle: "ada".into(),
+                },
+                now: 2,
+            })
+            .unwrap();
+        let key = [9_u8; 32];
+        service.storage.bind_nostr(&account, &key).unwrap();
+        let plain = service
+            .handle(ServiceRequest::Nip05 { name: "Ada".into() })
+            .unwrap();
+        assert!(plain.get("relays").is_none());
+        assert_eq!(plain["names"]["ada"], json!(hex::encode(key)));
+        service.config.nip05_relays = vec!["wss://relay.example".into()];
+        let with_relays = service
+            .handle(ServiceRequest::Nip05 { name: "ada".into() })
+            .unwrap();
+        assert_eq!(
+            with_relays["relays"][hex::encode(key)][0],
+            json!("wss://relay.example")
+        );
+        assert!(
+            service
+                .handle(ServiceRequest::Nip05 {
+                    name: "nope".into()
+                })
+                .is_err()
+        );
+        assert!(
+            service
+                .handle(ServiceRequest::Nip05 {
+                    name: "bad name".into()
+                })
+                .is_err()
+        );
     }
 }

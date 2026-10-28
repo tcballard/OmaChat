@@ -6,6 +6,10 @@ ignore = [
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",
+    # k256 0.13.4 (the Nostr stack this phase reuses) depends on elliptic-curve
+    # 0.13, which depends on crypto-bigint 0.5. The constant-time fix is only
+    # published on the 0.7 line and is not a drop-in upgrade.
+    "RUSTSEC-2026-0387",
 ]
 
 [bans]

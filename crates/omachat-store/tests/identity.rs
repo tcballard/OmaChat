@@ -1,5 +1,7 @@
+use omachat_crypto::NostrSecret;
 use omachat_store::{
-    IdentityStoreError, IdentityVault, RequestedProvider, SealedStore, StoreError,
+    IdentityStoreError, IdentityVault, NostrStoreError, NostrVault, RequestedProvider, SealedStore,
+    StoreError,
 };
 use std::fs;
 use tempfile::tempdir;
@@ -59,5 +61,32 @@ async fn pre_retirement_identity_keeps_the_hosted_signing_key() {
             .unwrap()
             .len(),
         1
+    );
+}
+
+#[tokio::test]
+async fn nostr_secret_round_trips_sealed_and_is_not_stored_as_nsec() {
+    let temporary = tempdir().unwrap();
+    let store = SealedStore::open(temporary.path(), RequestedProvider::File)
+        .await
+        .unwrap();
+    assert!(NostrVault::load(&store).unwrap().is_none());
+    let secret =
+        NostrSecret::from_nsec("nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5")
+            .unwrap();
+    let nsec = secret.nsec();
+    NostrVault::save_new(&store, &secret).unwrap();
+    let loaded = NostrVault::load(&store).unwrap().unwrap();
+    assert_eq!(loaded.nsec(), nsec);
+    assert_eq!(loaded.public_key(), secret.public_key());
+    assert!(matches!(
+        NostrVault::save_new(&store, &secret),
+        Err(NostrStoreError::AlreadyPresent)
+    ));
+    let sealed = std::fs::read(temporary.path().join("records/nostr-identity-v1")).unwrap();
+    assert!(
+        !sealed
+            .windows(nsec.len())
+            .any(|window| window == nsec.as_bytes())
     );
 }

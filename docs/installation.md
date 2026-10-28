@@ -33,5 +33,9 @@ The supplied systemd user unit is optional; packaging does not enable it automat
 
 `omachat-ctl hosted-claim-handle alice` claims a server-scoped handle once the
 daemon is connected. `omachat-ctl hosted-resolve-handle alice` looks one up.
+`omachat-ctl identity generate` creates a sealed Nostr key, `identity show`
+prints the `npub`, and `identity export` prints the `nsec`. `identity bind`
+attaches that key to the claimed handle. `identity import nsec1...` loads an
+existing key and refuses to replace one that is already stored.
 Old chat and relay settings are rejected. Existing device signing keys remain
 valid. A chat database from the archived server is not opened by this binary.

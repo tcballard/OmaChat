@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | hosted-claim-handle HANDLE [--json] | hosted-resolve-handle HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | identity show | identity generate | identity import NSEC | identity export | identity bind | identity unbind | hosted-claim-handle HANDLE [--json] | hosted-resolve-handle HANDLE [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -105,6 +105,20 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
         ["status", "--json"] => Ok((Command::Status, OutputMode::Json)),
         ["fingerprint"] => Ok((Command::Fingerprint, OutputMode::Human)),
         ["fingerprint", "--qr"] => Ok((Command::Fingerprint, OutputMode::Qr)),
+        ["identity", "show"] => Ok((Command::IdentityShow, OutputMode::Human)),
+        ["identity", "show", "--json"] => Ok((Command::IdentityShow, OutputMode::Json)),
+        ["identity", "generate"] => Ok((Command::IdentityGenerate, OutputMode::Human)),
+        ["identity", "generate", "--json"] => Ok((Command::IdentityGenerate, OutputMode::Json)),
+        ["identity", "export"] => Ok((Command::IdentityExport, OutputMode::Human)),
+        ["identity", "import", nsec] => Ok((
+            Command::IdentityImport {
+                nsec: (*nsec).to_owned(),
+            },
+            OutputMode::Human,
+        )),
+        ["identity", "bind"] => Ok((Command::HostedBindNostr, OutputMode::Human)),
+        ["identity", "bind", "--json"] => Ok((Command::HostedBindNostr, OutputMode::Json)),
+        ["identity", "unbind"] => Ok((Command::HostedUnbindNostr, OutputMode::Human)),
         ["panic", "--confirm", confirmation] => Ok((
             Command::Panic {
                 confirmation: (*confirmation).into(),

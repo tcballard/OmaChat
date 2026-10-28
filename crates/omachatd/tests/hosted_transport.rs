@@ -42,6 +42,7 @@ impl TestServer {
             storage,
             ServiceConfig {
                 server_public_key: public_key,
+                nip05_relays: Vec::new(),
             },
         )
         .unwrap();

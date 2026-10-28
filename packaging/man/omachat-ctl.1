@@ -5,9 +5,12 @@ omachat-ctl \- control the local identity daemon
 .B omachat-ctl
 [--socket PATH] COMMAND
 .SH COMMANDS
-status [--json], fingerprint [--qr], hosted-claim-handle HANDLE,
-hosted-resolve-handle HANDLE.
-Handle commands accept --json.
+status [--json], fingerprint [--qr],
+identity show, identity generate, identity import NSEC, identity export,
+identity bind, identity unbind,
+hosted-claim-handle HANDLE, hosted-resolve-handle HANDLE.
+Handle commands and identity show/generate/bind accept --json.
+identity export prints the nsec. Nothing else prints that secret.
 .SH PANIC
 panic --confirm ERASE requests and redeems a private single-use confirmation token.
 It erases local credentials and history, not server messages or backups.

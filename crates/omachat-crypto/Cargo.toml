@@ -7,9 +7,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bech32 = "=0.11.1"
 ed25519-dalek = "=2.2.0"
 getrandom = "=0.4.3"
 hex = "=0.4.3"
+k256 = { version = "=0.13.4", default-features = false, features = ["arithmetic", "schnorr", "std"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "=0.10.9"

@@ -1,8 +1,10 @@
 //! End-to-end tests against a real listener: device authentication, handle
 //! claims, limits and restart persistence.
 
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
+use omachat_crypto::NostrSecret;
+use omachat_proto::hosted::{nostr_bind_transcript, nostr_unbind_transcript};
 use omachat_server::{
     HostLimits, HostReport, ServerIdentity, ServiceConfig, SessionLimits, Storage, StorageError,
     auth::{sign_device_challenge, verify_hello_signature},
@@ -10,8 +12,10 @@ use omachat_server::{
     run_host, spawn_service,
 };
 use serde_json::{Value, json};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::VecDeque, net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::oneshot,
     task::JoinHandle,
@@ -43,6 +47,7 @@ impl TestServer {
             storage,
             ServiceConfig {
                 server_public_key: public_key,
+                nip05_relays: Vec::new(),
             },
         )
         .unwrap();
@@ -405,4 +410,300 @@ async fn connection_limits_reject_excess_clients() {
     );
     let report = server.stop().await;
     assert_eq!(report.rejected_global_limit, 1);
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bind_params(
+    server_public_key: &[u8; 32],
+    account_id: &str,
+    handle: &str,
+    device_seed: &[u8; 32],
+    nostr: &NostrSecret,
+    nonce: [u8; 32],
+    timestamp: u64,
+    damage_device: bool,
+    damage_nostr: bool,
+) -> Value {
+    let transcript = nostr_bind_transcript(
+        server_public_key,
+        account_id,
+        handle,
+        &nostr.public_key(),
+        &nonce,
+        timestamp,
+    );
+    let mut device_signature = SigningKey::from_bytes(device_seed)
+        .sign(&transcript)
+        .to_bytes();
+    let mut nostr_signature = nostr.sign(&transcript).unwrap();
+    if damage_device {
+        device_signature[0] ^= 0xff;
+    }
+    if damage_nostr {
+        nostr_signature[0] ^= 0xff;
+    }
+    json!({
+        "nostr_public_key": hex::encode(nostr.public_key()),
+        "nonce": hex::encode(nonce),
+        "timestamp": timestamp,
+        "device_signature": hex::encode(device_signature),
+        "nostr_signature": hex::encode(nostr_signature),
+    })
+}
+
+async fn http_get(address: SocketAddr, path: &str) -> (u16, String, String) {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let request = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut buffer = Vec::new();
+    stream.read_to_end(&mut buffer).await.unwrap();
+    let text = String::from_utf8(buffer).unwrap();
+    let status: u16 = text
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap();
+    (status, head.to_owned(), body.to_owned())
+}
+
+#[tokio::test]
+async fn nostr_bind_requires_both_proofs_and_nip05_serves_the_handle() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = TestServer::start(directory.path(), fast_limits()).await;
+    let nsec = "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5";
+    let nostr = NostrSecret::from_nsec(nsec).unwrap();
+    let (mut ada, registered) = Client::login(&server, &[1_u8; 32], Some("Ada")).await;
+    let account_id = registered["account_id"].as_str().unwrap().to_owned();
+    assert_eq!(
+        ada.err(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &account_id,
+                "ada",
+                &[1_u8; 32],
+                &nostr,
+                [1_u8; 32],
+                unix_now(),
+                false,
+                false
+            )
+        )
+        .await,
+        "invalid-handle"
+    );
+    ada.ok("claim-handle", json!({"handle": "ada"})).await;
+    let now = unix_now();
+    let bound = ada
+        .ok(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &account_id,
+                "ada",
+                &[1_u8; 32],
+                &nostr,
+                [2_u8; 32],
+                now,
+                false,
+                false,
+            ),
+        )
+        .await;
+    assert_eq!(
+        bound["nostr_public_key"],
+        json!(hex::encode(nostr.public_key()))
+    );
+    assert_eq!(bound["npub"], json!(nostr.npub()));
+    assert_eq!(
+        ada.err(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &account_id,
+                "ada",
+                &[1_u8; 32],
+                &nostr,
+                [2_u8; 32],
+                now,
+                false,
+                false
+            ),
+        )
+        .await,
+        "replayed-proof"
+    );
+    assert_eq!(
+        ada.err(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &account_id,
+                "ada",
+                &[1_u8; 32],
+                &nostr,
+                [3_u8; 32],
+                now,
+                false,
+                true
+            ),
+        )
+        .await,
+        "invalid-signature"
+    );
+    assert_eq!(
+        ada.err(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &account_id,
+                "ada",
+                &[1_u8; 32],
+                &nostr,
+                [4_u8; 32],
+                now,
+                true,
+                false
+            ),
+        )
+        .await,
+        "invalid-signature"
+    );
+    assert_eq!(
+        ada.err(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &account_id,
+                "ada",
+                &[1_u8; 32],
+                &nostr,
+                [5_u8; 32],
+                now.saturating_sub(3600),
+                false,
+                false
+            ),
+        )
+        .await,
+        "invalid-request"
+    );
+
+    let (mut bob, bob_account) = Client::login(&server, &[2_u8; 32], Some("Bob")).await;
+    let bob_id = bob_account["account_id"].as_str().unwrap().to_owned();
+    bob.ok("claim-handle", json!({"handle": "bob"})).await;
+    assert_eq!(
+        bob.err(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &bob_id,
+                "bob",
+                &[2_u8; 32],
+                &nostr,
+                [6_u8; 32],
+                now,
+                false,
+                false
+            ),
+        )
+        .await,
+        "nostr-pubkey-taken"
+    );
+
+    let (status, head, body) = http_get(server.address, "/.well-known/nostr.json?name=ada").await;
+    assert_eq!(status, 200);
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("access-control-allow-origin: *")
+    );
+    let document: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        document["names"]["ada"],
+        json!(hex::encode(nostr.public_key()))
+    );
+    assert!(document.get("relays").is_none());
+    let (status, head, body) =
+        http_get(server.address, "/.well-known/nostr.json?name=nobody").await;
+    assert_eq!(status, 404);
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("access-control-allow-origin: *")
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["names"],
+        json!({})
+    );
+    let (status, _, _) = http_get(server.address, "/.well-known/nostr.json?name=Not_A_Name").await;
+    assert_eq!(
+        status, 404,
+        "NIP-05 names are case-insensitive, so this is an unknown handle"
+    );
+    let (status, _, _) = http_get(server.address, "/.well-known/nostr.json?name=bad%20name").await;
+    assert_eq!(status, 400);
+    let (status, _, _) = http_get(server.address, "/.well-known/nostr.json").await;
+    assert_eq!(status, 400);
+
+    let transcript = nostr_unbind_transcript(
+        &server.public_key,
+        &account_id,
+        "ada",
+        &nostr.public_key(),
+        &[7_u8; 32],
+        now,
+    );
+    let device_signature = SigningKey::from_bytes(&[1_u8; 32])
+        .sign(&transcript)
+        .to_bytes();
+    ada.ok(
+        "unbind-nostr",
+        json!({
+            "nonce": hex::encode([7_u8; 32]),
+            "timestamp": now,
+            "device_signature": hex::encode(device_signature),
+        }),
+    )
+    .await;
+    let (status, _, _) = http_get(server.address, "/.well-known/nostr.json?name=Ada").await;
+    assert_eq!(status, 404);
+
+    let replacement = NostrSecret::generate().unwrap();
+    let rebound = ada
+        .ok(
+            "bind-nostr",
+            bind_params(
+                &server.public_key,
+                &account_id,
+                "ada",
+                &[1_u8; 32],
+                &replacement,
+                [8_u8; 32],
+                now,
+                false,
+                false,
+            ),
+        )
+        .await;
+    assert_eq!(
+        rebound["nostr_public_key"],
+        json!(hex::encode(replacement.public_key()))
+    );
+    let (status, _, body) = http_get(server.address, "/.well-known/nostr.json?name=ada").await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        serde_json::from_str::<Value>(&body).unwrap()["names"]["ada"],
+        json!(hex::encode(replacement.public_key()))
+    );
+    server.stop().await;
 }

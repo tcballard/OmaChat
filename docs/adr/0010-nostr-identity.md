@@ -54,6 +54,10 @@ the change that follows this archive:
 Phases 2–4 wait for review. This ADR does not restore `omachat-nostr`, NIP-29
 rooms, the old registry, or the mesh crate.
 
+Phase 1 is implemented on top of the archive cut: `omachat-ctl identity`
+generates, imports, exports and shows a sealed Nostr key; `identity bind` and
+`identity unbind` talk to `omachat-serverd`; the server serves NIP-05.
+
 IPC moves to version 4. Chat commands are rejected. Clients and the daemon
 move together. A chat database is not migrated.
 

@@ -6,9 +6,10 @@ use crate::{
     },
     ipc_server::{EventHub, RequestHandler},
 };
-use omachat_crypto::IdentitySecrets;
+use omachat_crypto::{IdentitySecrets, NostrSecret};
+use omachat_proto::hosted::{nostr_bind_transcript, nostr_unbind_transcript};
 use omachat_proto::ipc::{Command, ErrorBody, ErrorCode, Event, Request, ResponseOutcome, VERSION};
-use omachat_store::{IdentityVault, SealedStore};
+use omachat_store::{IdentityVault, NostrVault, SealedStore};
 use serde::Serialize;
 use std::{
     future::Future,
@@ -288,6 +289,12 @@ impl DaemonCore {
                 )?;
                 Ok(confirmation_issue_value(&issued))
             }
+            Command::IdentityShow => self.identity_show(),
+            Command::IdentityExport => self.identity_export(),
+            Command::IdentityGenerate => self.identity_generate(),
+            Command::IdentityImport { nsec } => self.identity_import(&nsec),
+            Command::HostedBindNostr => self.hosted_bind_nostr().await,
+            Command::HostedUnbindNostr => self.hosted_unbind_nostr().await,
             Command::HostedClaimHandle { handle } => self.hosted_claim_handle(&handle).await,
             Command::HostedResolveHandle { handle } => {
                 self.hosted_call("resolve-handle", serde_json::json!({"handle": handle}))
@@ -572,6 +579,121 @@ impl DaemonCore {
         }
     }
 
+    fn load_nostr(&self) -> Result<Option<NostrSecret>, CoreError> {
+        NostrVault::load(&self.inner.store).map_err(CoreError::NostrStore)
+    }
+
+    fn identity_show(&self) -> Result<serde_json::Value, CoreError> {
+        let secret = self.load_nostr()?.ok_or(CoreError::NostrMissing)?;
+        Ok(public_nostr_json(&secret))
+    }
+
+    fn identity_export(&self) -> Result<serde_json::Value, CoreError> {
+        let secret = self.load_nostr()?.ok_or(CoreError::NostrMissing)?;
+        Ok(serde_json::json!({"nsec": secret.nsec()}))
+    }
+
+    fn identity_generate(&self) -> Result<serde_json::Value, CoreError> {
+        let secret = NostrSecret::generate().map_err(nostr_identity)?;
+        NostrVault::save_new(&self.inner.store, &secret).map_err(CoreError::NostrStore)?;
+        Ok(public_nostr_json(&secret))
+    }
+
+    fn identity_import(&self, nsec: &str) -> Result<serde_json::Value, CoreError> {
+        let secret = NostrSecret::from_nsec(nsec).map_err(nostr_identity)?;
+        NostrVault::save_new(&self.inner.store, &secret).map_err(CoreError::NostrStore)?;
+        Ok(public_nostr_json(&secret))
+    }
+
+    async fn hosted_bind_nostr(&self) -> Result<serde_json::Value, CoreError> {
+        let secret = self.load_nostr()?.ok_or(CoreError::NostrMissing)?;
+        let (account_id, handle, server_public_key) = self.hosted_binding_context()?;
+        let nonce = random_bytes()?;
+        let timestamp = unix_time()?;
+        let transcript = nostr_bind_transcript(
+            &server_public_key,
+            &account_id,
+            &handle,
+            &secret.public_key(),
+            &nonce,
+            timestamp,
+        );
+        let device_signature = self
+            .sign_with_device_key(&transcript)
+            .ok_or(CoreError::Panicked)?;
+        let nostr_signature = secret.sign(&transcript).map_err(nostr_identity)?;
+        self.hosted_call(
+            "bind-nostr",
+            serde_json::json!({
+                "nostr_public_key": hex::encode(secret.public_key()),
+                "nonce": hex::encode(nonce),
+                "timestamp": timestamp,
+                "device_signature": hex::encode(device_signature),
+                "nostr_signature": hex::encode(nostr_signature),
+            }),
+        )
+        .await
+    }
+
+    async fn hosted_unbind_nostr(&self) -> Result<serde_json::Value, CoreError> {
+        let (account_id, handle, server_public_key) = self.hosted_binding_context()?;
+        let status = self.hosted_call("status", serde_json::Value::Null).await?;
+        let bound = status
+            .get("nostr_public_key")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                CoreError::Hosted(omachat_proto::hosted::ServerError::new(
+                    omachat_proto::hosted::ErrorCode::NotFound,
+                    "no nostr key is bound",
+                ))
+            })?;
+        let mut nostr_public_key = [0_u8; 32];
+        hex::decode_to_slice(bound, &mut nostr_public_key).map_err(|_| CoreError::InvalidConfig)?;
+        let nonce = random_bytes()?;
+        let timestamp = unix_time()?;
+        let transcript = nostr_unbind_transcript(
+            &server_public_key,
+            &account_id,
+            &handle,
+            &nostr_public_key,
+            &nonce,
+            timestamp,
+        );
+        let device_signature = self
+            .sign_with_device_key(&transcript)
+            .ok_or(CoreError::Panicked)?;
+        self.hosted_call(
+            "unbind-nostr",
+            serde_json::json!({
+                "nonce": hex::encode(nonce),
+                "timestamp": timestamp,
+                "device_signature": hex::encode(device_signature),
+            }),
+        )
+        .await
+    }
+
+    fn hosted_binding_context(&self) -> Result<(String, String, [u8; 32]), CoreError> {
+        let status = self.hosted_status();
+        if status.state != "connected" {
+            return Err(CoreError::HostedUnavailable);
+        }
+        let account_id = status.account_id.ok_or(CoreError::HostedUnavailable)?;
+        let handle = status.handle.ok_or_else(|| {
+            CoreError::Hosted(omachat_proto::hosted::ServerError::new(
+                omachat_proto::hosted::ErrorCode::InvalidHandle,
+                "claim a handle before binding a nostr key",
+            ))
+        })?;
+        let encoded = status
+            .server_public_key
+            .ok_or(CoreError::HostedUnavailable)?;
+        let mut server_public_key = [0_u8; 32];
+        hex::decode_to_slice(encoded, &mut server_public_key)
+            .map_err(|_| CoreError::InvalidConfig)?;
+        Ok((account_id, handle, server_public_key))
+    }
+
     async fn hosted_call(
         &self,
         method: &'static str,
@@ -654,6 +776,23 @@ fn minted_panic_token(core: &DaemonCore) -> String {
         .expect("token file")
         .trim()
         .to_owned()
+}
+
+fn nostr_identity(error: omachat_crypto::NostrIdentityError) -> CoreError {
+    CoreError::NostrStore(omachat_store::NostrStoreError::Identity(error))
+}
+
+fn public_nostr_json(secret: &NostrSecret) -> serde_json::Value {
+    serde_json::json!({
+        "npub": secret.npub(),
+        "pubkey": hex::encode(secret.public_key()),
+    })
+}
+
+fn random_bytes() -> Result<[u8; 32], CoreError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|_| CoreError::Random)?;
+    Ok(bytes)
 }
 
 fn unix_time() -> Result<u64, CoreError> {

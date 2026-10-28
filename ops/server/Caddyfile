@@ -10,6 +10,9 @@ chat.example.invalid {
 		Referrer-Policy no-referrer
 		-Server
 	}
+	handle /.well-known/nostr.json {
+		reverse_proxy 127.0.0.1:7448
+	}
 	@websocket {
 		header Connection *Upgrade*
 		header Upgrade websocket
