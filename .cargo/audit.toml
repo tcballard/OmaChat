@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+    # Same constraint as deny.toml: k256 0.13.4 cannot take crypto-bigint 0.7.6.
+    "RUSTSEC-2026-0387",
+]
