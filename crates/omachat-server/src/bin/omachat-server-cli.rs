@@ -17,22 +17,11 @@ Usage: omachat-server-cli --url URL --device-key-file PATH [OPTIONS] COMMAND [AR
 Options:\n\
   --server-public-key HEX     Pin the server identity (strongly recommended)\n\
   --display-name NAME         Display name used if this device registers\n\
-  --invite-code CODE          Invite code used if this device registers\n\
 \n\
 Commands:\n\
   status\n\
   claim-handle HANDLE\n\
   resolve-handle HANDLE\n\
-  create-workspace NAME\n\
-  add-member WORKSPACE_ID HANDLE\n\
-  create-channel WORKSPACE_ID NAME\n\
-  open-dm HANDLE\n\
-  list-conversations\n\
-  send CONVERSATION_ID CLIENT_ID TEXT\n\
-  history CONVERSATION_ID [BEFORE_SEQUENCE] [LIMIT]\n\
-  mark-delivered CONVERSATION_ID SEQUENCE\n\
-  mark-read CONVERSATION_ID SEQUENCE\n\
-  listen                      Print events as JSON lines until interrupted\n\
   raw METHOD [PARAMS_JSON]    Send any request verbatim\n\
 \n\
 Responses and events are printed as one JSON object per line. The exit\n\
@@ -55,7 +44,6 @@ struct Options {
     device_key_file: PathBuf,
     server_public_key: Option<[u8; 32]>,
     display_name: Option<String>,
-    invite_code: Option<String>,
     command: Vec<String>,
 }
 
@@ -65,7 +53,6 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Option<Options>, Bo
     let mut device_key_file = None;
     let mut server_public_key = None;
     let mut display_name = None;
-    let mut invite_code = None;
     let mut command = Vec::new();
     while let Some(argument) = arguments.next() {
         let argument = argument
@@ -104,7 +91,6 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Option<Options>, Bo
                 );
             }
             "--display-name" => display_name = Some(value("--display-name")?),
-            "--invite-code" => invite_code = Some(value("--invite-code")?),
             other if other.starts_with("--") => {
                 return Err(format!("unknown option {other}").into());
             }
@@ -119,7 +105,6 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Option<Options>, Bo
         device_key_file: device_key_file.ok_or("--device-key-file is required")?,
         server_public_key,
         display_name,
-        invite_code,
         command,
     }))
 }
@@ -133,47 +118,9 @@ fn build_request(command: &[String]) -> Result<(String, Value), Box<dyn Error>> 
     };
     let request = match command[0].as_str() {
         "status" => ("status".to_owned(), Value::Null),
-        "list-conversations" => ("list-conversations".to_owned(), Value::Null),
-        "claim-handle" | "resolve-handle" | "open-dm" => (
+        "claim-handle" | "resolve-handle" => (
             command[0].clone(),
             json!({"handle": argument(1, "HANDLE")?}),
-        ),
-        "create-workspace" => (
-            "create-workspace".to_owned(),
-            json!({"name": argument(1, "NAME")?}),
-        ),
-        "add-member" => (
-            "add-member".to_owned(),
-            json!({"workspace_id": argument(1, "WORKSPACE_ID")?, "handle": argument(2, "HANDLE")?}),
-        ),
-        "create-channel" => (
-            "create-channel".to_owned(),
-            json!({"workspace_id": argument(1, "WORKSPACE_ID")?, "name": argument(2, "NAME")?}),
-        ),
-        "send" => (
-            "send".to_owned(),
-            json!({
-                "conversation_id": argument(1, "CONVERSATION_ID")?,
-                "client_id": argument(2, "CLIENT_ID")?,
-                "text": command[3..].join(" "),
-            }),
-        ),
-        "history" => {
-            let mut params = json!({"conversation_id": argument(1, "CONVERSATION_ID")?});
-            if let Some(before) = command.get(2) {
-                params["before_sequence"] = json!(before.parse::<u64>()?);
-            }
-            if let Some(limit) = command.get(3) {
-                params["limit"] = json!(limit.parse::<u32>()?);
-            }
-            ("history".to_owned(), params)
-        }
-        "mark-delivered" | "mark-read" => (
-            command[0].clone(),
-            json!({
-                "conversation_id": argument(1, "CONVERSATION_ID")?,
-                "sequence": argument(2, "SEQUENCE")?.parse::<u64>()?,
-            }),
         ),
         "raw" => {
             let params = match command.get(2) {
@@ -182,7 +129,6 @@ fn build_request(command: &[String]) -> Result<(String, Value), Box<dyn Error>> 
             };
             (argument(1, "METHOD")?, params)
         }
-        "listen" => ("listen".to_owned(), Value::Null),
         other => return Err(format!("unknown command {other}; see --help").into()),
     };
     Ok(request)
@@ -246,9 +192,6 @@ async fn run(args: impl IntoIterator<Item = OsString>) -> Result<bool, Box<dyn E
     if let Some(name) = options.display_name {
         authenticate["display_name"] = json!(name);
     }
-    if let Some(code) = options.invite_code {
-        authenticate["invite_code"] = json!(code);
-    }
     let authenticated = call(&mut socket, &mut next_id, "authenticate", authenticate).await?;
     if authenticated["ok"] != Value::Bool(true) {
         println!("{authenticated}");
@@ -259,16 +202,6 @@ async fn run(args: impl IntoIterator<Item = OsString>) -> Result<bool, Box<dyn E
         authenticated["result"]["account_id"], authenticated["result"]["new_account"]
     );
 
-    if method == "listen" {
-        while let Some(message) = socket.next().await {
-            match message? {
-                Message::Text(text) => println!("{text}"),
-                Message::Close(_) => break,
-                _ => {}
-            }
-        }
-        return Ok(true);
-    }
     let response = call(&mut socket, &mut next_id, &method, params).await?;
     println!("{response}");
     let _ = socket.close(None).await;

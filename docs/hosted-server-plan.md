@@ -1,5 +1,8 @@
 # Hosted server: delivery plan
 
+> Archived with the chat product on branch `hosted-archive` at `825cf07123`.
+> Current direction is [ADR 0010](adr/0010-nostr-identity.md).
+
 Status: implementation inventory for the hosted PR stack.
 Product target: [Slack and Discord replacement](slack-discord-roadmap.md),
 accepted in [ADR 0009](adr/0009-slack-discord-replacement.md).

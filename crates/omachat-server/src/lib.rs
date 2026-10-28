@@ -1,9 +1,9 @@
-//! Hosted OmaChat server.
+//! Thin OmaChat server.
 //!
-//! One loopback WebSocket carries accounts, workspaces, channels, direct
-//! messages, history and receipts for clients that trust the operator with
-//! message content. A TLS reverse proxy owns the public socket. See
-//! `docs/hosted-server.md` for the protocol and threat model.
+//! One loopback WebSocket carries device authentication and handle claims.
+//! A TLS reverse proxy owns the public socket. The process is shaped so it
+//! can later grow into the Omacon relay; it does not store chat. See
+//! `docs/hosted-server.md`.
 
 pub mod auth;
 pub mod host;
@@ -17,10 +17,10 @@ pub use auth::{ServerIdentity, generate_seed_file, load_seed_file};
 pub use host::{HostError, HostLimits, HostReport, run_host};
 pub use process::{
     SERVERD_HELP, ServerProcessCommand, ServerProcessConfig, ServerProcessConfigError,
-    load_invite_codes, parse_server_process_args,
+    parse_server_process_args,
 };
 pub use protocol::{ErrorCode, PROTOCOL_VERSION, ServerError};
-pub use service::{Registration, ServiceConfig, ServiceHandle, spawn_service};
+pub use service::{ServiceConfig, ServiceHandle, spawn_service};
 pub use session::{CloseReason, SessionLimits, SessionReport};
 pub use storage::{Storage, StorageError};
 
@@ -30,7 +30,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const DATABASE_FILE: &str = "messages.db";
+pub const DATABASE_FILE: &str = "server.db";
 
 /// Create the data directory owner-only if needed and return the database
 /// path. An existing directory with group or world permissions is refused.

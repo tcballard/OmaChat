@@ -1,5 +1,8 @@
 # OmaChat: Slack and Discord replacement
 
+> Archived with the chat product on branch `hosted-archive` at `825cf07123`.
+> [ADR 0010](adr/0010-nostr-identity.md) supersedes this direction on `main`.
+
 Owner-confirmed target, 7 October 2026. The goal is a native Omarchy team and
 community app with a self-hostable service. A successful demo is not replacement
 readiness. The comparison is user workflows, not a promise of complete API,

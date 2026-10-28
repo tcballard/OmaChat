@@ -1,5 +1,12 @@
 [advisories]
 yanked = "deny"
+# secret-service 5.2.0 still depends on the zbus 5 crates. Their advisory
+# says the derives moved into zbus 6. That upgrade is separate from this cut.
+ignore = [
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+]
 
 [bans]
 multiple-versions = "warn"

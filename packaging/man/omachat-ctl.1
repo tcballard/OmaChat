@@ -1,16 +1,13 @@
-.TH OMACHAT-CTL 1 "2026-10-01" "OmaChat"
+.TH OMACHAT-CTL 1 "2026-10-28" "OmaChat"
 .SH NAME
-omachat-ctl \- control the local hosted messaging daemon
+omachat-ctl \- control the local identity daemon
 .SH SYNOPSIS
 .B omachat-ctl
 [--socket PATH] COMMAND
 .SH COMMANDS
-status [--json], fingerprint [--qr], send CONVERSATION TEXT,
-hosted-conversations [--cursor CURSOR], hosted-history CONVERSATION [--before SEQUENCE] [--limit COUNT],
-hosted-mark-read CONVERSATION SEQUENCE, hosted-open-dm HANDLE, hosted-claim-handle HANDLE,
-hosted-resolve-handle HANDLE, hosted-create-workspace NAME,
-hosted-create-channel WORKSPACE_ID NAME, hosted-add-member WORKSPACE_ID HANDLE.
-Hosted commands accept --json. Conversations have the hosted: prefix.
+status [--json], fingerprint [--qr], hosted-claim-handle HANDLE,
+hosted-resolve-handle HANDLE.
+Handle commands accept --json.
 .SH PANIC
 panic --confirm ERASE requests and redeems a private single-use confirmation token.
 It erases local credentials and history, not server messages or backups.

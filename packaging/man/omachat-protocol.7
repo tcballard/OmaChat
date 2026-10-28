@@ -1,10 +1,10 @@
-.TH OMACHAT-PROTOCOL 7 "2026-10-01" "OmaChat"
+.TH OMACHAT-PROTOCOL 7 "2026-10-28" "OmaChat"
 .SH NAME
-omachat-protocol \- local IPC and hosted server protocol
+omachat-protocol \- local IPC and handle-server protocol
 .SH DESCRIPTION
 Local IPC uses bounded JSON lines over a private same-user Unix socket.
-Clients negotiate the version with hello before issuing requests.
-The hosted server protocol uses WebSocket, pinned server authentication,
-device-key challenges, ordered conversation sequences and idempotent sends.
-TLS is required except for numeric-loopback development connections.
-The server operator can read message bodies. Local and server storage are sealed at rest.
+Clients negotiate the version with hello before issuing requests. IPC version 4
+does not accept hosted chat commands.
+The handle server uses WebSocket, pinned server authentication and device-key
+challenges. TLS is required except for numeric-loopback development connections.
+The server stores account handles. It does not store chat.

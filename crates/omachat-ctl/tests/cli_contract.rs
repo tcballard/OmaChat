@@ -145,7 +145,7 @@ fn missing_daemon_and_invalid_arguments_have_distinct_exit_codes() {
     for args in [
         vec![],
         vec!["unknown".into()],
-        vec!["send".into(), "missing-text".into()],
+        vec!["hosted-claim-handle".into()],
     ] {
         assert_failure(&run(&socket, &args), 2, "usage: omachat-ctl");
     }
@@ -173,10 +173,9 @@ async fn core_commands_negotiate_then_preserve_arguments_and_correlation() {
     for (args, expected) in [
         (vec!["fingerprint"], Command::Fingerprint),
         (
-            vec!["send", "gcpvj", "hello\nworld 🦀"],
-            Command::Send {
-                conversation: "gcpvj".into(),
-                text: "hello\nworld 🦀".into(),
+            vec!["hosted-claim-handle", "alice"],
+            Command::HostedClaimHandle {
+                handle: "alice".into(),
             },
         ),
     ] {

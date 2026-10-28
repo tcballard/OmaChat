@@ -1,5 +1,5 @@
 [Unit]
-Description=OmaChat hosted chat server
+Description=OmaChat handle server
 After=network-online.target
 Wants=network-online.target
 
@@ -11,8 +11,6 @@ ExecStart=/usr/local/bin/omachat-serverd \
   --data-dir /var/lib/omachat-server \
   --server-key-file /etc/omachat-server/server.key \
   --storage-key-file /etc/omachat-server/storage.key \
-  --registration invite \
-  --invite-code-file /etc/omachat-server/invites \
   --listen 127.0.0.1:7448
 Restart=on-failure
 RestartSec=3s

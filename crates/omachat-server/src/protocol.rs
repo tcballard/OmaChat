@@ -39,8 +39,6 @@ pub enum Command {
         signature: String,
         #[serde(default)]
         display_name: Option<String>,
-        #[serde(default)]
-        invite_code: Option<String>,
     },
     Status,
     ClaimHandle {
@@ -48,53 +46,6 @@ pub enum Command {
     },
     ResolveHandle {
         handle: String,
-    },
-    CreateWorkspace {
-        name: String,
-    },
-    AddMember {
-        workspace_id: String,
-        handle: String,
-    },
-    CreateChannel {
-        workspace_id: String,
-        name: String,
-    },
-    OpenDm {
-        handle: String,
-    },
-    ListConversations,
-    ListConversationsPage {
-        #[serde(default)]
-        cursor: Option<String>,
-    },
-    ConversationMembers {
-        conversation_id: String,
-        #[serde(default)]
-        after_account_id: Option<String>,
-    },
-    /// Append one message. `client_id` makes the request idempotent per
-    /// device: repeating it after an unknown outcome returns the original
-    /// sequence instead of a duplicate.
-    Send {
-        conversation_id: String,
-        client_id: String,
-        text: String,
-    },
-    History {
-        conversation_id: String,
-        #[serde(default)]
-        before_sequence: Option<u64>,
-        #[serde(default)]
-        limit: Option<u32>,
-    },
-    MarkDelivered {
-        conversation_id: String,
-        sequence: u64,
-    },
-    MarkRead {
-        conversation_id: String,
-        sequence: u64,
     },
 }
 
@@ -107,17 +58,6 @@ impl Command {
             Self::Status => "status",
             Self::ClaimHandle { .. } => "claim-handle",
             Self::ResolveHandle { .. } => "resolve-handle",
-            Self::CreateWorkspace { .. } => "create-workspace",
-            Self::AddMember { .. } => "add-member",
-            Self::CreateChannel { .. } => "create-channel",
-            Self::OpenDm { .. } => "open-dm",
-            Self::ListConversations => "list-conversations",
-            Self::ListConversationsPage { .. } => "list-conversations-page",
-            Self::ConversationMembers { .. } => "conversation-members",
-            Self::Send { .. } => "send",
-            Self::History { .. } => "history",
-            Self::MarkDelivered { .. } => "mark-delivered",
-            Self::MarkRead { .. } => "mark-read",
         }
     }
 }
@@ -131,11 +71,11 @@ mod tests {
         let status: Request =
             serde_json::from_str(r#"{"version":1,"id":"a","method":"status"}"#).unwrap();
         assert_eq!(status.command, Command::Status);
-        let send: Request = serde_json::from_str(
-            r#"{"version":1,"id":"b","method":"send","params":{"conversation_id":"c","client_id":"k","text":"hi"}}"#,
+        let claim: Request = serde_json::from_str(
+            r#"{"version":1,"id":"b","method":"claim-handle","params":{"handle":"ada"}}"#,
         )
         .unwrap();
-        assert_eq!(send.command.method(), "send");
+        assert_eq!(claim.command.method(), "claim-handle");
         assert!(
             serde_json::from_str::<Request>(r#"{"version":1,"id":"c","method":"nope"}"#).is_err()
         );

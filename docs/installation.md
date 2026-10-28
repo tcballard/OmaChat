@@ -1,9 +1,11 @@
 # Development installation
 
 Build with Rust 1.98.0 using `cargo build --workspace --bins`. Install the client
-binaries `omachatd`, `omachat`, and `omachat-ctl` together; they use IPC v3.
-Quickshell and Python 3 are required for `desktop/omachat-desktop`.
+binaries `omachatd` and `omachat-ctl` together; they use IPC v4.
 The preview is not a published release or an official Omarchy default.
+
+The terminal client and Quickshell desktop were removed with the hosted chat
+product. That product is on branch `hosted-archive` at commit `825cf07123`.
 
 Place configuration at `$XDG_CONFIG_HOME/omachat/config.json` (normally
 `~/.config/omachat/config.json`), private to your user:
@@ -20,20 +22,16 @@ Place configuration at `$XDG_CONFIG_HOME/omachat/config.json` (normally
 ```
 
 The placeholder is intentionally invalid. Obtain the pin from the operator;
-never derive trust from an unverified network response. Add `invite_code` if required.
-The operator can read messages. See ops/server/README.md for hosting instructions.
+never derive trust from an unverified network response. Omit `hosted` to run
+the daemon with only the local device credential. The server stores handles,
+not messages. See ops/server/README.md for hosting instructions.
 
 Start `omachatd` in a user session with `XDG_RUNTIME_DIR` set. The default socket is
 `$XDG_RUNTIME_DIR/omachat/omachat.sock`. Use `--config`, `--state`, and `--socket`
 for isolated testing, and `--file-key` when Secret Service is unavailable.
 The supplied systemd user unit is optional; packaging does not enable it automatically.
 
-Desktop **Set up messaging** edits this configuration with a private backup,
-revision checks and atomic replacement. Restart the daemon after changes.
-Old Nostr settings are rejected and must be replaced. Existing hosted signing keys,
-accounts and hosted drafts survive the upgrade; retired sealed records are not used.
-
-`omachat-ctl hosted-claim-handle alice` claims a server-scoped handle.
-`omachat-ctl hosted-open-dm bob` opens a direct conversation. Use its returned
-`hosted:` identifier with `send` or `hosted-history`.
-The desktop offers the same actions, plus workspace/channel administration.
+`omachat-ctl hosted-claim-handle alice` claims a server-scoped handle once the
+daemon is connected. `omachat-ctl hosted-resolve-handle alice` looks one up.
+Old chat and relay settings are rejected. Existing device signing keys remain
+valid. A chat database from the archived server is not opened by this binary.

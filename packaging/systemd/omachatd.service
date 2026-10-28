@@ -1,5 +1,5 @@
 [Unit]
-Description=OmaChat hosted messaging and IPC daemon
+Description=OmaChat identity daemon and handle client
 Documentation=man:omachatd(8)
 After=network-online.target
 Wants=network-online.target
@@ -11,14 +11,14 @@ Restart=on-failure
 RestartSec=3s
 RuntimeDirectory=omachat
 RuntimeDirectoryMode=0700
-StateDirectory=omachat omachat-anchors
+StateDirectory=omachat
 StateDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%S/omachat %S/omachat-anchors %t/omachat
+ReadWritePaths=%S/omachat %t/omachat
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
@@ -29,7 +29,7 @@ RestrictSUIDSGID=yes
 RestrictRealtime=yes
 LockPersonality=yes
 CapabilityBoundingSet=
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_BLUETOOTH
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 
 [Install]

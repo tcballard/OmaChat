@@ -1,35 +1,20 @@
 //! Command-line configuration for `omachat-serverd`.
 
-use crate::{host::HostLimits, protocol::MAX_INVITE_CODE_BYTES, service::Registration};
-use std::{
-    error::Error,
-    ffi::OsString,
-    fmt,
-    fs::File,
-    io::Read,
-    net::SocketAddr,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use crate::host::HostLimits;
+use std::{error::Error, ffi::OsString, fmt, net::SocketAddr, path::PathBuf, time::Duration};
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:7448";
 
 pub const SERVERD_HELP: &str = "\
-Usage: omachat-serverd --data-dir PATH --server-key-file PATH --storage-key-file PATH \\
-                       --registration open|invite|closed [OPTIONS]\n\
+Usage: omachat-serverd --data-dir PATH --server-key-file PATH --storage-key-file PATH [OPTIONS]\n\
        omachat-serverd --generate-secret PATH\n\
 \n\
 Required:\n\
-  --data-dir PATH                 Directory holding messages.db (created 0700)\n\
+  --data-dir PATH                 Directory holding server.db (created 0700)\n\
   --server-key-file PATH          Owner-only file: 64 hex chars, Ed25519 server identity seed\n\
-  --storage-key-file PATH         Owner-only file: 64 hex chars, at-rest message key\n\
-  --registration MODE             open: any device may register\n\
-                                  invite: requires --invite-code-file\n\
-                                  closed: only known devices may authenticate\n\
+  --storage-key-file PATH         Owner-only file: 64 hex chars, database key-check key\n\
 \n\
 Options:\n\
-  --invite-code-file PATH         Owner-only file with one invite code per line\n\
   --listen ADDRESS                Loopback listener (default: 127.0.0.1:7448)\n\
   --max-connections N             Global connection limit (default: 1024)\n\
   --max-connections-per-ip N      Per-IP connection limit (default: 32)\n\
@@ -42,19 +27,10 @@ Options:\n\
 Network: loopback only; expose only through a TLS reverse proxy.\n";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RegistrationMode {
-    Open,
-    Invite,
-    Closed,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerProcessConfig {
     pub data_dir: PathBuf,
     pub server_key_file: PathBuf,
     pub storage_key_file: PathBuf,
-    pub registration: RegistrationMode,
-    pub invite_code_file: Option<PathBuf>,
     pub listen: SocketAddr,
     pub limits: HostLimits,
 }
@@ -91,8 +67,6 @@ pub fn parse_server_process_args(
     let mut data_dir = None;
     let mut server_key_file = None;
     let mut storage_key_file = None;
-    let mut registration = None;
-    let mut invite_code_file = None;
     let mut listen = None;
     let mut limits = HostLimits::default();
     let mut seen_max_connections = None;
@@ -119,24 +93,6 @@ pub fn parse_server_process_args(
                 PathBuf::from(next_value(&mut arguments, "--storage-key-file")?),
                 "--storage-key-file",
             )?,
-            "--invite-code-file" => set_once(
-                &mut invite_code_file,
-                PathBuf::from(next_value(&mut arguments, "--invite-code-file")?),
-                "--invite-code-file",
-            )?,
-            "--registration" => {
-                let value = parse_utf8(
-                    next_value(&mut arguments, "--registration")?,
-                    "--registration",
-                )?;
-                let mode = match value.as_str() {
-                    "open" => RegistrationMode::Open,
-                    "invite" => RegistrationMode::Invite,
-                    "closed" => RegistrationMode::Closed,
-                    _ => return Err(ServerProcessConfigError::InvalidValue("--registration")),
-                };
-                set_once(&mut registration, mode, "--registration")?;
-            }
             "--listen" => {
                 let value = parse_utf8(next_value(&mut arguments, "--listen")?, "--listen")?;
                 let address: SocketAddr = value
@@ -182,13 +138,6 @@ pub fn parse_server_process_args(
             other => return Err(ServerProcessConfigError::UnknownOption(other.to_owned())),
         }
     }
-    let registration = registration.ok_or(ServerProcessConfigError::Missing("--registration"))?;
-    if registration == RegistrationMode::Invite && invite_code_file.is_none() {
-        return Err(ServerProcessConfigError::Missing("--invite-code-file"));
-    }
-    if registration != RegistrationMode::Invite && invite_code_file.is_some() {
-        return Err(ServerProcessConfigError::InvalidValue("--invite-code-file"));
-    }
     let listen = listen.unwrap_or_else(|| {
         DEFAULT_LISTEN
             .parse()
@@ -206,52 +155,9 @@ pub fn parse_server_process_args(
             .ok_or(ServerProcessConfigError::Missing("--server-key-file"))?,
         storage_key_file: storage_key_file
             .ok_or(ServerProcessConfigError::Missing("--storage-key-file"))?,
-        registration,
-        invite_code_file,
         listen,
         limits,
     }))
-}
-
-/// Read invite codes from an owner-only file, one per line.
-pub fn load_invite_codes(path: &Path) -> Result<Registration, ServerProcessConfigError> {
-    let mut file = File::open(path).map_err(|source| ServerProcessConfigError::InviteIo {
-        path: path.to_owned(),
-        source,
-    })?;
-    let metadata = file
-        .metadata()
-        .map_err(|source| ServerProcessConfigError::InviteIo {
-            path: path.to_owned(),
-            source,
-        })?;
-    if !metadata.is_file() {
-        return Err(ServerProcessConfigError::InviteNotRegular(path.to_owned()));
-    }
-    let mode = metadata.permissions().mode() & 0o777;
-    if mode & 0o077 != 0 {
-        return Err(ServerProcessConfigError::InvitePermissions {
-            path: path.to_owned(),
-            mode,
-        });
-    }
-    if metadata.len() > 64 * 1024 {
-        return Err(ServerProcessConfigError::InviteTooLarge(path.to_owned()));
-    }
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|source| ServerProcessConfigError::InviteIo {
-            path: path.to_owned(),
-            source,
-        })?;
-    if contents
-        .lines()
-        .any(|line| line.trim().len() > MAX_INVITE_CODE_BYTES)
-    {
-        return Err(ServerProcessConfigError::InviteTooLarge(path.to_owned()));
-    }
-    Registration::invite_codes(contents.lines().map(str::to_owned))
-        .map_err(|_| ServerProcessConfigError::InviteEmpty(path.to_owned()))
 }
 
 fn next_value(
@@ -296,17 +202,6 @@ pub enum ServerProcessConfigError {
     Repeated(&'static str),
     Missing(&'static str),
     NonLoopbackListen(SocketAddr),
-    InviteIo {
-        path: PathBuf,
-        source: std::io::Error,
-    },
-    InviteNotRegular(PathBuf),
-    InvitePermissions {
-        path: PathBuf,
-        mode: u32,
-    },
-    InviteTooLarge(PathBuf),
-    InviteEmpty(PathBuf),
 }
 
 impl fmt::Display for ServerProcessConfigError {
@@ -322,35 +217,11 @@ impl fmt::Display for ServerProcessConfigError {
                 formatter,
                 "--listen {address} is not loopback; expose the server through a TLS reverse proxy"
             ),
-            Self::InviteIo { path, source } => write!(formatter, "{}: {source}", path.display()),
-            Self::InviteNotRegular(path) => {
-                write!(formatter, "{} is not a regular file", path.display())
-            }
-            Self::InvitePermissions { path, mode } => write!(
-                formatter,
-                "{} has mode {mode:o}; it must be readable by its owner only",
-                path.display()
-            ),
-            Self::InviteTooLarge(path) => write!(
-                formatter,
-                "{} is too large or has a code over 128 bytes",
-                path.display()
-            ),
-            Self::InviteEmpty(path) => {
-                write!(formatter, "{} holds no invite codes", path.display())
-            }
         }
     }
 }
 
-impl Error for ServerProcessConfigError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::InviteIo { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
+impl Error for ServerProcessConfigError {}
 
 #[cfg(test)]
 mod tests {
@@ -372,10 +243,6 @@ mod tests {
             "/tmp/s",
             "--storage-key-file",
             "/tmp/k",
-            "--registration",
-            "invite",
-            "--invite-code-file",
-            "/tmp/i",
             "--listen",
             "127.0.0.1:9000",
             "--max-connections",
@@ -389,78 +256,61 @@ mod tests {
         let ServerProcessCommand::Run(config) = command else {
             panic!("expected run");
         };
-        assert_eq!(config.registration, RegistrationMode::Invite);
         assert_eq!(config.limits.max_connections, 10);
         assert_eq!(config.limits.session.idle_timeout, Duration::from_secs(60));
+        assert_eq!(config.listen.port(), 9000);
     }
 
     #[test]
     fn rejects_incomplete_or_unsafe_configurations() {
-        let base = [
-            "--data-dir",
-            "/tmp/d",
-            "--server-key-file",
-            "/tmp/s",
-            "--storage-key-file",
-            "/tmp/k",
-        ];
         assert!(matches!(
-            parse_server_process_args(args(&base)),
-            Err(ServerProcessConfigError::Missing("--registration"))
+            parse_server_process_args(args(&["--data-dir", "/tmp/d"])),
+            Err(ServerProcessConfigError::Missing("--server-key-file"))
         ));
-        let mut invite = base.to_vec();
-        invite.extend(["--registration", "invite"]);
         assert!(matches!(
-            parse_server_process_args(args(&invite)),
-            Err(ServerProcessConfigError::Missing("--invite-code-file"))
-        ));
-        let mut public = base.to_vec();
-        public.extend(["--registration", "open", "--listen", "0.0.0.0:7448"]);
-        assert!(matches!(
-            parse_server_process_args(args(&public)),
+            parse_server_process_args(args(&[
+                "--data-dir",
+                "/tmp/d",
+                "--server-key-file",
+                "/tmp/s",
+                "--storage-key-file",
+                "/tmp/k",
+                "--listen",
+                "0.0.0.0:7448",
+            ])),
             Err(ServerProcessConfigError::NonLoopbackListen(_))
         ));
-        let mut per_ip = base.to_vec();
-        per_ip.extend([
-            "--registration",
-            "open",
-            "--max-connections",
-            "1",
-            "--max-connections-per-ip",
-            "2",
-        ]);
         assert!(matches!(
-            parse_server_process_args(args(&per_ip)),
+            parse_server_process_args(args(&[
+                "--data-dir",
+                "/tmp/d",
+                "--server-key-file",
+                "/tmp/s",
+                "--storage-key-file",
+                "/tmp/k",
+                "--max-connections",
+                "1",
+                "--max-connections-per-ip",
+                "2",
+            ])),
             Err(ServerProcessConfigError::InvalidValue("limits"))
         ));
         assert!(matches!(
             parse_server_process_args(args(&["--generate-secret", "/tmp/x"])),
             Ok(ServerProcessCommand::GenerateSecret(_))
         ));
-    }
-
-    #[test]
-    fn invite_files_must_be_owner_only_and_non_empty() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("invites");
-        std::fs::write(&path, "alpha\n\n beta \n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert!(matches!(
-            load_invite_codes(&path),
-            Err(ServerProcessConfigError::InvitePermissions { .. })
-        ));
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        let Registration::Invite(codes) = load_invite_codes(&path).unwrap() else {
-            panic!("expected invite mode");
-        };
-        assert_eq!(codes.len(), 2);
-        assert!(codes.contains("beta"));
-        let empty = directory.path().join("empty");
-        std::fs::write(&empty, "\n").unwrap();
-        std::fs::set_permissions(&empty, std::fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(matches!(
-            load_invite_codes(&empty),
-            Err(ServerProcessConfigError::InviteEmpty(_))
+            parse_server_process_args(args(&[
+                "--data-dir",
+                "/tmp/d",
+                "--server-key-file",
+                "/tmp/s",
+                "--storage-key-file",
+                "/tmp/k",
+                "--registration",
+                "invite",
+            ])),
+            Err(ServerProcessConfigError::UnknownOption(_))
         ));
     }
 }

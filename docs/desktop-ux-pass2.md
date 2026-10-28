@@ -1,5 +1,7 @@
 # Authored desktop design: second pass
 
+> Archived with the desktop on branch `hosted-archive` at `825cf07123`. See [ADR 0010](adr/0010-nostr-identity.md).
+
 Used [Authored Frontend Design](https://github.com/tcballard/CodexToolkit/blob/main/skills/authored-frontend-design/SKILL.md), including its frontend doctrine and quality gates. This is a native Qt/QML application; web-specific rules were translated to native controls, accessibility names, keyboard interaction and logical pixels.
 
 ## Direction

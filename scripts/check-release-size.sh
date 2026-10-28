@@ -7,7 +7,7 @@ target_directory=${CARGO_TARGET_DIR:-target}
 release_directory=$target_directory/release
 total_bytes=0
 
-for binary in omachatd omachat omachat-ctl; do
+for binary in omachatd omachat-ctl; do
   path=$release_directory/$binary
   if [ ! -f "$path" ] || [ ! -x "$path" ]; then
     echo "release-size: missing executable $path" >&2

@@ -1,8 +1,13 @@
-# Hosted server operations profile
+# Handle server operations profile
 
 Deployment shape for `omachat-serverd`: the server listens on loopback and
 refuses anything else; Caddy owns the public `wss://` endpoint and its
-certificate. This directory is a profile, not evidence of a deployment.
+certificate. The process authenticates devices and stores handles. It does not
+store chat. This directory is a profile, not evidence of a deployment.
+
+The hosted chat product, including invite codes, lives on branch
+`hosted-archive` at commit `825cf07123`. Do not point this binary at a chat
+database from that branch.
 
 ## Files
 
@@ -18,8 +23,7 @@ sudo install -m 0755 target/release/omachat-serverd /usr/local/bin/omachat-serve
 sudo install -d -m 0750 -o root -g omachat-server /etc/omachat-server
 sudo /usr/local/bin/omachat-serverd --generate-secret /etc/omachat-server/server.key
 sudo /usr/local/bin/omachat-serverd --generate-secret /etc/omachat-server/storage.key
-sudo /usr/local/bin/omachat-serverd --generate-secret /etc/omachat-server/invites
-sudo chown omachat-server:omachat-server /etc/omachat-server/server.key /etc/omachat-server/storage.key /etc/omachat-server/invites
+sudo chown omachat-server:omachat-server /etc/omachat-server/server.key /etc/omachat-server/storage.key
 sudo install -m 0644 ops/server/omachat-serverd.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now omachat-serverd
@@ -31,23 +35,21 @@ Run from the repository root after `cargo build --release -p omachat-server
 secrets when upgrading. The generator refuses to overwrite existing paths and
 creates files with mode 0600. Root creates the files in the root-owned directory,
 then transfers file ownership; the service can read the secrets but cannot
-create or replace directory entries. The invite is one 64-character random hex
-code; distribute it privately. Never paste key files into logs or tickets.
+create or replace directory entries. Never paste key files into logs or tickets.
 
-For rollback, stop the service and restore the previous compatible binary;
-preserve `/var/lib/omachat-server`, `/etc/omachat-server`, and separate key backups.
-Uninstalling the service must not delete messages or keys. For a consistent cold
-backup, stop the server before copying the entire state directory; restore with
-the matching storage key and owner-only permissions. A real restore rehearsal,
-Caddy/TLS validation and documented key rotation remain deployment gates.
+For rollback of this handle server, stop the service and restore the previous
+compatible binary; preserve `/var/lib/omachat-server`, `/etc/omachat-server`, and
+separate key backups. To run the archived chat product, check out
+`hosted-archive` instead of reusing this database. Uninstalling the service must
+not delete the database or keys. For a consistent cold backup, stop the server
+before copying the entire state directory; restore with the matching storage key
+and owner-only permissions.
 
 The journal shows the server public key. Publish it with the server URL so
 clients pin it with `--server-public-key`.
 
 Both secret files are 32 random bytes as hex and must stay owner-only; the
-server refuses a file that is group- or world-readable. Losing
-`storage.key` makes every stored message unreadable; back it up separately
-from the database. Rotating it is not supported in this slice.
+server refuses a file that is group- or world-readable. Losing `storage.key`
+makes the database fail its key check. Rotating it is not supported.
 
-See `docs/hosted-server.md` for the protocol, threat model and what has been
-verified.
+See `docs/hosted-server.md` for the protocol.

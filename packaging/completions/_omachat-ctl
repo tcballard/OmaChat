@@ -1,6 +1,6 @@
 #compdef omachat-ctl
 _arguments '--socket[daemon socket]:path:_files' \
-  '1:command:(status fingerprint send hosted-conversations hosted-history hosted-mark-read hosted-open-dm hosted-claim-handle hosted-resolve-handle hosted-create-workspace hosted-create-channel hosted-add-member panic)' \
+  '1:command:(status fingerprint hosted-claim-handle hosted-resolve-handle panic)' \
   '*::argument:->args'
 case $words[2] in
   status|hosted-conversations|hosted-open-dm|hosted-resolve-handle) _arguments '--json[emit compact JSON]' ;;

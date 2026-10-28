@@ -1,4 +1,4 @@
-> Historical document. Nostr and its compatibility/relay workflows are retired by [ADR 0008](adr/0008-hosted-only.md). See [the hosted plan](hosted-server-plan.md) for current work.
+> Historical document. The hosted chat product was archived on branch `hosted-archive` at `825cf07123`. Current direction is [ADR 0010](adr/0010-nostr-identity.md).
 
 # OmaChat upstream validation
 

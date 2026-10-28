@@ -1,8 +1,7 @@
 use omachat_server::{
-    HostLimits, Registration, SERVERD_HELP, ServerIdentity, ServerProcessCommand,
-    ServerProcessConfig, ServiceConfig, Storage, generate_seed_file, load_invite_codes,
-    load_seed_file, parse_server_process_args, prepare_data_dir, process::RegistrationMode,
-    run_host, spawn_service,
+    HostLimits, SERVERD_HELP, ServerIdentity, ServerProcessCommand, ServerProcessConfig,
+    ServiceConfig, Storage, generate_seed_file, load_seed_file, parse_server_process_args,
+    prepare_data_dir, run_host, spawn_service,
 };
 use std::{error::Error, ffi::OsString, sync::Arc};
 use tokio::{
@@ -44,21 +43,9 @@ async fn serve(config: ServerProcessConfig) -> Result<(), Box<dyn Error>> {
     let storage_key = load_seed_file(&config.storage_key_file)?;
     let database = prepare_data_dir(&config.data_dir)?;
     let storage = Storage::open(&database, storage_key)?;
-    let registration = match config.registration {
-        RegistrationMode::Open => Registration::Open,
-        RegistrationMode::Closed => Registration::Closed,
-        RegistrationMode::Invite => load_invite_codes(
-            config
-                .invite_code_file
-                .as_deref()
-                .ok_or("invite mode requires --invite-code-file")?,
-        )?,
-    };
-    let registration_label = registration.label();
     let service = spawn_service(
         storage,
         ServiceConfig {
-            registration,
             server_public_key: identity.public_key(),
         },
     )?;
@@ -76,12 +63,9 @@ async fn serve(config: ServerProcessConfig) -> Result<(), Box<dyn Error>> {
         "omachat-serverd: listening on {local_address}; expose only through a TLS reverse proxy"
     );
     eprintln!(
-        "omachat-serverd: server public key {}; registration {registration_label}",
+        "omachat-serverd: server public key {}",
         hex::encode(identity.public_key())
     );
-    if registration_label == "open" {
-        eprintln!("omachat-serverd: warning: open registration accepts any device key");
-    }
     let limits: HostLimits = config.limits;
     let report = run_host(listener, service, identity, limits, shutdown).await?;
     eprintln!("omachat-serverd: stopped: {report:?}");

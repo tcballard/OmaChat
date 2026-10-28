@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 
-/// Version 3 retires Nostr commands and status fields. Clients must use hosted messaging.
-pub const VERSION: u16 = 3;
+/// Version 4 drops hosted chat commands. Clients and the daemon move together.
+pub const VERSION: u16 = 4;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_CORRELATION_ID_BYTES: usize = 128;
 
@@ -25,19 +25,6 @@ pub enum Command {
     },
     Status,
     Fingerprint,
-    Send {
-        conversation: String,
-        text: String,
-    },
-    ListDrafts,
-    GetDraft {
-        conversation: String,
-    },
-    SaveDraft {
-        conversation: String,
-        text: String,
-        expected_revision: u64,
-    },
     /// Mint a single-use, TTL-bounded confirmation token for `Panic`. The
     /// token itself travels out of band via a 0600 file in the daemon state
     /// directory; the response carries only the file path and expiry.
@@ -48,43 +35,12 @@ pub enum Command {
     Subscribe {
         topics: Vec<Topic>,
     },
-    /// Hosted server (ADR 0007): every conversation the account belongs to.
-    HostedConversations,
-    HostedConversationsPage {
-        cursor: String,
-    },
-    /// Hosted server: page backwards through one conversation's history.
-    HostedHistory {
-        conversation: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        before_sequence: Option<u64>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        limit: Option<u32>,
-    },
-    /// Hosted server: advance this account's read receipt.
-    HostedMarkRead {
-        conversation: String,
-        sequence: u64,
-    },
-    /// Hosted server: open (or find) the direct conversation with a handle.
-    HostedOpenDm {
-        handle: String,
-    },
+    /// Claim the account handle on the configured server.
     HostedClaimHandle {
         handle: String,
     },
+    /// Resolve a handle to the account that owns it.
     HostedResolveHandle {
-        handle: String,
-    },
-    HostedCreateWorkspace {
-        name: String,
-    },
-    HostedCreateChannel {
-        workspace_id: String,
-        name: String,
-    },
-    HostedAddMember {
-        workspace_id: String,
         handle: String,
     },
 }
@@ -137,25 +93,6 @@ enum StrictRequestWire {
         version: u16,
         id: String,
     },
-    Send {
-        version: u16,
-        id: String,
-        params: SendParams,
-    },
-    ListDrafts {
-        version: u16,
-        id: String,
-    },
-    GetDraft {
-        version: u16,
-        id: String,
-        params: DraftParams,
-    },
-    SaveDraft {
-        version: u16,
-        id: String,
-        params: SaveDraftParams,
-    },
     RequestPanicConfirmation {
         version: u16,
         id: String,
@@ -170,30 +107,6 @@ enum StrictRequestWire {
         id: String,
         params: SubscribeParams,
     },
-    HostedConversations {
-        version: u16,
-        id: String,
-    },
-    HostedConversationsPage {
-        version: u16,
-        id: String,
-        params: HostedPageParams,
-    },
-    HostedHistory {
-        version: u16,
-        id: String,
-        params: HostedHistoryParams,
-    },
-    HostedMarkRead {
-        version: u16,
-        id: String,
-        params: HostedMarkReadParams,
-    },
-    HostedOpenDm {
-        version: u16,
-        id: String,
-        params: HandleParams,
-    },
     HostedClaimHandle {
         version: u16,
         id: String,
@@ -204,21 +117,6 @@ enum StrictRequestWire {
         id: String,
         params: HandleParams,
     },
-    HostedCreateWorkspace {
-        version: u16,
-        id: String,
-        params: NameParams,
-    },
-    HostedCreateChannel {
-        version: u16,
-        id: String,
-        params: WorkspaceNameParams,
-    },
-    HostedAddMember {
-        version: u16,
-        id: String,
-        params: WorkspaceHandleParams,
-    },
 }
 
 #[derive(Deserialize)]
@@ -226,27 +124,6 @@ enum StrictRequestWire {
 struct HelloParams {
     minimum_version: u16,
     maximum_version: u16,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SendParams {
-    conversation: String,
-    text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DraftParams {
-    conversation: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SaveDraftParams {
-    conversation: String,
-    text: String,
-    expected_revision: u64,
 }
 
 #[derive(Deserialize)]
@@ -265,49 +142,6 @@ struct ConfirmationParams {
 #[serde(deny_unknown_fields)]
 struct SubscribeParams {
     topics: Vec<Topic>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HostedPageParams {
-    cursor: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HostedHistoryParams {
-    conversation: String,
-    #[serde(default)]
-    before_sequence: Option<u64>,
-    #[serde(default)]
-    limit: Option<u32>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HostedMarkReadParams {
-    conversation: String,
-    sequence: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct NameParams {
-    name: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceNameParams {
-    workspace_id: String,
-    name: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkspaceHandleParams {
-    workspace_id: String,
-    handle: String,
 }
 
 impl From<StrictRequestWire> for Request {
@@ -331,35 +165,6 @@ impl From<StrictRequestWire> for Request {
             ),
             StrictRequestWire::Status { version, id } => (version, id, Command::Status),
             StrictRequestWire::Fingerprint { version, id } => (version, id, Command::Fingerprint),
-            StrictRequestWire::Send {
-                version,
-                id,
-                params: SendParams { conversation, text },
-            } => (version, id, Command::Send { conversation, text }),
-            StrictRequestWire::ListDrafts { version, id } => (version, id, Command::ListDrafts),
-            StrictRequestWire::GetDraft {
-                version,
-                id,
-                params: DraftParams { conversation },
-            } => (version, id, Command::GetDraft { conversation }),
-            StrictRequestWire::SaveDraft {
-                version,
-                id,
-                params:
-                    SaveDraftParams {
-                        conversation,
-                        text,
-                        expected_revision,
-                    },
-            } => (
-                version,
-                id,
-                Command::SaveDraft {
-                    conversation,
-                    text,
-                    expected_revision,
-                },
-            ),
             StrictRequestWire::RequestPanicConfirmation { version, id } => {
                 (version, id, Command::RequestPanicConfirmation)
             }
@@ -373,59 +178,6 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: SubscribeParams { topics },
             } => (version, id, Command::Subscribe { topics }),
-            StrictRequestWire::HostedConversations { version, id } => {
-                (version, id, Command::HostedConversations)
-            }
-            StrictRequestWire::HostedConversationsPage {
-                version,
-                id,
-                params,
-            } => (
-                version,
-                id,
-                Command::HostedConversationsPage {
-                    cursor: params.cursor,
-                },
-            ),
-            StrictRequestWire::HostedHistory {
-                version,
-                id,
-                params:
-                    HostedHistoryParams {
-                        conversation,
-                        before_sequence,
-                        limit,
-                    },
-            } => (
-                version,
-                id,
-                Command::HostedHistory {
-                    conversation,
-                    before_sequence,
-                    limit,
-                },
-            ),
-            StrictRequestWire::HostedMarkRead {
-                version,
-                id,
-                params:
-                    HostedMarkReadParams {
-                        conversation,
-                        sequence,
-                    },
-            } => (
-                version,
-                id,
-                Command::HostedMarkRead {
-                    conversation,
-                    sequence,
-                },
-            ),
-            StrictRequestWire::HostedOpenDm {
-                version,
-                id,
-                params: HandleParams { handle },
-            } => (version, id, Command::HostedOpenDm { handle }),
             StrictRequestWire::HostedClaimHandle {
                 version,
                 id,
@@ -436,36 +188,6 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: HandleParams { handle },
             } => (version, id, Command::HostedResolveHandle { handle }),
-            StrictRequestWire::HostedCreateWorkspace {
-                version,
-                id,
-                params: NameParams { name },
-            } => (version, id, Command::HostedCreateWorkspace { name }),
-            StrictRequestWire::HostedCreateChannel {
-                version,
-                id,
-                params: WorkspaceNameParams { workspace_id, name },
-            } => (
-                version,
-                id,
-                Command::HostedCreateChannel { workspace_id, name },
-            ),
-            StrictRequestWire::HostedAddMember {
-                version,
-                id,
-                params:
-                    WorkspaceHandleParams {
-                        workspace_id,
-                        handle,
-                    },
-            } => (
-                version,
-                id,
-                Command::HostedAddMember {
-                    workspace_id,
-                    handle,
-                },
-            ),
         };
         Self {
             version,

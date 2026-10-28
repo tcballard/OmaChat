@@ -36,9 +36,6 @@ pub struct HostedConfig {
     /// server keeps the first name it stored for the account.
     #[serde(default)]
     pub display_name: Option<String>,
-    /// Invite code sent when this device registers on an invite-only server.
-    #[serde(default)]
-    pub invite_code: Option<String>,
 }
 
 impl HostedConfig {
@@ -64,13 +61,6 @@ impl HostedConfig {
         if let Some(display_name) = &self.display_name {
             omachat_proto::hosted::validate_name(display_name)
                 .map_err(|_| CoreError::InvalidConfig)?;
-        }
-        if self.invite_code.as_ref().is_some_and(|code| {
-            code.is_empty()
-                || code.len() > omachat_proto::hosted::MAX_INVITE_CODE_BYTES
-                || code.chars().any(char::is_control)
-        }) {
-            return Err(CoreError::InvalidConfig);
         }
         Ok(())
     }
@@ -129,7 +119,7 @@ mod tests {
                 .to_bytes(),
         );
         let valid: DaemonConfig = serde_json::from_str(&format!(
-            r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","display_name":"Tom","invite_code":"welcome"}}}}"#
+            r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","display_name":"Tom"}}}}"#
         ))
         .expect("config");
         valid.validate().expect("valid hosted config");
@@ -143,9 +133,6 @@ mod tests {
             r#"{"hosted":{"url":"wss://chat.example","pinned_server_public_key":"00"}}"#.to_owned(),
             format!(
                 r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","display_name":" padded"}}}}"#
-            ),
-            format!(
-                r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","invite_code":""}}}}"#
             ),
             format!(
                 r#"{{"hosted":{{"url":"wss://chat.example","pinned_server_public_key":"{key}","extra":1}}}}"#

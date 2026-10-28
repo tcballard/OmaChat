@@ -1,5 +1,8 @@
 # Desktop UX pass
 
+> Archived with the desktop client on branch `hosted-archive` at `825cf07123`.
+> [ADR 0010](adr/0010-nostr-identity.md) is the current direction.
+
 The [second pass using Authored Frontend Design](desktop-ux-pass2.md) contains the latest design and verification.
 
 Reviewed 2026-10-01 on `feat/desktop-ux-polish`, based on `feat/hosted-only`.
