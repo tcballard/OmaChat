@@ -38,6 +38,14 @@ pub const AUTH_DOMAIN: &[u8] = b"omachat-server-auth-v1\0";
 pub const HELLO_DOMAIN: &[u8] = b"omachat-server-hello-v1\0";
 pub const KEY_BYTES: usize = 32;
 pub const SIGNATURE_BYTES: usize = 64;
+/// Domain separator for a Nostr handle binding. Both the device Ed25519 key
+/// and the Nostr BIP-340 key sign this transcript.
+pub const NOSTR_BIND_DOMAIN: &[u8] = b"omachat-nostr-bind-v1\0";
+/// Domain separator for detaching a Nostr key. Only the device key signs it,
+/// so a lost `nsec` can still be unbound.
+pub const NOSTR_UNBIND_DOMAIN: &[u8] = b"omachat-nostr-unbind-v1\0";
+/// Proofs older or newer than this many seconds are rejected.
+pub const NOSTR_PROOF_SKEW_SECONDS: u64 = 300;
 
 /// Bytes the server signs in its hello reply so a client can pin it.
 #[must_use]
@@ -68,6 +76,77 @@ pub fn auth_transcript(
     transcript
 }
 
+/// Bytes both keys sign to bind a Nostr public key to this account's handle.
+/// Length prefixes keep the strings unambiguous.
+#[must_use]
+pub fn nostr_bind_transcript(
+    server_public_key: &[u8; KEY_BYTES],
+    account_id: &str,
+    handle: &str,
+    nostr_public_key: &[u8; KEY_BYTES],
+    nonce: &[u8; KEY_BYTES],
+    timestamp: u64,
+) -> Vec<u8> {
+    proof_transcript(
+        NOSTR_BIND_DOMAIN,
+        server_public_key,
+        account_id,
+        handle,
+        nostr_public_key,
+        nonce,
+        timestamp,
+    )
+}
+
+/// Bytes the device key signs to remove the current Nostr binding.
+#[must_use]
+pub fn nostr_unbind_transcript(
+    server_public_key: &[u8; KEY_BYTES],
+    account_id: &str,
+    handle: &str,
+    nostr_public_key: &[u8; KEY_BYTES],
+    nonce: &[u8; KEY_BYTES],
+    timestamp: u64,
+) -> Vec<u8> {
+    proof_transcript(
+        NOSTR_UNBIND_DOMAIN,
+        server_public_key,
+        account_id,
+        handle,
+        nostr_public_key,
+        nonce,
+        timestamp,
+    )
+}
+
+fn proof_transcript(
+    domain: &[u8],
+    server_public_key: &[u8; KEY_BYTES],
+    account_id: &str,
+    handle: &str,
+    nostr_public_key: &[u8; KEY_BYTES],
+    nonce: &[u8; KEY_BYTES],
+    timestamp: u64,
+) -> Vec<u8> {
+    let mut transcript = Vec::with_capacity(
+        domain.len() + 2 + account_id.len() + 2 + handle.len() + KEY_BYTES * 3 + 8,
+    );
+    transcript.extend_from_slice(domain);
+    transcript.extend_from_slice(server_public_key);
+    push_str(&mut transcript, account_id);
+    push_str(&mut transcript, handle);
+    transcript.extend_from_slice(nostr_public_key);
+    transcript.extend_from_slice(nonce);
+    transcript.extend_from_slice(&timestamp.to_be_bytes());
+    transcript
+}
+
+fn push_str(transcript: &mut Vec<u8>, value: &str) {
+    let length = u16::try_from(value.len()).unwrap_or(u16::MAX);
+    transcript.extend_from_slice(&length.to_be_bytes());
+    transcript.extend_from_slice(&value.as_bytes()[..usize::from(length)]);
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ErrorCode {
@@ -80,6 +159,8 @@ pub enum ErrorCode {
     HandleTaken,
     HandleAlreadySet,
     InvalidName,
+    NostrPubkeyTaken,
+    ReplayedProof,
     NotFound,
     TooLarge,
     RateLimited,
@@ -209,6 +290,20 @@ mod tests {
         assert_ne!(
             auth,
             auth_transcript(&server, &challenge, &[4_u8; KEY_BYTES])
+        );
+        let bind = nostr_bind_transcript(&server, "acct", "ada", &device, &challenge, 9);
+        assert!(bind.starts_with(NOSTR_BIND_DOMAIN));
+        assert_ne!(
+            bind,
+            nostr_unbind_transcript(&server, "acct", "ada", &device, &challenge, 9)
+        );
+        assert_ne!(
+            bind,
+            nostr_bind_transcript(&server, "acct", "bob", &device, &challenge, 9)
+        );
+        assert_ne!(
+            bind,
+            nostr_bind_transcript(&server, "acct", "ada", &device, &challenge, 10)
         );
     }
 

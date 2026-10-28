@@ -25,6 +25,16 @@ pub enum Command {
     },
     Status,
     Fingerprint,
+    /// Public Nostr identity, if one is sealed. Never includes the secret.
+    IdentityShow,
+    /// Explicit export of the sealed `nsec`.
+    IdentityExport,
+    /// Create a new Nostr key when none is stored.
+    IdentityGenerate,
+    /// Import an `nsec`. Refuses to replace an existing key.
+    IdentityImport {
+        nsec: String,
+    },
     /// Mint a single-use, TTL-bounded confirmation token for `Panic`. The
     /// token itself travels out of band via a 0600 file in the daemon state
     /// directory; the response carries only the file path and expiry.
@@ -43,6 +53,10 @@ pub enum Command {
     HostedResolveHandle {
         handle: String,
     },
+    /// Bind the sealed Nostr key to this account's handle.
+    HostedBindNostr,
+    /// Remove the handle's Nostr binding. Does not require the Nostr secret.
+    HostedUnbindNostr,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -93,6 +107,23 @@ enum StrictRequestWire {
         version: u16,
         id: String,
     },
+    IdentityShow {
+        version: u16,
+        id: String,
+    },
+    IdentityExport {
+        version: u16,
+        id: String,
+    },
+    IdentityGenerate {
+        version: u16,
+        id: String,
+    },
+    IdentityImport {
+        version: u16,
+        id: String,
+        params: IdentityImportParams,
+    },
     RequestPanicConfirmation {
         version: u16,
         id: String,
@@ -117,6 +148,14 @@ enum StrictRequestWire {
         id: String,
         params: HandleParams,
     },
+    HostedBindNostr {
+        version: u16,
+        id: String,
+    },
+    HostedUnbindNostr {
+        version: u16,
+        id: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -130,6 +169,12 @@ struct HelloParams {
 #[serde(deny_unknown_fields)]
 struct HandleParams {
     handle: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IdentityImportParams {
+    nsec: String,
 }
 
 #[derive(Deserialize)]
@@ -165,6 +210,18 @@ impl From<StrictRequestWire> for Request {
             ),
             StrictRequestWire::Status { version, id } => (version, id, Command::Status),
             StrictRequestWire::Fingerprint { version, id } => (version, id, Command::Fingerprint),
+            StrictRequestWire::IdentityShow { version, id } => (version, id, Command::IdentityShow),
+            StrictRequestWire::IdentityExport { version, id } => {
+                (version, id, Command::IdentityExport)
+            }
+            StrictRequestWire::IdentityGenerate { version, id } => {
+                (version, id, Command::IdentityGenerate)
+            }
+            StrictRequestWire::IdentityImport {
+                version,
+                id,
+                params: IdentityImportParams { nsec },
+            } => (version, id, Command::IdentityImport { nsec }),
             StrictRequestWire::RequestPanicConfirmation { version, id } => {
                 (version, id, Command::RequestPanicConfirmation)
             }
@@ -188,6 +245,12 @@ impl From<StrictRequestWire> for Request {
                 id,
                 params: HandleParams { handle },
             } => (version, id, Command::HostedResolveHandle { handle }),
+            StrictRequestWire::HostedBindNostr { version, id } => {
+                (version, id, Command::HostedBindNostr)
+            }
+            StrictRequestWire::HostedUnbindNostr { version, id } => {
+                (version, id, Command::HostedUnbindNostr)
+            }
         };
         Self {
             version,

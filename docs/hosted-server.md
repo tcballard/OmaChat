@@ -23,7 +23,28 @@ A TLS reverse proxy owns the public socket. See `ops/server/`.
    `"omachat-server-auth-v1\0" || server_public_key || challenge || device_public_key`.
    An unknown device creates an account. A known device resumes its account
    and the stored display name is not overwritten.
-3. After authentication: `status`, `claim-handle {handle}`, `resolve-handle {handle}`.
+3. After authentication: `status`, `claim-handle {handle}`, `resolve-handle {handle}`,
+   `bind-nostr` and `unbind-nostr`.
+
+`bind-nostr` carries the 32-byte x-only Nostr key, a 32-byte nonce, a unix
+timestamp, an Ed25519 signature by the authenticated device, and a BIP-340
+Schnorr signature by the Nostr key. Both signatures are over
+`omachat-nostr-bind-v1\0`, the server public key, the account id, the claimed
+handle, the Nostr key, the nonce and the timestamp. A proof is refused when
+either signature is wrong, the timestamp is more than five minutes from the
+server clock, the nonce was already used, or that Nostr key is already bound
+to another handle. Binding again with a fresh proof replaces the account's
+key. `unbind-nostr` is signed only by the device, so a lost `nsec` can still
+be detached.
+
+`GET /.well-known/nostr.json?name=<handle>` returns
+`{"names":{"<handle>":"<64-hex pubkey>"}}` for a bound handle, with
+`Access-Control-Allow-Origin: *`. Unknown names are HTTP 404 with
+`{"names":{}}`. Names are matched case-insensitively and must be 1 to 64
+characters from `a-z`, `0-9`, `-`, `_` and `.` after lowercasing. A missing
+or illegal name is HTTP 400. `--nip05-relay wss://...` (repeatable) adds the
+optional NIP-05 `relays` object; otherwise that field is omitted. Caddy
+proxies this path to the same loopback port as the WebSocket.
 
 Handles follow `omachat-crypto`: 3 to 32 characters, lowercase letters, digits
 and `_`, starting with a letter. An account claims one handle. A handle cannot

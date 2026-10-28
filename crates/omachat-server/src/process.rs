@@ -16,6 +16,7 @@ Required:\n\
 \n\
 Options:\n\
   --listen ADDRESS                Loopback listener (default: 127.0.0.1:7448)\n\
+  --nip05-relay URL               Repeatable wss:// or ws:// URL included in NIP-05\n\
   --max-connections N             Global connection limit (default: 1024)\n\
   --max-connections-per-ip N      Per-IP connection limit (default: 32)\n\
   --idle-timeout-seconds N        Close silent connections (default: 300)\n\
@@ -33,6 +34,7 @@ pub struct ServerProcessConfig {
     pub storage_key_file: PathBuf,
     pub listen: SocketAddr,
     pub limits: HostLimits,
+    pub nip05_relays: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,6 +70,7 @@ pub fn parse_server_process_args(
     let mut server_key_file = None;
     let mut storage_key_file = None;
     let mut listen = None;
+    let mut nip05_relays = Vec::new();
     let mut limits = HostLimits::default();
     let mut seen_max_connections = None;
     let mut seen_per_ip = None;
@@ -93,6 +96,20 @@ pub fn parse_server_process_args(
                 PathBuf::from(next_value(&mut arguments, "--storage-key-file")?),
                 "--storage-key-file",
             )?,
+            "--nip05-relay" => {
+                let value = parse_utf8(
+                    next_value(&mut arguments, "--nip05-relay")?,
+                    "--nip05-relay",
+                )?;
+                if nip05_relays.len() >= 8
+                    || !(value.starts_with("wss://") || value.starts_with("ws://"))
+                    || value.len() > 256
+                    || value.chars().any(char::is_whitespace)
+                {
+                    return Err(ServerProcessConfigError::InvalidValue("--nip05-relay"));
+                }
+                nip05_relays.push(value);
+            }
             "--listen" => {
                 let value = parse_utf8(next_value(&mut arguments, "--listen")?, "--listen")?;
                 let address: SocketAddr = value
@@ -157,6 +174,7 @@ pub fn parse_server_process_args(
             .ok_or(ServerProcessConfigError::Missing("--storage-key-file"))?,
         listen,
         limits,
+        nip05_relays,
     }))
 }
 

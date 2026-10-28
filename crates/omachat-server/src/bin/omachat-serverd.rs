@@ -47,6 +47,7 @@ async fn serve(config: ServerProcessConfig) -> Result<(), Box<dyn Error>> {
         storage,
         ServiceConfig {
             server_public_key: identity.public_key(),
+            nip05_relays: config.nip05_relays,
         },
     )?;
     let listener = TcpListener::bind(config.listen).await?;

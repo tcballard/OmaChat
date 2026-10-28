@@ -6,6 +6,7 @@
 
 use crate::{
     auth::ServerIdentity,
+    nip05,
     service::ServiceHandle,
     session::{CloseReason, SessionContext, SessionLimits, SessionReport, run_session},
 };
@@ -17,7 +18,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::{net::TcpListener, sync::watch, task::JoinSet, time::timeout};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::watch,
+    task::JoinSet,
+    time::{Instant, sleep, timeout, timeout_at},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HostLimits {
@@ -118,7 +124,15 @@ where
                     shutdown: stop_receiver.clone(),
                 };
                 next_session_id += 1;
-                sessions.spawn(async move { (ip, run_session(stream, context).await) });
+                let nip05_service = service.clone();
+                sessions.spawn(async move {
+                    if nip05_preface(&stream).await {
+                        nip05::serve(stream, nip05_service).await;
+                        (ip, SessionReport::default())
+                    } else {
+                        (ip, run_session(stream, context).await)
+                    }
+                });
             }
             joined = sessions.join_next(), if !sessions.is_empty() => {
                 if let Some(joined) = joined {
@@ -170,6 +184,34 @@ fn finish(
             // its neighbours at shutdown.
             *active_total = active_total.saturating_sub(1);
             report.failed_sessions += 1;
+        }
+    }
+}
+
+async fn nip05_preface(stream: &TcpStream) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut buffer = [0_u8; 128];
+    loop {
+        match timeout_at(deadline, stream.peek(&mut buffer)).await {
+            Ok(Ok(0)) => return false,
+            Ok(Ok(read)) => {
+                let head = &buffer[..read];
+                if head.windows(2).any(|window| window == b"\r\n") || read == buffer.len() {
+                    return nip05::is_nip05_request(head);
+                }
+                let still_possible = [
+                    b"GET /.well-known/nostr.json".as_slice(),
+                    b"HEAD /.well-known/nostr.json".as_slice(),
+                    b"OPTIONS /.well-known/nostr.json".as_slice(),
+                ]
+                .into_iter()
+                .any(|prefix| prefix.starts_with(head));
+                if !still_possible {
+                    return false;
+                }
+                sleep(Duration::from_millis(5)).await;
+            }
+            _ => return false,
         }
     }
 }

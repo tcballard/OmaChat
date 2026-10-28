@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod host;
+pub mod nip05;
 pub mod process;
 pub mod protocol;
 pub mod service;

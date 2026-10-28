@@ -47,6 +47,21 @@ pub enum Command {
     ResolveHandle {
         handle: String,
     },
+    /// Prove control of a Nostr key and bind it to this account's handle.
+    BindNostr {
+        nostr_public_key: String,
+        nonce: String,
+        timestamp: u64,
+        device_signature: String,
+        nostr_signature: String,
+    },
+    /// Remove this account's Nostr binding. The device key signs; the Nostr
+    /// key is not required, so a lost `nsec` can still be detached.
+    UnbindNostr {
+        nonce: String,
+        timestamp: u64,
+        device_signature: String,
+    },
 }
 
 impl Command {
@@ -58,6 +73,8 @@ impl Command {
             Self::Status => "status",
             Self::ClaimHandle { .. } => "claim-handle",
             Self::ResolveHandle { .. } => "resolve-handle",
+            Self::BindNostr { .. } => "bind-nostr",
+            Self::UnbindNostr { .. } => "unbind-nostr",
         }
     }
 }
