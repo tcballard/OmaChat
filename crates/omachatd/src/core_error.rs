@@ -9,6 +9,7 @@ pub enum CoreError {
     HostedService(crate::HostedServiceError),
     HostedUnavailable,
     HostedUnconfigured,
+    Chat(crate::nostr_chat::ChatError),
     IdentityStore(omachat_store::IdentityStoreError),
     NostrMissing,
     NostrStore(omachat_store::NostrStoreError),
@@ -42,6 +43,21 @@ impl CoreError {
                 | omachat_proto::hosted::ErrorCode::NotAuthenticated => ErrorCode::Unavailable,
                 omachat_proto::hosted::ErrorCode::Internal => ErrorCode::Internal,
             },
+            Self::Chat(error) => match error {
+                crate::nostr_chat::ChatError::InvalidPeer
+                | crate::nostr_chat::ChatError::InvalidRelay
+                | crate::nostr_chat::ChatError::InvalidText
+                | crate::nostr_chat::ChatError::SelfContact => ErrorCode::InvalidRequest,
+                crate::nostr_chat::ChatError::NotFound
+                | crate::nostr_chat::ChatError::Nip05(omachat_nostr::nip05::Nip05Error::NotFound) => {
+                    ErrorCode::NotFound
+                }
+                crate::nostr_chat::ChatError::NoRelays
+                | crate::nostr_chat::ChatError::NotConnected
+                | crate::nostr_chat::ChatError::Stopped => ErrorCode::Unavailable,
+                crate::nostr_chat::ChatError::TooLarge => ErrorCode::Conflict,
+                _ => ErrorCode::Internal,
+            },
             Self::NostrMissing => ErrorCode::NotFound,
             Self::NostrStore(omachat_store::NostrStoreError::AlreadyPresent) => ErrorCode::Conflict,
             Self::InvalidConfig | Self::InvalidCommand => ErrorCode::InvalidRequest,
@@ -67,12 +83,15 @@ impl fmt::Display for CoreError {
                 f.write_str("hosted server is unreachable; the request was not confirmed and may be repeated safely")
             }
             Self::HostedUnconfigured => f.write_str("hosted server is not configured"),
+            Self::Chat(error) => write!(f, "{error}"),
             Self::IdentityStore(e) => write!(f, "IdentityStore: {e}"),
             Self::NostrMissing => f.write_str("no nostr identity is stored"),
             Self::NostrStore(e) => write!(f, "NostrStore: {e}"),
             Self::InvalidCommand => f.write_str("invalid command"),
             Self::InvalidConfig => {
-                f.write_str("invalid configuration; use storage_provider and hosted settings only")
+                f.write_str(
+                    "invalid configuration; use storage_provider, hosted, and dm_relays settings only",
+                )
             }
             Self::Io(e) => write!(f, "Io: {e}"),
             Self::PanicErase => f.write_str("panic cleanup failed"),

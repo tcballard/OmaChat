@@ -133,6 +133,10 @@ impl Client {
 
     /// Subscribe once. A full event queue terminates the reader; reconnect and
     /// resubscribe to recover a fresh daemon snapshot instead of dropping events.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
     pub async fn subscribe(
         &mut self,
         topics: Vec<Topic>,

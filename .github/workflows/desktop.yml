@@ -1,0 +1,26 @@
+name: Desktop client
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: Desktop protocol and contact checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Protocol, contact, and launcher checks
+        run: |
+          python3 -m unittest discover -s desktop/tests -p 'test_*.py' -v
+          node desktop/tests/test_contact.js
+          node desktop/tests/test_state.js
+          sh -n desktop/omachat-desktop
+          python3 -m py_compile desktop/bridge.py

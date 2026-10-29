@@ -4,7 +4,8 @@ omachat-protocol \- local IPC and handle-server protocol
 .SH DESCRIPTION
 Local IPC uses bounded JSON lines over a private same-user Unix socket.
 Clients negotiate the version with hello before issuing requests. IPC version 4
-does not accept hosted chat commands.
+carries Nostr identity, relay, contact, and direct-message commands.
+Hosted workspace and channel commands are rejected.
 The handle server uses WebSocket, pinned server authentication and device-key
 challenges. TLS is required except for numeric-loopback development connections.
 The server stores account handles. It does not store chat.

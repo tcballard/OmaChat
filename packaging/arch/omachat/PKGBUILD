@@ -2,7 +2,7 @@
 pkgname=omachat
 pkgver=0.0.1
 pkgrel=1
-pkgdesc='Local identity daemon and handle server for Omarchy'
+pkgdesc='Local Nostr client, identity daemon, and handle server for Omarchy'
 arch=('x86_64')
 url='https://github.com/tcballard/OmaChat'
 license=('0BSD')
@@ -32,7 +32,7 @@ check() {
 
 package() {
   cd "OmaChat-$pkgver"
-  install -Dm755 target/release/{omachat-ctl,omachatd} -t "$pkgdir/usr/bin"
+  install -Dm755 target/release/{omachat,omachat-ctl,omachatd} -t "$pkgdir/usr/bin"
   install -Dm644 packaging/systemd/omachatd.service "$pkgdir/usr/lib/systemd/user/omachatd.service"
   install -Dm644 packaging/man/*.1 -t "$pkgdir/usr/share/man/man1"
   install -Dm644 packaging/man/*.7 -t "$pkgdir/usr/share/man/man7"

@@ -3,10 +3,12 @@ resolver = "3"
 members = [
     "crates/omachat-proto",
     "crates/omachat-crypto",
+    "crates/omachat-nostr",
     "crates/omachat-server",
     "crates/omachat-store",
     "crates/omachatd",
     "crates/omachat-ctl",
+    "crates/omachat-tui",
 ]
 
 [workspace.package]

@@ -1,5 +1,5 @@
 [Unit]
-Description=OmaChat identity daemon and handle client
+Description=OmaChat identity daemon, Nostr client, and handle client
 Documentation=man:omachatd(8)
 After=network-online.target
 Wants=network-online.target

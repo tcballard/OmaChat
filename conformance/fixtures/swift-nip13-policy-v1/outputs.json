@@ -1,0 +1,20 @@
+{
+  "acceptance_policy" : {
+    "inbound_action" : "score only; never hard-reject solely for missing work",
+    "missing_nonce_score" : 0,
+    "overclaimed_score" : 0,
+    "overclaimed_target" : 10,
+    "rate_limit_bypass_bits" : 8,
+    "valid_committed_score" : 8,
+    "work_above_commitment" : "does not increase the validated score"
+  },
+  "actual_leading_zero_bits" : 9,
+  "creation_policy" : {
+    "fallback_target_rule" : "halve committed target until a bounded attempt succeeds",
+    "fallback_time_cap_seconds" : 0.14999999999999999,
+    "main_time_cap_seconds" : 2,
+    "production_start_nonce" : "random UInt64; deterministic capture starts at zero",
+    "target_bits" : 8
+  },
+  "event_id_hex" : "00781274598cf666018fb212dd113645f207d18f62f3ffb48480fcfe23b22a3b"
+}

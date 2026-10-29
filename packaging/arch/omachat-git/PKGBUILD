@@ -2,7 +2,7 @@
 pkgname=omachat-git
 pkgver=0.0.1.r0.g0000000
 pkgrel=1
-pkgdesc='Local identity daemon and handle server for Omarchy (git)'
+pkgdesc='Local Nostr client, identity daemon, and handle server for Omarchy (git)'
 arch=('x86_64')
 url='https://github.com/tcballard/OmaChat'
 license=('0BSD')
@@ -38,7 +38,7 @@ check() {
 
 package() {
   cd OmaChat
-  install -Dm755 target/release/{omachat-ctl,omachatd} -t "$pkgdir/usr/bin"
+  install -Dm755 target/release/{omachat,omachat-ctl,omachatd} -t "$pkgdir/usr/bin"
   install -Dm644 packaging/systemd/omachatd.service "$pkgdir/usr/lib/systemd/user/omachatd.service"
   for section in 1 7 8; do install -Dm644 packaging/man/*."$section" -t "$pkgdir/usr/share/man/man$section"; done
   install -Dm644 packaging/completions/omachat-ctl.bash "$pkgdir/usr/share/bash-completion/completions/omachat-ctl"

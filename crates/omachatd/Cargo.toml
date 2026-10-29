@@ -11,8 +11,10 @@ ed25519-dalek = "=2.2.0"
 futures-util = "=0.3.34"
 getrandom = "=0.4.3"
 hex = "=0.4.3"
+k256 = { version = "=0.13.4", default-features = false, features = ["schnorr", "std"] }
 libc = "=0.2.189"
 omachat-crypto = { path = "../omachat-crypto", version = "=0.0.1" }
+omachat-nostr = { path = "../omachat-nostr", version = "=0.0.1" }
 omachat-proto = { path = "../omachat-proto", version = "=0.0.1" }
 omachat-store = { path = "../omachat-store", version = "=0.0.1" }
 rustix = { version = "=1.1.4", features = ["fs", "process"] }
@@ -21,10 +23,13 @@ serde_json = "=1.0.151"
 tokio = { version = "=1.53.3", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 url = "=2.5.8"
+zeroize = "=1.9.0"
 
 [dev-dependencies]
+futures-util = "=0.3.34"
 omachat-server = { path = "../omachat-server", version = "=0.0.1" }
 tempfile = "=3.27.0"
+tokio-tungstenite = { version = "=0.30.0", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 zeroize = "=1.9.0"
 
 [lints]

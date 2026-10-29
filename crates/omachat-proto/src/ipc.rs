@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 
-/// Version 4 drops hosted chat commands. Clients and the daemon move together.
+/// Version 4 is the Nostr identity and direct-message contract.
+/// Hosted workspace commands stay rejected. Clients and the daemon move together.
 pub const VERSION: u16 = 4;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_CORRELATION_ID_BYTES: usize = 128;
@@ -57,6 +58,29 @@ pub enum Command {
     HostedBindNostr,
     /// Remove the handle's Nostr binding. Does not require the Nostr secret.
     HostedUnbindNostr,
+    /// Seal a `nostr-identity-v1` key if one does not exist yet, and return the npub.
+    ChatPrepare,
+    /// Add a contact by `npub`, hex public key, or `name@domain`.
+    ContactsAdd {
+        peer: String,
+    },
+    /// Remove a contact by npub. Local message history is kept.
+    ContactsRemove {
+        npub: String,
+    },
+    ContactsList,
+    RelaysShow,
+    /// Replace the sealed relay list. Empty clears it. One to four URLs otherwise.
+    RelaysSet {
+        relays: Vec<String>,
+    },
+    /// Gift-wrap `text` to `peer` (`npub`, hex, `name@domain`, or a saved display).
+    Send {
+        peer: String,
+        text: String,
+    },
+    /// Recent local DM history.
+    Messages,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -156,6 +180,42 @@ enum StrictRequestWire {
         version: u16,
         id: String,
     },
+    ChatPrepare {
+        version: u16,
+        id: String,
+    },
+    ContactsAdd {
+        version: u16,
+        id: String,
+        params: PeerParams,
+    },
+    ContactsRemove {
+        version: u16,
+        id: String,
+        params: NpubParams,
+    },
+    ContactsList {
+        version: u16,
+        id: String,
+    },
+    RelaysShow {
+        version: u16,
+        id: String,
+    },
+    RelaysSet {
+        version: u16,
+        id: String,
+        params: RelaysParams,
+    },
+    Send {
+        version: u16,
+        id: String,
+        params: SendParams,
+    },
+    Messages {
+        version: u16,
+        id: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -187,6 +247,31 @@ struct ConfirmationParams {
 #[serde(deny_unknown_fields)]
 struct SubscribeParams {
     topics: Vec<Topic>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PeerParams {
+    peer: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NpubParams {
+    npub: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RelaysParams {
+    relays: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SendParams {
+    peer: String,
+    text: String,
 }
 
 impl From<StrictRequestWire> for Request {
@@ -251,6 +336,30 @@ impl From<StrictRequestWire> for Request {
             StrictRequestWire::HostedUnbindNostr { version, id } => {
                 (version, id, Command::HostedUnbindNostr)
             }
+            StrictRequestWire::ChatPrepare { version, id } => (version, id, Command::ChatPrepare),
+            StrictRequestWire::ContactsAdd {
+                version,
+                id,
+                params: PeerParams { peer },
+            } => (version, id, Command::ContactsAdd { peer }),
+            StrictRequestWire::ContactsRemove {
+                version,
+                id,
+                params: NpubParams { npub },
+            } => (version, id, Command::ContactsRemove { npub }),
+            StrictRequestWire::ContactsList { version, id } => (version, id, Command::ContactsList),
+            StrictRequestWire::RelaysShow { version, id } => (version, id, Command::RelaysShow),
+            StrictRequestWire::RelaysSet {
+                version,
+                id,
+                params: RelaysParams { relays },
+            } => (version, id, Command::RelaysSet { relays }),
+            StrictRequestWire::Send {
+                version,
+                id,
+                params: SendParams { peer, text },
+            } => (version, id, Command::Send { peer, text }),
+            StrictRequestWire::Messages { version, id } => (version, id, Command::Messages),
         };
         Self {
             version,

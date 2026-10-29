@@ -89,6 +89,7 @@ fn hosted_config(address: SocketAddr, pin: [u8; 32], display_name: &str) -> Daem
             pinned_server_public_key: hex::encode(pin),
             display_name: Some(display_name.to_owned()),
         }),
+        dm_relays: Vec::new(),
     }
 }
 

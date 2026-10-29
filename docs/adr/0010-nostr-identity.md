@@ -58,6 +58,10 @@ Phase 1 is implemented on top of the archive cut: `omachat-ctl identity`
 generates, imports, exports and shows a sealed Nostr key; `identity bind` and
 `identity unbind` talk to `omachat-serverd`; the server serves NIP-05.
 
+Phase 2, direct messages and the terminal and Quickshell clients on that same
+key, is [ADR 0011](0011-nostr-messaging.md). The "not in this change" lines
+below describe the archive commit, not `main` after ADR 0011.
+
 IPC moves to version 4. Chat commands are rejected. Clients and the daemon
 move together. A chat database is not migrated.
 

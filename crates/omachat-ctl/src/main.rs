@@ -1,6 +1,6 @@
 use omachat_ctl::{Client, ClientError, DEFAULT_TIMEOUT};
 use omachat_proto::ipc::{Command, ResponseOutcome};
-use std::{env, ffi::OsStr, path::PathBuf, process::ExitCode};
+use std::{env, ffi::OsStr, path::PathBuf, process::ExitCode, time::Duration};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -13,7 +13,7 @@ async fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::Usage(message)) => {
             eprintln!(
-                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | identity show | identity generate | identity import NSEC | identity export | identity bind | identity unbind | hosted-claim-handle HANDLE [--json] | hosted-resolve-handle HANDLE [--json] | panic --confirm ERASE"
+                "{message}\nusage: omachat-ctl [--socket PATH] status [--json] | fingerprint [--qr] | identity show | identity generate | identity import NSEC | identity export | identity bind | identity unbind | hosted-claim-handle HANDLE [--json] | hosted-resolve-handle HANDLE [--json] | chat-prepare [--json] | contacts-add PEER [--json] | contacts-list [--json] | contacts-remove NPUB [--json] | relays-show [--json] | relays-set URL... [--json] | send PEER TEXT [--json] | messages [--json] | panic --confirm ERASE"
             );
             ExitCode::from(2)
         }
@@ -43,6 +43,15 @@ async fn run(mut arguments: Vec<std::ffi::OsString>) -> Result<(), CliError> {
     let mut client = Client::connect(socket, DEFAULT_TIMEOUT)
         .await
         .map_err(CliError::Client)?;
+    if matches!(
+        command,
+        Command::Send { .. }
+            | Command::ContactsAdd { .. }
+            | Command::RelaysSet { .. }
+            | Command::ChatPrepare
+    ) {
+        client.set_timeout(Duration::from_secs(30));
+    }
     if matches!(command, Command::Panic { .. }) {
         eprintln!("{}", omachat_ctl::PANIC_ERASE_WARNING);
     }
@@ -119,6 +128,61 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
         ["identity", "bind"] => Ok((Command::HostedBindNostr, OutputMode::Human)),
         ["identity", "bind", "--json"] => Ok((Command::HostedBindNostr, OutputMode::Json)),
         ["identity", "unbind"] => Ok((Command::HostedUnbindNostr, OutputMode::Human)),
+        ["chat-prepare"] => Ok((Command::ChatPrepare, OutputMode::Human)),
+        ["chat-prepare", "--json"] => Ok((Command::ChatPrepare, OutputMode::Json)),
+        ["contacts-list"] => Ok((Command::ContactsList, OutputMode::Human)),
+        ["contacts-list", "--json"] => Ok((Command::ContactsList, OutputMode::Json)),
+        ["relays-show"] => Ok((Command::RelaysShow, OutputMode::Human)),
+        ["relays-show", "--json"] => Ok((Command::RelaysShow, OutputMode::Json)),
+        ["messages"] => Ok((Command::Messages, OutputMode::Human)),
+        ["messages", "--json"] => Ok((Command::Messages, OutputMode::Json)),
+        ["contacts-add", peer] => Ok((
+            Command::ContactsAdd {
+                peer: (*peer).to_owned(),
+            },
+            OutputMode::Human,
+        )),
+        ["contacts-add", peer, "--json"] => Ok((
+            Command::ContactsAdd {
+                peer: (*peer).to_owned(),
+            },
+            OutputMode::Json,
+        )),
+        ["contacts-remove", npub] => Ok((
+            Command::ContactsRemove {
+                npub: (*npub).to_owned(),
+            },
+            OutputMode::Human,
+        )),
+        ["relays-set", rest @ ..] if !rest.is_empty() && !rest.contains(&"--json") => Ok((
+            Command::RelaysSet {
+                relays: rest.iter().map(|relay| (*relay).to_owned()).collect(),
+            },
+            OutputMode::Human,
+        )),
+        ["relays-set", rest @ ..] if rest.len() > 1 && rest.last() == Some(&"--json") => Ok((
+            Command::RelaysSet {
+                relays: rest[..rest.len() - 1]
+                    .iter()
+                    .map(|relay| (*relay).to_owned())
+                    .collect(),
+            },
+            OutputMode::Json,
+        )),
+        ["send", peer, rest @ ..] if !rest.is_empty() && !rest.contains(&"--json") => Ok((
+            Command::Send {
+                peer: (*peer).to_owned(),
+                text: rest.join(" "),
+            },
+            OutputMode::Human,
+        )),
+        ["send", peer, rest @ ..] if rest.len() > 1 && rest.last() == Some(&"--json") => Ok((
+            Command::Send {
+                peer: (*peer).to_owned(),
+                text: rest[..rest.len() - 1].join(" "),
+            },
+            OutputMode::Json,
+        )),
         ["panic", "--confirm", confirmation] => Ok((
             Command::Panic {
                 confirmation: (*confirmation).into(),
@@ -195,7 +259,8 @@ mod tests {
             &["hosted-claim-handle"][..],
             &["hosted-resolve-handle"][..],
             &["hosted-open-dm", "bob"],
-            &["send", "general", "hi"],
+            &["send"],
+            &["relays-set"],
             &["hosted-unknown"],
         ] {
             assert!(

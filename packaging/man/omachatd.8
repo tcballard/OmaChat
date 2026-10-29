@@ -5,15 +5,18 @@ omachatd \- local identity daemon and handle-server client
 .B omachatd
 [--config PATH] [--state PATH] [--socket PATH] [--file-key]
 .SH DESCRIPTION
-Holds the sealed Ed25519 device credential and, when configured, connects to one
-handle server using a pinned Ed25519 server key.
+Holds the sealed Ed25519 device credential and the optional nostr-identity-v1
+secp256k1 key. When dm_relays is set, publishes and receives NIP-17 gift wraps.
+When hosted is set, connects to one handle server using a pinned Ed25519 server key.
 SIGINT and SIGTERM drain requests and shut down without erasing credentials.
 SIGHUP validates configuration; changing server or storage settings requires restart.
 .SH CONFIGURATION
-JSON fields: storage_provider (auto, secret-service, file) and hosted.
+JSON fields: storage_provider (auto, secret-service, file), dm_relays, and hosted.
+dm_relays is up to four wss:// URLs, or numeric-loopback ws:// URLs for tests.
 The hosted object requires url and pinned_server_public_key; display_name is optional.
 Use wss:// except numeric-loopback ws:// for tests. Obtain the server key from its operator.
-Retired chat and relay settings are rejected.
+A sealed relay list saved from a client replaces dm_relays on later starts.
+Other retired chat settings are rejected.
 .SH FILES
 Default configuration: $XDG_CONFIG_HOME/omachat/config.json.
 Default state: $XDG_STATE_HOME/omachat.

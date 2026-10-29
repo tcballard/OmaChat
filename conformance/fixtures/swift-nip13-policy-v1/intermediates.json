@@ -1,0 +1,31 @@
+{
+  "canonical_serialization" : [
+    0,
+    "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    1700000123,
+    20000,
+    [
+      [
+        "g",
+        "zzzzzz"
+      ],
+      [
+        "n",
+        "synthetic"
+      ],
+      [
+        "nonce",
+        "00000000000000a7",
+        "8"
+      ]
+    ],
+    "omachat synthetic pow message"
+  ],
+  "event_id_hash" : "SHA-256 of compact NIP-01 JSON",
+  "mined_nonce_tag" : [
+    "nonce",
+    "00000000000000a7",
+    "8"
+  ],
+  "nonce_encoding" : "16 lowercase hexadecimal digits"
+}
