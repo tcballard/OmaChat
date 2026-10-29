@@ -101,8 +101,11 @@ async fn gift_wrap_round_trip_and_nip05_contact() {
 #[tokio::test]
 async fn claimed_handles_resolve_and_exchange_dms_through_the_real_server() {
     let directory = tempdir().unwrap();
-    let storage =
-        Storage::open(&directory.path().join("server.db"), Zeroizing::new([42; 32])).unwrap();
+    let storage = Storage::open(
+        &directory.path().join("server.db"),
+        Zeroizing::new([42; 32]),
+    )
+    .unwrap();
     let identity = Arc::new(ServerIdentity::from_seed(&[7; 32]));
     let pin = identity.public_key();
     let service = spawn_service(

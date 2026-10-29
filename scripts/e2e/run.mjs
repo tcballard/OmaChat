@@ -148,7 +148,7 @@ try {
 
   await desktop.call('contacts-add', { peer: aliceIdentity.npub });
   const terminal = processFor(join(bins, 'omachat'), ['--socket', alice.socket]);
-  await until('terminal connected', () => terminal.output.includes('npub'));
+  await until('terminal connected', () => terminal.output.includes(aliceIdentity.npub.slice(0, 16)));
   terminal.stdin.write('/contact add ' + bobIdentity.npub + '\n');
   await until('terminal contact', async () => (await ctl(alice, ['contacts-list', '--json'])).contacts.length === 1);
   await until('terminal contact rendered', () => terminal.output.includes(bobIdentity.npub.slice(0, 16)));

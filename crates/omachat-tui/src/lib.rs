@@ -133,7 +133,7 @@ impl Widget for &UiModel {
             let line = if message.outgoing {
                 format!("you: {} {}", message.text, message.delivery)
             } else {
-                format!("{}: {}", message.sender, message.text)
+                format!("{}: {}", sender_label(&message.sender), message.text)
             };
             write(buffer, row(columns[1], y), &line, plain);
         }
@@ -341,6 +341,14 @@ fn row(area: Rect, y: u16) -> Rect {
     }
 }
 
+fn sender_label(sender: &str) -> String {
+    let mut label = sender.chars().take(16).collect::<String>();
+    if sender.chars().count() > 16 {
+        label.push('…');
+    }
+    label
+}
+
 fn clean(text: &str) -> String {
     text.chars()
         .map(|character| {
@@ -401,8 +409,18 @@ mod tests {
         assert_eq!(model.contacts[0].messages[0].text, "hi");
         assert_eq!(model.relays, vec!["wss://relay.example".to_owned()]);
         model.apply_message(&serde_json::json!({
-            "id": "2", "conversation": "dm:aa", "text": "another message"
+            "id": "2", "conversation": "dm:aa", "text": "another message",
+            "sender": "npub1".to_owned() + &"a".repeat(58)
         }));
         assert_eq!(model.contacts[0].title, "ada");
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buffer = Buffer::empty(area);
+        (&model).render(area, &mut buffer);
+        let rendered = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("another message"));
     }
 }
