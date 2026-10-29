@@ -1,9 +1,3 @@
-//! TCP listener, connection limits and graceful shutdown.
-//!
-//! The listener is loopback-only: a TLS reverse proxy such as Caddy owns the
-//! public socket, certificates and HTTP hygiene, the same deployment shape as
-//! the registry host.
-
 use crate::{
     auth::ServerIdentity,
     nip05,
@@ -74,8 +68,6 @@ pub struct HostReport {
     pub aborted_connections: usize,
 }
 
-/// Serve until `shutdown` completes, then drain sessions within the grace
-/// period.
 pub async fn run_host<F>(
     listener: TcpListener,
     service: ServiceHandle,
@@ -177,14 +169,7 @@ fn finish(
                 report.failed_sessions += 1;
             }
         }
-        Err(_) => {
-            // A panicked or aborted task: counts were already attributed to
-            // its IP at admission, but the IP is unknown here; the aggregate
-            // count is corrected and the per-IP entry is left to drain with
-            // its neighbours at shutdown.
-            *active_total = active_total.saturating_sub(1);
-            report.failed_sessions += 1;
-        }
+        Err(_) => release_panicked_session_without_peer_address(active_total, report),
     }
 }
 
@@ -214,6 +199,14 @@ async fn nip05_preface(stream: &TcpStream) -> bool {
             _ => return false,
         }
     }
+}
+
+fn release_panicked_session_without_peer_address(
+    active_total: &mut usize,
+    report: &mut HostReport,
+) {
+    *active_total = active_total.saturating_sub(1);
+    report.failed_sessions += 1;
 }
 
 fn release(ip: IpAddr, active_by_ip: &mut BTreeMap<IpAddr, usize>, active_total: &mut usize) {

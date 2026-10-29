@@ -1,10 +1,3 @@
-//! The single-threaded service actor that owns storage.
-//!
-//! Every session forwards its requests here over a channel; the actor
-//! applies them in arrival order against SQLite. Sessions still register an
-//! event queue so a later relay can fan out without changing the connection
-//! loop. Nothing in this process publishes chat events.
-
 use crate::{
     auth::{self, KEY_BYTES},
     protocol::{Command, ErrorCode, PROTOCOL_VERSION, ServerError},
@@ -111,7 +104,6 @@ pub fn spawn_service(storage: Storage, config: ServiceConfig) -> std::io::Result
 
 struct Subscriber {
     session_id: u64,
-    // Held so a later relay can publish without changing the session loop.
     #[allow(dead_code)]
     events: mpsc::Sender<String>,
     #[allow(dead_code)]

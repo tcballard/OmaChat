@@ -1,4 +1,3 @@
-//! Device authentication, account names, optional Nostr identity, and NIP-44.
 mod account;
 mod identity;
 mod nip44;

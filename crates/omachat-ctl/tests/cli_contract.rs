@@ -1,4 +1,3 @@
-//! Black-box scripting contract against a deterministic local IPC peer.
 use omachat_proto::ipc::{
     Command, ErrorBody, ErrorCode, MAX_LINE_BYTES, Request, Response, ResponseOutcome, VERSION,
     encode_line,
@@ -258,8 +257,6 @@ async fn silent_peer_times_out_at_hello_and_after_hello() {
                 hello(&mut peer).await;
             }
             request(&mut peer).await;
-            // Keep the connection open without a response until the CLI's
-            // actual five-second timeout closes it. No test-only timeout knob.
             assert_eq!(peer.read_line(&mut String::new()).await.unwrap(), 0);
         })
         .await;

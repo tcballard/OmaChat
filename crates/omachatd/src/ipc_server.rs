@@ -47,8 +47,6 @@ impl EventHub {
         receiver
     }
 
-    /// Publish without waiting for a client. Full clients are disconnected by
-    /// dropping their sole sender, bounding daemon memory and latency.
     pub fn publish(&self, event: Event) {
         self.subscribers
             .lock()
@@ -79,20 +77,8 @@ pub struct IpcServer<H> {
     events: EventHub,
 }
 
-/// Publish the listening socket at its final path only once it is already
-/// private. `UnixListener::bind` honours the process umask, so binding
-/// directly and chmodding afterwards leaves a window in which another uid
-/// can connect (finding #7) whenever the umask is permissive — a manual
-/// launch without the packaged unit's `UMask=0077`, for instance.
-///
-/// Overriding the umask around `bind` would close that window but is not
-/// safe here: umask is process-wide, so it would also strip bits from files
-/// and directories created concurrently by other threads. Instead the
-/// socket is bound inside a freshly created 0700 staging directory, where
-/// no other uid can reach it, tightened to 0600 there, and then renamed
-/// into place. `rename` is atomic and preserves the inode and its mode, so
-/// the final path never exists in a world-accessible state and clients
-/// connect to the same listening socket through it.
+/// `UnixListener::bind` applies the process umask. umask is process-wide
+/// (POSIX), so this function does not change it around `bind`.
 fn bind_private_socket(socket_path: &Path) -> Result<UnixListener, ServerError> {
     let parent = socket_path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = socket_path
@@ -108,9 +94,7 @@ fn bind_private_socket(socket_path: &Path) -> Result<UnixListener, ServerError> 
         .mode(0o700)
         .create(&staging_directory)
         .map_err(ServerError::Io)?;
-    // The requested 0700 is masked, never widened, by the process umask;
-    // this restores the owner bits an exotic umask could have removed while
-    // the directory was still empty.
+    // `DirBuilder::mode` is masked by the process umask and is never widened.
     fs::set_permissions(&staging_directory, fs::Permissions::from_mode(0o700))
         .map_err(ServerError::Io)?;
     let staged_socket = staging_directory.join("socket");
@@ -120,7 +104,6 @@ fn bind_private_socket(socket_path: &Path) -> Result<UnixListener, ServerError> 
             .and_then(|()| fs::rename(&staged_socket, socket_path))
             .map(|()| listener)
     });
-    // The staging directory is transient on every path, including failure.
     let _ = fs::remove_file(&staged_socket);
     let _ = fs::remove_dir(&staging_directory);
     published.map_err(ServerError::Io)
@@ -190,10 +173,10 @@ impl<H: RequestHandler> IpcServer<H> {
                             break;
                         }
                     };
+                    // `peer_cred` is the kernel's SO_PEERCRED uid at connect.
+                    // The pid is not compared: Unix can reuse a pid.
                     match stream.peer_cred() {
-                        Ok(credentials) if peer_permitted(credentials.uid(), daemon_euid) => {}
-                        // Fail closed: a foreign or unreadable peer gets no
-                        // protocol bytes at all, not even an error frame.
+                        Ok(credentials) if same_euid(credentials.uid(), daemon_euid) => {}
                         Ok(_) | Err(_) => continue,
                     }
                     let handler = Arc::clone(&self.handler);
@@ -208,16 +191,8 @@ impl<H: RequestHandler> IpcServer<H> {
                 }
             }
         }
-        // Prevent new connections through the filesystem path while existing
-        // clients receive their local shutdown signal and drain.
         let _ = fs::remove_file(&self.socket_path);
         client_shutdown_sender.send_replace(true);
-        // Idle clients observe the shutdown receiver and exit immediately.
-        // A client already inside RequestHandler::handle is intentionally not
-        // cancelled: it writes that response, observes shutdown at the next
-        // boundary, and then exits. This is what keeps a panic result from
-        // being lost during runtime teardown. The deadline prevents a wedged
-        // handler or non-reading client from blocking process shutdown.
         if tokio::time::timeout(CLIENT_DRAIN_TIMEOUT, async {
             while clients.join_next().await.is_some() {}
         })
@@ -334,12 +309,7 @@ async fn serve_client<H: RequestHandler>(
     }
 }
 
-/// SO_PEERCRED authorization: only the daemon's own effective uid may speak
-/// the protocol. The uid in `UCred` is fixed by the kernel at connect()
-/// time and cannot be spoofed by the client. The pid is deliberately not
-/// consulted (pid reuse races). This is defense in depth, not a hard
-/// boundary: a same-uid process can ptrace the daemon — see SECURITY.md.
-fn peer_permitted(peer_uid: u32, daemon_euid: u32) -> bool {
+fn same_euid(peer_uid: u32, daemon_euid: u32) -> bool {
     peer_uid == daemon_euid
 }
 
@@ -383,7 +353,7 @@ impl Error for ServerError {
 
 #[cfg(test)]
 mod tests {
-    use super::{bind_private_socket, peer_permitted};
+    use super::{bind_private_socket, same_euid};
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
@@ -409,13 +379,10 @@ mod tests {
     }
 
     #[test]
-    fn only_the_daemon_uid_is_permitted() {
-        assert!(peer_permitted(1000, 1000));
-        assert!(!peer_permitted(1001, 1000));
-        // Root is not exempted: a root peer can bypass any socket check
-        // through other means, so accepting it here would only widen the
-        // daemon's accepted-input surface without adding capability.
-        assert!(!peer_permitted(0, 1000));
-        assert!(peer_permitted(0, 0));
+    fn peer_uid_must_equal_daemon_euid() {
+        assert!(same_euid(1000, 1000));
+        assert!(!same_euid(1001, 1000));
+        assert!(!same_euid(0, 1000));
+        assert!(same_euid(0, 0));
     }
 }

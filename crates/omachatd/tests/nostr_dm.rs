@@ -1,6 +1,3 @@
-//! Two daemons exchange a NIP-17 gift wrap through a loopback relay, and a
-//! NIP-05 name resolves to a contact.
-
 use futures_util::{SinkExt, StreamExt};
 use omachat_proto::ipc::{Command, Request, ResponseOutcome, VERSION};
 use omachatd::{DaemonConfig, DaemonCore, EventHub, RequestHandler, StorageProviderConfig};

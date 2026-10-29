@@ -1,9 +1,3 @@
-//! `omachat` terminal client.
-//!
-//! Connecting calls `chat-prepare`, which seals a `nostr-identity-v1` key when
-//! one is not already stored. The secret is never printed here; use
-//! `omachat-ctl identity export` for the nsec.
-
 use omachat_ctl::{Client, DEFAULT_TIMEOUT};
 use omachat_proto::ipc::{ResponseOutcome, Topic};
 use omachat_tui::{Action, HELP, UiModel, parse_input};

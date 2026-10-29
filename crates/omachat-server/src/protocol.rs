@@ -1,5 +1,3 @@
-//! Wire protocol v1 for the hosted server.
-//!
 //! Every frame is one UTF-8 JSON text message over a WebSocket. Clients send
 //! requests; the server answers each request exactly once, in order, and may
 //! interleave unsolicited events for the authenticated account.
@@ -32,8 +30,7 @@ pub enum Command {
         device_public_key: String,
     },
     /// Second request: the device signs the challenge transcript. A device
-    /// seen for the first time registers a new account, subject to the
-    /// server's registration policy.
+    /// seen for the first time registers a new account.
     Authenticate {
         /// Hex-encoded Ed25519 signature over [`crate::auth::auth_transcript`].
         signature: String,
@@ -47,7 +44,6 @@ pub enum Command {
     ResolveHandle {
         handle: String,
     },
-    /// Prove control of a Nostr key and bind it to this account's handle.
     BindNostr {
         nostr_public_key: String,
         nonce: String,

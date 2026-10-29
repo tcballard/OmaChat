@@ -1,5 +1,3 @@
-//! NIP-42-authenticated delivery of a verified NIP-17 publication plan.
-
 use crate::{
     auth::RelayAuthSigner,
     dm_routed_publish::RoutedDmPublishPlan,
@@ -13,7 +11,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Owns every relay task used for one recipient-specific DM delivery.
 pub struct AuthenticatedDmDelivery {
     pool: RelayPool,
     plan: RoutedDmPublishPlan,
@@ -98,7 +95,6 @@ impl AuthenticatedDmDelivery {
             .await?)
     }
 
-    /// Abort if needed, then await every owned relay task.
     pub async fn shutdown(self) -> Vec<Result<(), crate::relay::RelayError>> {
         self.pool.shutdown().await
     }

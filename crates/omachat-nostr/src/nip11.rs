@@ -1,10 +1,3 @@
-//! Strict NIP-11 relay information documents and a bounded fetcher.
-//!
-//! The relay's information document is the standard place a relay states its
-//! own public key. That key, not the URL, is what OmaChat binds room identity
-//! to. A missing or malformed key is reported, never guessed, and a fetched
-//! document is bounded in size before it is parsed.
-
 use crate::relay::RelayRoute;
 use rustls::{ClientConfig, RootCertStore};
 use rustls_pki_types::ServerName;
@@ -21,7 +14,6 @@ use url::Url;
 
 pub const NIP11_ACCEPT: &str = "application/nostr+json";
 
-/// Bounds applied to every information document before interpretation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayInformationLimits {
     pub max_document_bytes: usize,
@@ -45,9 +37,7 @@ impl Default for RelayInformationLimits {
 pub struct RelayInformation {
     name: Option<String>,
     description: Option<String>,
-    /// Administrative contact key from NIP-11 `pubkey`.
     pubkey: Option<String>,
-    /// Relay signing identity from NIP-11 `self`.
     self_pubkey: Option<String>,
     contact: Option<String>,
     supported_nips: Vec<u32>,
@@ -215,10 +205,6 @@ impl RelayInformation {
     }
 }
 
-/// Anything that can produce a relay's information document for a relay URL.
-///
-/// Tests supply deterministic fakes; production uses
-/// [`HttpRelayInformationFetcher`].
 pub trait RelayInformationSource {
     fn fetch(
         &self,

@@ -471,8 +471,6 @@ async fn shutdown_aborts_and_awaits_an_actor_wedged_in_handshake() {
         }
         handshake_sender.send(()).unwrap();
 
-        // Never answer the WebSocket handshake. The client socket reaching
-        // EOF proves shutdown did not merely detach its blocked actor.
         let mut byte = [0_u8; 1];
         assert_eq!(stream.read(&mut byte).await.unwrap(), 0);
     });

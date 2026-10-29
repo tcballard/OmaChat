@@ -1,18 +1,3 @@
-//! Hosted server transport (ADR 0007).
-//!
-//! One task owns one WebSocket to the configured server: it connects,
-//! verifies the server's hello signature against the pinned key, signs the
-//! challenge with the daemon's device key, multiplexes requests, forwards
-//! events, and reconnects with bounded backoff. The device secret never
-//! enters this module: the core supplies a signing closure that refuses once
-//! the identity has been erased, which stops the transport.
-//!
-//! Requests are answered in order by the server, but replies are matched by
-//! identifier anyway so a lost frame cannot misattribute a result. A request
-//! in flight when the connection drops fails with [`HostedError::Disconnected`]
-//! and it is the caller's decision whether to repeat it; sends are safe to
-//! repeat because the server deduplicates by client identifier.
-
 use ed25519_dalek::{Signature, VerifyingKey};
 use futures_util::{SinkExt, StreamExt};
 use omachat_proto::hosted::{
@@ -33,18 +18,14 @@ use tokio_tungstenite::{
 };
 
 const REQUEST_QUEUE: usize = 64;
-/// A session that lasted at least this long resets the reconnect backoff.
 const STABLE_SESSION: Duration = Duration::from_secs(30);
 
 type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct HostedTimeouts {
-    /// Whole handshake: TCP, TLS, WebSocket upgrade, hello and authenticate.
     pub connect: Duration,
-    /// One request after authentication.
     pub request: Duration,
-    /// How long a send keeps retrying across reconnects before it gives up.
     pub send: Duration,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
@@ -116,25 +97,15 @@ impl HostedState {
 #[derive(Clone, Debug)]
 pub enum HostedEvent {
     State(HostedState),
-    /// An unsolicited server event: `message`, `receipt`, `conversation`
-    /// or `lagged`, with its `data` object.
-    Server {
-        kind: String,
-        data: Value,
-    },
+    Server { kind: String, data: Value },
 }
 
 #[derive(Debug)]
 pub enum HostedError {
-    /// The connection dropped before the reply arrived; the outcome of the
-    /// request is unknown.
     Disconnected,
     Timeout,
-    /// The transport has stopped for good (shutdown or erased identity).
     Stopped,
-    /// The server refused the request.
     Server(ServerError),
-    /// The server violated the protocol or failed the pin check.
     Protocol(String),
 }
 
@@ -187,7 +158,6 @@ impl HostedHandle {
         self.timeouts
     }
 
-    /// Send one request and wait for its reply or the request timeout.
     pub async fn call(&self, method: &'static str, params: Value) -> Result<Value, HostedError> {
         let (reply, receiver) = oneshot::channel();
         self.requests
@@ -205,8 +175,6 @@ impl HostedHandle {
         }
     }
 
-    /// Wait until the transport is connected. `Disconnected` means the
-    /// deadline passed first.
     pub async fn wait_connected(&self, deadline: Instant) -> Result<(), HostedError> {
         let mut state = self.state.clone();
         loop {
@@ -231,7 +199,6 @@ pub struct HostedService {
 }
 
 impl HostedService {
-    /// Start the transport. Must be called inside a Tokio runtime.
     pub fn spawn(
         config: HostedServiceConfig,
         signer: DeviceSigner,
@@ -497,8 +464,6 @@ async fn send_frame(socket: &mut Socket, frame: Value) -> Result<(), HostedError
         .map_err(|_| HostedError::Disconnected)
 }
 
-/// Read frames until the response with `id` arrives. Events cannot arrive
-/// before authentication, so anything else is a protocol violation.
 async fn expect_response(socket: &mut Socket, id: &str) -> Result<Value, HostedError> {
     loop {
         match socket.next().await {
@@ -549,7 +514,6 @@ fn response_outcome(mut value: Value) -> Result<Value, HostedError> {
     }
 }
 
-/// Serve one authenticated connection until it ends. Returns the reason.
 async fn session(
     mut socket: Socket,
     config: &HostedServiceConfig,
@@ -628,8 +592,6 @@ async fn session(
             }
         }
     };
-    // Dropping the pending senders answers every in-flight request with
-    // `Disconnected`, which is exactly the truth: their outcome is unknown.
     drop(pending);
     reason
 }

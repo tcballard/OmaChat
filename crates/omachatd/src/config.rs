@@ -21,19 +21,11 @@ impl From<StorageProviderConfig> for RequestedProvider {
     }
 }
 
-/// Hosted server transport (ADR 0007). The server public key is pinned
-/// independently from the URL so a rogue or mis-issued TLS certificate cannot
-/// impersonate the server during authentication. Omission keeps the hosted
-/// transport disabled; a change requires a daemon restart.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct HostedConfig {
-    /// `wss://` URL, or numeric-loopback `ws://` for local testing.
     pub url: String,
-    /// Hex-encoded Ed25519 public key of the server, obtained out of band.
     pub pinned_server_public_key: String,
-    /// Display name sent when this device registers a new account. The
-    /// server keeps the first name it stored for the account.
     #[serde(default)]
     pub display_name: Option<String>,
 }
@@ -71,10 +63,6 @@ impl HostedConfig {
 pub struct DaemonConfig {
     pub storage_provider: StorageProviderConfig,
     pub hosted: Option<HostedConfig>,
-    /// Nostr relay URLs used to send and receive gift-wrapped DMs.
-    /// `wss://` in production; numeric-loopback `ws://` is for tests.
-    /// At most four. A sealed relay list saved from the UI replaces this
-    /// initial list on later starts.
     pub dm_relays: Vec<String>,
 }
 impl DaemonConfig {

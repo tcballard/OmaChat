@@ -1,24 +1,19 @@
-//! Wire contract shared by the hosted server and its clients.
-//!
-//! Everything here is pure data: protocol constants, the authentication
-//! transcripts both sides sign, error codes, frame builders and value
-//! validators. The server (`omachat-server`) and the daemon's hosted
-//! transport both depend on this module so neither has to depend on the
-//! other. See `docs/hosted-server.md` for the protocol description.
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{error::Error, fmt};
 
 pub const PROTOCOL_VERSION: u16 = 1;
-/// Upper bound for one WebSocket message in either direction.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024;
-/// Upper bound for one chat message body in bytes of UTF-8.
 pub const MAX_TEXT_BYTES: usize = 8 * 1024;
-/// Leave room for message metadata and envelopes after JSON escaping.
-pub const MAX_ENCODED_TEXT_BYTES: usize = 12 * 1024;
-/// Result budget reserves space for the response envelope and escaped request ID.
-pub const MAX_RESULT_BYTES: usize = MAX_FRAME_BYTES - 1024;
+const JSON_TEXT_ENVELOPE_ALLOWANCE_BYTES: usize = 4 * 1024;
+pub const MAX_ENCODED_TEXT_BYTES: usize = MAX_TEXT_BYTES + JSON_TEXT_ENVELOPE_ALLOWANCE_BYTES;
+const RESPONSE_ENVELOPE_ALLOWANCE_BYTES: usize = 1024;
+pub const MAX_RESULT_BYTES: usize = MAX_FRAME_BYTES - RESPONSE_ENVELOPE_ALLOWANCE_BYTES;
+
+const _: () = {
+    assert!(MAX_ENCODED_TEXT_BYTES < MAX_FRAME_BYTES);
+    assert!(MAX_RESULT_BYTES < MAX_FRAME_BYTES);
+};
 pub const MAX_PAGE_ITEMS: u32 = 32;
 pub const MAX_REQUEST_ID_BYTES: usize = 64;
 pub const MAX_CLIENT_ID_BYTES: usize = 64;
@@ -32,9 +27,7 @@ pub const EVENT_RECEIPT: &str = "receipt";
 pub const EVENT_CONVERSATION: &str = "conversation";
 pub const EVENT_LAGGED: &str = "lagged";
 
-/// Domain separator for the device's authentication signature.
 pub const AUTH_DOMAIN: &[u8] = b"omachat-server-auth-v1\0";
-/// Domain separator for the server's hello signature.
 pub const HELLO_DOMAIN: &[u8] = b"omachat-server-hello-v1\0";
 pub const KEY_BYTES: usize = 32;
 pub const SIGNATURE_BYTES: usize = 64;
@@ -47,7 +40,6 @@ pub const NOSTR_UNBIND_DOMAIN: &[u8] = b"omachat-nostr-unbind-v1\0";
 /// Proofs older or newer than this many seconds are rejected.
 pub const NOSTR_PROOF_SKEW_SECONDS: u64 = 300;
 
-/// Bytes the server signs in its hello reply so a client can pin it.
 #[must_use]
 pub fn hello_transcript(
     challenge: &[u8; KEY_BYTES],
@@ -77,7 +69,6 @@ pub fn auth_transcript(
 }
 
 /// Bytes both keys sign to bind a Nostr public key to this account's handle.
-/// Length prefixes keep the strings unambiguous.
 #[must_use]
 pub fn nostr_bind_transcript(
     server_public_key: &[u8; KEY_BYTES],
@@ -98,7 +89,6 @@ pub fn nostr_bind_transcript(
     )
 }
 
-/// Bytes the device key signs to remove the current Nostr binding.
 #[must_use]
 pub fn nostr_unbind_transcript(
     server_public_key: &[u8; KEY_BYTES],
@@ -213,8 +203,6 @@ pub fn event_frame(kind: &str, data: Value) -> String {
     json!({"version": PROTOCOL_VERSION, "event": kind, "data": data}).to_string()
 }
 
-/// Reject names that would be confusing or unbounded: empty, surrounding
-/// whitespace, control characters, or more than [`MAX_NAME_BYTES`].
 pub fn validate_name(value: &str) -> Result<&str, ServerError> {
     if value.is_empty()
         || value.len() > MAX_NAME_BYTES

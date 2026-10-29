@@ -1,5 +1,3 @@
-//! Two-phase destructive-command orchestration against a scripted stub daemon.
-
 use omachat_ctl::{Client, ClientError, DEFAULT_TIMEOUT, request_with_confirmation};
 use omachat_proto::ipc::{
     Command, RequestDecoder, Response, ResponseOutcome, VERSION, encode_line, negotiate,
@@ -12,8 +10,6 @@ use tokio::{
     net::UnixListener,
 };
 
-/// Serves one client: hello, then request-panic-confirmation (mints a token
-/// file), then panic (accepted only with the minted token).
 async fn stub_daemon(listener: UnixListener, token_directory: std::path::PathBuf) {
     let (mut stream, _) = listener.accept().await.expect("accept");
     let mut decoder = RequestDecoder::default();

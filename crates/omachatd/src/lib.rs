@@ -1,4 +1,3 @@
-//! Local identity daemon, Nostr direct messages, and handle-server client.
 mod config;
 mod confirmation;
 mod core;

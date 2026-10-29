@@ -1,5 +1,3 @@
-//! Device-key authentication and server identity.
-//!
 //! The client proves control of an Ed25519 device key by signing a transcript
 //! that binds the server's public key, a fresh server challenge and the
 //! device key. The server proves its identity by signing the challenge with
@@ -38,7 +36,6 @@ impl ServerIdentity {
         self.signing_key.verifying_key().to_bytes()
     }
 
-    /// Sign the hello transcript so the client can pin this server.
     #[must_use]
     pub fn sign_hello(
         &self,
@@ -81,7 +78,6 @@ pub fn verify_device_signature(
         .map_err(|_| AuthError::InvalidSignature)
 }
 
-/// Client-side helper: sign the challenge transcript with a device seed.
 #[must_use]
 pub fn sign_device_challenge(
     device_seed: &[u8; KEY_BYTES],

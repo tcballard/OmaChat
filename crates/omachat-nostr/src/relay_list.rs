@@ -1,5 +1,3 @@
-//! Standard NIP-65 relay-list publication.
-
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use url::Url;

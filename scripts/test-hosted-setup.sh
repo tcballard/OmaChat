@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Exercise the documented root-directory/service-owned-secret boundary without
-# touching /etc, creating accounts, or starting a system service.
 set -euo pipefail
 if [[ $(id -u) != 0 ]]; then
   echo 'Run this test as root (uses the existing nobody account in a temporary directory).' >&2

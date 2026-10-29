@@ -67,6 +67,11 @@ impl Default for PanicLifecycle {
     }
 }
 
+enum ProcessShutdown {
+    WaitForPanicCleanup,
+    ContinueShutdown,
+}
+
 impl PanicLifecycle {
     fn state(&self) -> PanicState {
         PanicState::from_u8(self.state.load(Ordering::Acquire))
@@ -84,18 +89,18 @@ impl PanicLifecycle {
             .is_ok()
     }
 
-    /// Atomically prevent a late panic from starting, or report that an
-    /// already-started panic must reach a terminal cleanup state first.
-    fn begin_process_shutdown(&self) -> bool {
+    fn begin_process_shutdown(&self) -> ProcessShutdown {
         let _transition = self.transition();
         match self.state() {
             PanicState::Active => {
                 self.state
                     .store(PanicState::Stopping as u8, Ordering::Release);
-                false
+                ProcessShutdown::ContinueShutdown
             }
-            PanicState::Erasing => true,
-            PanicState::CleanupComplete | PanicState::CleanupFailed | PanicState::Stopping => false,
+            PanicState::Erasing => ProcessShutdown::WaitForPanicCleanup,
+            PanicState::CleanupComplete | PanicState::CleanupFailed | PanicState::Stopping => {
+                ProcessShutdown::ContinueShutdown
+            }
         }
     }
 
@@ -137,8 +142,6 @@ struct CoreInner {
     operations: tokio::sync::RwLock<()>,
     panic: PanicLifecycle,
     hosted: Mutex<Option<HostedHandle>>,
-    /// Last account the hosted server authenticated; kept across
-    /// reconnects so status stays truthful while disconnected.
     hosted_account: Mutex<Option<HostedAccount>>,
     config: Mutex<DaemonConfig>,
     events: EventHub,
@@ -152,8 +155,6 @@ pub struct DaemonCore {
     inner: Arc<CoreInner>,
 }
 
-/// Hosted transport state for `status`. `disabled` means no `hosted`
-/// configuration; every other state describes the live connection.
 #[derive(Serialize)]
 struct HostedStatus {
     state: &'static str,
@@ -222,16 +223,10 @@ impl DaemonCore {
         self.inner.panic.state()
     }
 
-    /// Wait until panic cleanup has either completed or failed. Merely
-    /// entering the erasing state does not satisfy this wait.
     pub async fn wait_for_panic_terminal(&self) -> PanicState {
         self.inner.panic.wait_for_terminal().await
     }
 
-    /// Fence process shutdown against panic erasure. If panic has already
-    /// started, this waits for cleanup; otherwise it prevents a late panic
-    /// request from starting while the runtime is being dismantled.
-    /// Test-only NIP-05 transport. `base` must be numeric-loopback `http://`.
     pub async fn set_loopback_nip05_for_tests(&self, base: String) -> Result<(), CoreError> {
         self.inner
             .chat
@@ -241,7 +236,10 @@ impl DaemonCore {
     }
 
     pub async fn prepare_for_shutdown(&self) {
-        if self.inner.panic.begin_process_shutdown() {
+        if matches!(
+            self.inner.panic.begin_process_shutdown(),
+            ProcessShutdown::WaitForPanicCleanup
+        ) {
             self.inner.panic.wait_for_terminal().await;
         }
     }
@@ -438,9 +436,7 @@ impl DaemonCore {
         if !self.inner.panic.begin() {
             return Err(CoreError::Panicked);
         }
-        // The request task is not the cleanup owner. A client disconnect,
-        // task abort, or server shutdown can drop this await without dropping
-        // the independently supervised cleanup operation.
+        // Tokio detaches a dropped JoinHandle, so cancelling this await leaves cleanup running.
         let supervisor_core = self.clone();
         let supervisor = tokio::spawn(async move {
             let worker_core = supervisor_core.clone();
@@ -563,9 +559,6 @@ impl DaemonCore {
         Ok(Some(service))
     }
 
-    /// Sign the hosted authentication transcript with the device signing
-    /// key. Returns `None` once the identity has been erased, which stops
-    /// the transport instead of letting it reconnect as nobody.
     fn sign_with_device_key(&self, transcript: &[u8]) -> Option<[u8; 64]> {
         let guard = self.inner.identity.lock().expect("identity mutex poisoned");
         guard.as_ref().map(|identity| identity.sign(transcript))
@@ -645,8 +638,6 @@ impl DaemonCore {
                 }
                 self.publish_status_event();
             }
-            // The thin server does not emit chat events. Ignore anything else
-            // so a future relay frame cannot crash this process.
             HostedEvent::Server { .. } => {}
         }
     }
@@ -832,8 +823,6 @@ fn confirmation_issue_value(issued: &crate::confirmation::IssuedConfirmation) ->
     })
 }
 
-/// Mint a real panic-confirmation token for tests: destructive commands are
-/// no longer authorized by a constant string.
 #[cfg(test)]
 fn minted_panic_token(core: &DaemonCore) -> String {
     let issued = core

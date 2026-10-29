@@ -1,6 +1,3 @@
-//! NIP-05 `GET /.well-known/nostr.json` on the same loopback listener as the
-//! WebSocket. The response always carries `Access-Control-Allow-Origin: *`.
-
 use crate::{
     protocol::{ErrorCode, ServerError},
     service::{ServiceHandle, ServiceRequest},
@@ -145,7 +142,6 @@ async fn write_options(stream: &mut TcpStream) -> std::io::Result<()> {
     stream.flush().await
 }
 
-/// True when the peeked request line is the NIP-05 resource.
 #[must_use]
 pub fn is_nip05_request(head: &[u8]) -> bool {
     const PREFIXES: [&[u8]; 3] = [

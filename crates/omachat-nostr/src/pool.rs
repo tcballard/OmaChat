@@ -1,5 +1,3 @@
-//! Deterministic bounded policy across independent relay connections.
-
 use crate::{
     event::SignedEvent,
     relay::{
@@ -16,7 +14,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Bounded relay-pool policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RelayPoolConfig {
     pub acknowledgement_threshold: usize,
@@ -34,14 +31,12 @@ impl Default for RelayPoolConfig {
     }
 }
 
-/// One relay's result for a pool publish.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelayPublishOutcome {
     pub relay_index: usize,
     pub result: Result<PublishAcknowledgement, RelayError>,
 }
 
-/// Publish results after the configured acknowledgement threshold passed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolPublishResult {
     pub accepted: usize,
@@ -49,15 +44,12 @@ pub struct PoolPublishResult {
     pub outcomes: Vec<RelayPublishOutcome>,
 }
 
-/// A relay notification with its source index. Authenticated events are
-/// deduplicated by event ID before being returned.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolNotification {
     pub relay_index: usize,
     pub notification: RelayNotification,
 }
 
-/// Pool of independent connection actors.
 pub struct RelayPool {
     connections: Vec<RelayConnection>,
     config: RelayPoolConfig,
@@ -108,7 +100,6 @@ impl RelayPool {
         })
     }
 
-    /// Snapshot relay health in stable configuration order.
     #[must_use]
     pub fn health(&self) -> Vec<RelayHealth> {
         self.connections
@@ -247,7 +238,6 @@ impl RelayPool {
         results
     }
 
-    /// Close one logical subscription on every relay.
     pub async fn close_subscription(
         &mut self,
         subscription_id: String,
@@ -347,7 +337,6 @@ impl RelayPool {
     }
 }
 
-/// Relay-pool policy and quorum failures.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayPoolError {
     InvalidConfig(&'static str),

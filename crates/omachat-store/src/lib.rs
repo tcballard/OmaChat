@@ -1,4 +1,3 @@
-//! Sealed local credentials and chat state.
 mod erase;
 mod identity;
 mod nostr;

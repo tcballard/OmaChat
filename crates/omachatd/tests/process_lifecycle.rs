@@ -1,4 +1,3 @@
-//! Exercise the installed daemon entry point, not just DaemonCore methods.
 use omachat_proto::ipc::{Command, Request, Response, ResponseOutcome, VERSION, encode_line};
 use serde_json::{Value, json};
 use std::{
@@ -71,8 +70,6 @@ impl Fixture {
                 daemon.log()
             );
             if let Ok(stream) = UnixStream::connect(&self.socket) {
-                // The socket exists only after startup. Complete hello/status
-                // as the readiness barrier before sending a process signal.
                 let mut client = Client::new(stream);
                 client.request(Command::Status);
                 return daemon;
@@ -160,7 +157,6 @@ impl Daemon {
 
 impl Drop for Daemon {
     fn drop(&mut self) {
-        // Reap on assertion failures too; never leave a background daemon.
         if matches!(self.child.try_wait(), Ok(None)) {
             let _ = self.child.kill();
         }
@@ -270,8 +266,6 @@ fn sighup_applies_valid_config_and_rejects_invalid_or_restart_only_changes() {
     {
         fs::write(&fixture.config, invalid).unwrap();
         daemon.signal("HUP");
-        // Wait for acknowledgement of the rejected signal, not a sleep
-        // that could inspect the old state before the reload even happened.
         daemon.wait_for_rejected_reload(index);
         assert_eq!(client.request(Command::Status), before);
         assert_eq!(fixture.client().request(Command::Status), before);

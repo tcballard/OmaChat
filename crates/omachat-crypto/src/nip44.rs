@@ -1,6 +1,3 @@
-//! NIP-44 version 2 encrypted payloads.
-//!
-//! This module is deliberately separate from OmaChat's legacy private envelope.
 //! NIP-44 payloads must be carried by a signature-verified NIP-01 event; these
 //! helpers only perform the encryption layer and cannot verify the outer event.
 
@@ -25,13 +22,10 @@ const MIN_ENCODED_PAYLOAD_LEN: usize = 132;
 const MIN_DECODED_PAYLOAD_LEN: usize = 99;
 const EXTENDED_PREFIX_THRESHOLD: usize = 65_536;
 
-/// OmaChat's defensive local ceiling for one decrypted NIP-44 plaintext.
-///
 /// NIP-44 permits larger payloads, but implementations are expected to enforce
 /// a platform-appropriate bound before base64 decoding to limit memory abuse.
 pub const MAX_PLAINTEXT_LEN: usize = 1024 * 1024;
 
-/// Errors returned by NIP-44 v2 operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Nip44Error {
     InvalidSecretKey,
@@ -70,8 +64,6 @@ impl fmt::Display for Nip44Error {
 
 impl std::error::Error for Nip44Error {}
 
-/// Derive the stable NIP-44 v2 conversation key for a local secret and peer's
-/// x-only Nostr public key.
 pub fn conversation_key(
     local_secret: &[u8; 32],
     peer_public_key: &[u8; 32],
@@ -92,7 +84,6 @@ pub fn conversation_key(
     Ok(result)
 }
 
-/// Encrypt UTF-8 plaintext using a fresh CSPRNG nonce.
 pub fn encrypt(
     local_secret: &[u8; 32],
     peer_public_key: &[u8; 32],
@@ -103,10 +94,7 @@ pub fn encrypt(
     encrypt_with_nonce(local_secret, peer_public_key, plaintext, nonce)
 }
 
-/// Encrypt UTF-8 plaintext with an injected nonce.
-///
-/// This deterministic entry point exists for conformance vectors. Production
-/// callers should use [`encrypt`] and must never reuse a nonce for a conversation.
+/// NIP-44: reusing `nonce` makes the two payloads decryptable. [`encrypt`] draws a fresh one.
 pub fn encrypt_with_nonce(
     local_secret: &[u8; 32],
     peer_public_key: &[u8; 32],

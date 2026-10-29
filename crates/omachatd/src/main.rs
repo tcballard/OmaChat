@@ -29,9 +29,6 @@ async fn main() -> ExitCode {
 }
 
 async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
-    // Install handlers before publishing the IPC socket. Once a client can
-    // observe readiness, both terminal interrupts and systemd's SIGTERM must
-    // reach the same draining/cleanup path. Registration failure is fatal.
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     let reload_signal = options
@@ -82,8 +79,6 @@ async fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         let _ = panic_shutdown.send(true);
     });
     let server_result = server.run(shutdown_rx).await;
-    // Join cancellation before dismantling services so SIGHUP cannot race
-    // shutdown by applying a new configuration or restarting subscriptions.
     if let Some(task) = reload_task {
         task.abort();
         let _ = task.await;

@@ -92,8 +92,6 @@ async fn authenticated_inbox_relay(
 
 #[tokio::test]
 async fn external_identity_crosses_two_authenticated_inbox_relays_unchanged() {
-    // This key is supplied as an already-existing external Nostr identity. No
-    // OmaChat account or replacement key is manufactured for it.
     let external_sender_secret = [0x41; 32];
     let recipient_secret = [0x42; 32];
     let external_sender = hex::encode(xonly_public_key(&external_sender_secret).unwrap());

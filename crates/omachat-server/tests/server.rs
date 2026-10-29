@@ -1,6 +1,3 @@
-//! End-to-end tests against a real listener: device authentication, handle
-//! claims, limits and restart persistence.
-
 use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
 use omachat_crypto::NostrSecret;

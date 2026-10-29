@@ -194,8 +194,6 @@ fn parse_command(arguments: &[std::ffi::OsString]) -> Result<(Command, OutputMod
     }
 }
 
-/// Hosted server commands (ADR 0007). Every result is JSON from the daemon;
-/// `--json` prints it on one line, otherwise it is pretty-printed.
 fn parse_hosted_command(name: &str, rest: &[&str]) -> Result<(Command, OutputMode), CliError> {
     let (rest, mode) = match rest.split_last() {
         Some((&"--json", head)) => (head, OutputMode::Json),

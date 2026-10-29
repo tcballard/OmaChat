@@ -61,7 +61,6 @@ async fn operations_racing_erase_stop_at_the_terminal_key_state() {
     let worker_store = Arc::clone(&store);
     let (ready_tx, ready_rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
-        // Prove the worker is live before the erase races its next lock.
         worker_store.write("racing", b"worker active").unwrap();
         ready_tx.send(()).unwrap();
 

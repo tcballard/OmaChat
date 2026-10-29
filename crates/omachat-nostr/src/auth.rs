@@ -1,15 +1,9 @@
-//! NIP-42 client authentication using the participating Nostr principal.
-
 use crate::event::{EventError, EventLimits, SignedEvent, UnsignedEvent, xonly_public_key};
 use std::{error::Error, fmt};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const NIP42_AUTH_KIND: u32 = 22_242;
 
-/// A relay-authentication signer for one Nostr principal.
-///
-/// This owns only the Nostr secret used for event authorship. Account-root and
-/// recovery keys intentionally cannot be supplied through this API.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct RelayAuthSigner {
     secret_key: [u8; 32],

@@ -1,10 +1,3 @@
-//! Nostr direct messages on the sealed `nostr-identity-v1` key.
-//!
-//! The first chat action (opening a chat client, adding a contact, or sending)
-//! creates a key when one is not stored. The key is never derived from the
-//! device Ed25519 secret. Relay URLs configured here are the read and write
-//! set; the first three `wss://` URLs are also published as a NIP-17 inbox list.
-
 use crate::{config::canonical_publication_url, ipc_server::EventHub};
 use omachat_crypto::{NostrIdentityError, NostrSecret, npub_from_public_key, public_key_from_npub};
 use omachat_nostr::{
@@ -422,10 +415,7 @@ impl Actor {
         )
         .map_err(|error| ChatError::Send(error.to_string()))?;
         self.publish_to_relays(recipient_wrap).await?;
-        if self.publish_to_relays(self_wrap).await.is_err() {
-            // The recipient copy was accepted. A missed self-copy only affects
-            // another device reading this same inbox.
-        }
+        self.publish_self_copy_for_other_devices(self_wrap).await;
         let message = self.store_message(StoredMessage {
             id: rumor.id,
             conversation: format!("dm:{}", hex::encode(recipient)),
@@ -437,6 +427,10 @@ impl Actor {
             created_at: rumor.created_at,
         })?;
         Ok(json!({"message": message}))
+    }
+
+    async fn publish_self_copy_for_other_devices(&self, event: omachat_nostr::event::SignedEvent) {
+        let _ = self.publish_to_relays(event).await;
     }
 
     async fn publish_to_relays(

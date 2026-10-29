@@ -1,14 +1,3 @@
-//! Single-use, TTL-bounded confirmation tokens for destructive commands.
-//!
-//! A destructive command (`panic`) is a two-phase
-//! exchange: the client first requests a confirmation, the daemon mints a
-//! random token and places it in a 0600 file inside the 0700
-//! `<state_dir>/confirmations/` directory, and the client must echo that
-//! token back within the TTL. This replaces the in-band constant `"ERASE"`
-//! (a typo guard, not authorization). Same-uid processes can still read the
-//! state directory — this is a deliberate-two-step and freshness guarantee
-//! layered on the peer-credential gate, not a hard boundary; see SECURITY.md.
-
 use crate::CoreError;
 use std::{
     collections::HashMap,
@@ -19,10 +8,7 @@ use std::{
     sync::Mutex,
 };
 
-/// A confirmation token is useless after two minutes: long enough for an
-/// interactive `--confirm` round trip, short enough that a token left in the
-/// state directory by an abandoned command is not a standing authorization.
-pub const CONFIRMATION_TTL_SECONDS: u64 = 120;
+pub const CONFIRMATION_TTL_SECONDS: u64 = 2 * 60;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfirmationAction {
@@ -30,8 +16,6 @@ pub enum ConfirmationAction {
 }
 
 impl ConfirmationAction {
-    /// One outstanding token per action kind; a claim token additionally
-    /// pins the exact handle through the pending-entry comparison.
     fn file_name(&self) -> &'static str {
         match self {
             Self::PanicErase => "panic.token",
@@ -117,12 +101,6 @@ impl DestructiveConfirmations {
         })
     }
 
-    /// Single use, burn on attempt: the pending entry and the token file are
-    /// consumed by every redemption attempt for the action kind, matched or
-    /// not, so a wrong guess costs the outstanding token instead of leaving
-    /// it available for retries. Tokens are 256-bit random values, so a
-    /// non-constant-time comparison leaks nothing recoverable within one
-    /// attempt.
     pub fn redeem(
         &self,
         action: &ConfirmationAction,
@@ -130,9 +108,8 @@ impl DestructiveConfirmations {
         now: u64,
     ) -> Result<(), ConfirmationError> {
         let mut pending_tokens = self.pending.lock().expect("confirmation mutex poisoned");
-        let removed = pending_tokens.remove(action.file_name());
-        let _ = fs::remove_file(self.directory.join(action.file_name()));
-        let Some(pending) = removed else {
+        let Some(pending) = consume_pending_token(&mut pending_tokens, &self.directory, action)
+        else {
             return Err(ConfirmationError::Missing);
         };
         if pending.expires_at <= now {
@@ -143,6 +120,16 @@ impl DestructiveConfirmations {
         }
         Ok(())
     }
+}
+
+fn consume_pending_token(
+    pending: &mut HashMap<&'static str, PendingToken>,
+    directory: &Path,
+    action: &ConfirmationAction,
+) -> Option<PendingToken> {
+    let removed = pending.remove(action.file_name());
+    let _ = fs::remove_file(directory.join(action.file_name()));
+    removed
 }
 
 #[cfg(test)]

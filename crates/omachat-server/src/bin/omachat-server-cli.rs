@@ -1,7 +1,3 @@
-//! Minimal command-line client for the hosted server: one authenticated
-//! request per invocation, or `listen` to print events. Intended for
-//! operators, reviewers and scripted tests, not for end users.
-
 use futures_util::{SinkExt, StreamExt};
 use omachat_server::auth::{
     decode_key, generate_seed_file, load_seed_file, sign_device_challenge, verify_hello_signature,

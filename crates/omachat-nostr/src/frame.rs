@@ -1,5 +1,3 @@
-//! Bounded NIP-01 client and relay frame codecs.
-
 use crate::event::{EventError, EventLimits, SignedEvent};
 use serde::{
     Deserialize, Deserializer,
@@ -8,7 +6,6 @@ use serde::{
 use serde_json::Value;
 use std::{error::Error, fmt};
 
-/// A client-to-relay NIP-01 message.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientFrame {
     Event(SignedEvent),
@@ -23,7 +20,6 @@ pub enum ClientFrame {
 }
 
 impl ClientFrame {
-    /// Encode one compact JSON relay frame after enforcing local limits.
     pub fn to_json(&self, limits: &FrameLimits) -> Result<Vec<u8>, FrameError> {
         let bytes = match self {
             Self::Event(event) => serde_json::to_vec(&("EVENT", event)),
@@ -61,7 +57,6 @@ impl ClientFrame {
     }
 }
 
-/// A relay-to-client NIP-01/NIP-42 message.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayFrame {
     Event {
@@ -85,7 +80,6 @@ pub enum RelayFrame {
 }
 
 impl RelayFrame {
-    /// Decode one complete relay frame and authenticate any nested event.
     pub fn from_json(
         bytes: &[u8],
         now: u64,
@@ -146,7 +140,6 @@ impl RelayFrame {
     }
 }
 
-/// Resource limits applied before relay-controlled allocation is accepted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FrameLimits {
     pub max_frame_bytes: usize,
@@ -155,15 +148,18 @@ pub struct FrameLimits {
     pub max_filters: usize,
 }
 
+pub const DEFAULT_MAX_FRAME_BYTES: usize = 512 * 1024;
+pub const DEFAULT_MAX_SUBSCRIPTION_ID_BYTES: usize = 64;
+pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 4 * 1024;
+pub const DEFAULT_MAX_FILTERS: usize = 16;
+
 impl Default for FrameLimits {
     fn default() -> Self {
-        // The pinned Swift WebSocket boundary is 512 KiB; nested events are
-        // independently capped at 256 KiB by EventLimits.
         Self {
-            max_frame_bytes: 512 * 1024,
-            max_subscription_id_bytes: 64,
-            max_message_bytes: 4 * 1024,
-            max_filters: 16,
+            max_frame_bytes: DEFAULT_MAX_FRAME_BYTES,
+            max_subscription_id_bytes: DEFAULT_MAX_SUBSCRIPTION_ID_BYTES,
+            max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
+            max_filters: DEFAULT_MAX_FILTERS,
         }
     }
 }
@@ -344,5 +340,25 @@ fn validate_hex_id(value: &str) -> Result<(), FrameError> {
         Ok(())
     } else {
         Err(FrameError::InvalidEventId)
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn default_frame_budget_fits_a_maximum_event() {
+        let frames = FrameLimits::default();
+        let events = EventLimits::default();
+        assert!(
+            frames.max_frame_bytes >= events.max_serialized_bytes,
+            "a maximum-sized event has to fit in the default relay frame"
+        );
+        assert_eq!(frames.max_frame_bytes, DEFAULT_MAX_FRAME_BYTES);
+        assert_eq!(
+            events.max_serialized_bytes,
+            crate::event::DEFAULT_MAX_SERIALIZED_BYTES
+        );
     }
 }
