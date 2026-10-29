@@ -1,4 +1,3 @@
-// Presentation state for the Quickshell window. No secrets are stored here.
 function create() {
     return {
         ready: false,

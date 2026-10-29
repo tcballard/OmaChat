@@ -1,5 +1,3 @@
-//! Command-line configuration for `omachat-serverd`.
-
 use crate::host::HostLimits;
 use std::{error::Error, ffi::OsString, fmt, net::SocketAddr, path::PathBuf, time::Duration};
 

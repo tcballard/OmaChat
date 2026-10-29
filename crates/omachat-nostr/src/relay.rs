@@ -1,5 +1,3 @@
-//! Bounded, cancellation-safe connection to one Nostr relay.
-
 use crate::{
     auth::RelayAuthSigner,
     event::{EventLimits, SignedEvent},
@@ -40,7 +38,6 @@ pub enum RelayRoute {
     Socks5(String),
 }
 
-/// Whether a configured signer must authenticate before commands are allowed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelayAuthenticationPolicy {
     /// Preserve the fail-closed default: a configured signer cannot issue
@@ -51,7 +48,6 @@ pub enum RelayAuthenticationPolicy {
     AuthenticateWhenChallenged,
 }
 
-/// Explicit limits and timers for one relay actor.
 #[derive(Clone, Debug)]
 pub struct RelayConfig {
     pub url: String,
@@ -73,7 +69,6 @@ pub struct RelayConfig {
 }
 
 impl RelayConfig {
-    /// Construct production defaults for a relay URL and route.
     #[must_use]
     pub fn new(url: String, route: RelayRoute) -> Self {
         Self {
@@ -124,7 +119,6 @@ impl RelayConfig {
     }
 }
 
-/// Current actor health, observable without consuming notifications.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelayHealth {
     Connecting,
@@ -133,7 +127,6 @@ pub enum RelayHealth {
     Stopped,
 }
 
-/// Authenticated relay input and lifecycle changes.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayNotification {
     Connected,
@@ -160,14 +153,12 @@ pub enum RelayNotification {
     },
 }
 
-/// Successful acknowledgement returned by a relay for a published event.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublishAcknowledgement {
     pub event_id: String,
     pub message: String,
 }
 
-/// Handle for one reconnecting relay actor.
 pub struct RelayConnection {
     commands: mpsc::Sender<Command>,
     notifications: mpsc::Receiver<RelayNotification>,
@@ -178,7 +169,6 @@ pub struct RelayConnection {
 }
 
 impl RelayConnection {
-    /// Start one bounded actor. Network activity begins on the spawned task.
     pub fn spawn(config: RelayConfig) -> Result<Self, RelayError> {
         config.validate()?;
         let (command_sender, command_receiver) = mpsc::channel(config.command_capacity);
@@ -203,7 +193,6 @@ impl RelayConnection {
         })
     }
 
-    /// Publish a signed event and wait for its matching `OK` response.
     pub async fn publish(&self, event: SignedEvent) -> Result<PublishAcknowledgement, RelayError> {
         let (sender, receiver) = oneshot::channel();
         self.send(Command::Publish {
@@ -251,27 +240,17 @@ impl RelayConnection {
             .map_err(|_| RelayError::Stopped)?
     }
 
-    /// Receive the next bounded notification.
     pub async fn next_notification(&mut self) -> Option<RelayNotification> {
         self.notifications.recv().await
     }
 
-    /// Borrow the actor's current health receiver.
     #[must_use]
     pub fn health(&self) -> watch::Receiver<RelayHealth> {
         self.health.clone()
     }
 
-    /// Stop the actor, close its socket, and await owned work.
-    ///
-    /// If the actor cannot process the graceful request within the configured
-    /// shutdown deadline, it is aborted and still awaited before this method
-    /// returns. This keeps an outer timeout from becoming the owner of a
-    /// detached relay task.
     pub async fn shutdown(mut self) -> Result<(), RelayError> {
-        // Never wait for capacity in a queue whose consumer may itself be
-        // wedged. A full queue falls through to the bounded abort path.
-        let _ = self.commands.try_send(Command::Shutdown);
+        let _ = self.send(Command::Shutdown).await;
         let Some(task) = self.task.as_mut() else {
             return Ok(());
         };
@@ -306,10 +285,7 @@ impl RelayConnection {
 
 impl Drop for RelayConnection {
     fn drop(&mut self) {
-        // Tokio detaches a task when its JoinHandle is dropped. Abort first so
-        // cancellation of `shutdown` cannot leave a relay actor running
-        // indefinitely without an owner. The explicit shutdown path still
-        // awaits the aborted task before reporting completion.
+        // Tokio detaches a task when its JoinHandle is dropped.
         if let Some(task) = &self.task {
             task.abort();
         }
@@ -766,8 +742,6 @@ fn unix_timestamp() -> u64 {
         .as_secs()
 }
 
-/// Relay actor failures. Clone is intentional so one disconnect reason can be
-/// delivered to every in-flight publisher without retaining opaque errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelayError {
     InvalidConfig(&'static str),

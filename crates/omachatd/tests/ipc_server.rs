@@ -368,8 +368,6 @@ async fn panic_response_during_terminal_shutdown(
         },
     )
     .await;
-    // Destructive commands need a daemon-minted single-use token, obtained
-    // over the same connection before the panic request itself.
     let token_response = write_request(
         &mut writer,
         &mut reader,

@@ -1,7 +1,3 @@
-//! Standards-compatible NIP-59 gift wrapping and NIP-17 chat rumors.
-//!
-//! This is deliberately separate from OmaChat's captured mobile envelope.
-
 use crate::event::{EventError, EventLimits, SignedEvent, Tag, UnsignedEvent, xonly_public_key};
 use omachat_crypto::{Nip44Error, nip44_decrypt, nip44_encrypt_with_nonce};
 use serde::{Deserialize, Serialize};

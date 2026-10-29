@@ -1,5 +1,3 @@
-// NIP-19/NIP-21 display identifiers only. All IPC still uses hexadecimal keys.
-// No relay hints are followed and no secret key is accepted or retained here.
 var alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 function polymod(words) {
     var check = 1;

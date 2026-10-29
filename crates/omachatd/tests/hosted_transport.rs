@@ -1,6 +1,3 @@
-//! The daemon's handle-server transport against a real in-process server:
-//! pinned authentication, handle claims and panic erasure.
-
 use omachat_proto::ipc::{Command, ErrorBody, Request, ResponseOutcome, VERSION};
 use omachat_server::{
     HostLimits, HostReport, ServerIdentity, ServiceConfig, SessionLimits, Storage, run_host,

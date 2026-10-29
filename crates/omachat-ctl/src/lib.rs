@@ -1,5 +1,3 @@
-//! Bounded IPC client used by the scripting command.
-
 use omachat_proto::ipc::{
     Command, Event, MAX_LINE_BYTES, Request, Response, ResponseOutcome, Topic, VERSION, encode_line,
 };
@@ -131,8 +129,6 @@ impl Client {
         Ok(response)
     }
 
-    /// Subscribe once. A full event queue terminates the reader; reconnect and
-    /// resubscribe to recover a fresh daemon snapshot instead of dropping events.
     pub fn set_timeout(&mut self, timeout: Duration) {
         self.timeout = timeout;
     }
@@ -163,16 +159,10 @@ impl Drop for Client {
     }
 }
 
-/// Restated at every panic invocation: erasure is local-only.
 pub const PANIC_ERASE_WARNING: &str = "panic erase destroys the local master key and sealed \
 state; it cannot retract messages, keys, or metadata already replicated to servers, peers, or \
 backups";
 
-/// Two-phase orchestration for destructive commands. The typed intent
-/// (`ERASE`, or the handle echoed to `--confirm`) is checked locally; the
-/// daemon-minted single-use token is then fetched out of band from the
-/// daemon state directory and echoed back. Non-destructive commands pass
-/// straight through.
 pub async fn request_with_confirmation(
     client: &mut Client,
     command: Command,
@@ -188,7 +178,7 @@ pub async fn request_with_confirmation(
             let ResponseOutcome::Ok { ref result } = issued.outcome else {
                 return Ok(issued);
             };
-            let token = read_confirmation_token(result)?;
+            let token = read_confirmation_token_blocking(result)?;
             client
                 .request(Command::Panic {
                     confirmation: token,
@@ -199,15 +189,13 @@ pub async fn request_with_confirmation(
     }
 }
 
-fn read_confirmation_token(result: &serde_json::Value) -> Result<String, ClientError> {
+fn read_confirmation_token_blocking(result: &serde_json::Value) -> Result<String, ClientError> {
     let path = result
         .get("token_path")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
             ClientError::ConfirmationProtocol("daemon response lacked token_path".into())
         })?;
-    // Token files are tens of bytes; a blocking read keeps the client free
-    // of a tokio fs feature dependency.
     let mut file = std::fs::File::open(path)
         .map_err(|error| ClientError::ConfirmationProtocol(error.to_string()))?;
     if !file

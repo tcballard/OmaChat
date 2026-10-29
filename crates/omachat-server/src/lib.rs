@@ -1,10 +1,3 @@
-//! Thin OmaChat server.
-//!
-//! One loopback WebSocket carries device authentication and handle claims.
-//! A TLS reverse proxy owns the public socket. The process is shaped so it
-//! can later grow into the Omacon relay; it does not store chat. See
-//! `docs/hosted-server.md`.
-
 pub mod auth;
 pub mod host;
 pub mod nip05;

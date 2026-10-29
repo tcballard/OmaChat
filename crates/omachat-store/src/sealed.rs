@@ -48,7 +48,6 @@ pub struct StoreStatus {
     pub record_version: u8,
 }
 
-/// Zeroized 256-bit master key. It deliberately has no `Clone` or debug view.
 pub struct MasterKey(Zeroizing<[u8; KEY_BYTES]>);
 
 impl MasterKey {

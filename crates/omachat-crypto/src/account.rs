@@ -63,7 +63,6 @@ impl<'de> Deserialize<'de> for GlobalHandle {
     }
 }
 
-/// A human-facing account name with explicit character and UTF-8 bounds.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DisplayName(String);
 

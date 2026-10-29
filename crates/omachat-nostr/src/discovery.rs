@@ -1,5 +1,3 @@
-//! Signature-verified NIP-65 and NIP-17 relay discovery.
-
 use crate::event::{EventLimits, SignedEvent};
 use std::{error::Error, fmt};
 use url::Url;

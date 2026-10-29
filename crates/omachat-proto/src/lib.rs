@@ -1,4 +1,3 @@
-//! Handle-server wire protocol and bounded local IPC.
 pub mod hosted;
 pub mod ipc;
 #[must_use]

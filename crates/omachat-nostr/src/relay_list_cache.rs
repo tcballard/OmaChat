@@ -1,5 +1,3 @@
-//! Persistence-agnostic verified NIP-65 cache state.
-
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,

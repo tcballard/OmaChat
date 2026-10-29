@@ -1,8 +1,4 @@
-//! SQLite persistence for accounts, devices and handles.
-//!
-//! The hosted chat tables are gone. A database from that product (schema
-//! version 1) is refused so this process cannot open it by mistake. The
-//! storage key still seals a key-check record, so a copied database is useless
+//! The storage key seals a key-check record, so a copied database is useless
 //! without the operator's key, but account metadata itself is not encrypted.
 
 use chacha20poly1305::{
@@ -58,7 +54,6 @@ impl Storage {
         Ok(storage)
     }
 
-    /// In-memory database for tests.
     pub fn open_in_memory(key: Zeroizing<[u8; 32]>) -> Result<Self, StorageError> {
         let connection = Connection::open_in_memory()?;
         connection.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -176,8 +171,6 @@ impl Storage {
             )
             .map_err(|_| StorageError::Corrupt)
     }
-
-    // ----- accounts and devices -----
 
     pub fn account_for_device(
         &self,
@@ -308,7 +301,6 @@ impl Storage {
         }
     }
 
-    /// Returns whether a binding was removed.
     pub fn unbind_nostr(&mut self, account_id: &str) -> Result<bool, StorageError> {
         let changed = self.connection.execute(
             "UPDATE accounts SET nostr_pubkey = NULL WHERE id = ?1 AND nostr_pubkey IS NOT NULL",

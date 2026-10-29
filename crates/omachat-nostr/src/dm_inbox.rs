@@ -1,5 +1,3 @@
-//! Authenticated standard NIP-17/NIP-59 direct-message receive boundary.
-
 use crate::{
     event::{EventLimits, SignedEvent, Tag, xonly_public_key},
     gift_wrap::{CHAT_MESSAGE_KIND, GIFT_WRAP_KIND, GiftWrapError, OpenedGiftWrap, open_gift_wrap},

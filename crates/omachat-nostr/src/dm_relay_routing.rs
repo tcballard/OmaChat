@@ -86,8 +86,6 @@ pub fn route_dm_relays(
     }
 }
 
-/// Convert already signature-verified kind 10050 metadata into an immediate
-/// route without discarding the recipient or source-event binding.
 pub fn route_verified_dm_inbox(
     inbox: &VerifiedDmInbox,
 ) -> Result<DmRelayRoute, DmRelayRoutingError> {

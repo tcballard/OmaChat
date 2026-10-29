@@ -1,11 +1,7 @@
-//! Versioned, bounded JSON-lines IPC contract shared by daemon clients.
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{error::Error, fmt};
 
-/// Version 4 is the Nostr identity and direct-message contract.
-/// Hosted workspace commands stay rejected. Clients and the daemon move together.
 pub const VERSION: u16 = 4;
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 pub const MAX_CORRELATION_ID_BYTES: usize = 128;
@@ -30,7 +26,6 @@ pub enum Command {
     IdentityShow,
     /// Explicit export of the sealed `nsec`.
     IdentityExport,
-    /// Create a new Nostr key when none is stored.
     IdentityGenerate,
     /// Import an `nsec`. Refuses to replace an existing key.
     IdentityImport {
@@ -46,15 +41,12 @@ pub enum Command {
     Subscribe {
         topics: Vec<Topic>,
     },
-    /// Claim the account handle on the configured server.
     HostedClaimHandle {
         handle: String,
     },
-    /// Resolve a handle to the account that owns it.
     HostedResolveHandle {
         handle: String,
     },
-    /// Bind the sealed Nostr key to this account's handle.
     HostedBindNostr,
     /// Remove the handle's Nostr binding. Does not require the Nostr secret.
     HostedUnbindNostr,
@@ -79,7 +71,6 @@ pub enum Command {
         peer: String,
         text: String,
     },
-    /// Recent local DM history.
     Messages,
 }
 

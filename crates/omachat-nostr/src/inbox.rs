@@ -1,5 +1,3 @@
-//! Fail-closed NIP-17 inbox verification and publication planning.
-
 use crate::{
     discovery::{RelayDiscoveryLimits, parse_nip17_dm_relay_list},
     dm_relay_cache::{DmRelayCacheError, VerifiedDmRelayRecord},
@@ -10,7 +8,6 @@ use std::net::IpAddr;
 use std::{error::Error, fmt};
 use url::Url;
 
-/// Product policy for using recipient-authored kind 10050 inbox metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DmInboxPolicy {
     pub maximum_age_seconds: u64,
@@ -30,10 +27,6 @@ impl Default for DmInboxPolicy {
     }
 }
 
-/// Signature-verified and policy-checked recipient inbox metadata.
-///
-/// Fields are intentionally private so a publication plan cannot be created
-/// from relay URLs that bypassed kind 10050 signature and subject checks.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedDmInbox {
     recipient_public_key: String,
@@ -64,7 +57,6 @@ impl VerifiedDmInbox {
         &self.relay_urls
     }
 
-    /// Converts only already signature-verified kind 10050 metadata into a cache record.
     pub fn to_cache_record(
         &self,
         verified_at: u64,
@@ -86,18 +78,42 @@ impl VerifiedDmInbox {
     }
 }
 
-/// Immutable send intent. Callers must create connections only for `relay_urls`;
-/// there is deliberately no default/bootstrap relay fallback.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DmPublishPlan {
-    pub event: SignedEvent,
-    pub recipient_public_key: String,
-    pub relay_urls: Vec<String>,
-    pub required_acknowledgements: usize,
-    pub inbox_event_id: String,
+    event: SignedEvent,
+    recipient_public_key: String,
+    relay_urls: Vec<String>,
+    required_acknowledgements: usize,
+    inbox_event_id: String,
 }
 
-/// Authenticate and constrain one recipient's replaceable kind 10050 event.
+impl DmPublishPlan {
+    #[must_use]
+    pub fn event(&self) -> &SignedEvent {
+        &self.event
+    }
+
+    #[must_use]
+    pub fn recipient_public_key(&self) -> &str {
+        &self.recipient_public_key
+    }
+
+    #[must_use]
+    pub fn relay_urls(&self) -> &[String] {
+        &self.relay_urls
+    }
+
+    #[must_use]
+    pub fn required_acknowledgements(&self) -> usize {
+        self.required_acknowledgements
+    }
+
+    #[must_use]
+    pub fn inbox_event_id(&self) -> &str {
+        &self.inbox_event_id
+    }
+}
+
 pub fn verify_dm_inbox(
     event: &SignedEvent,
     expected_recipient_public_key: &[u8; 32],
@@ -155,7 +171,6 @@ fn secure_or_loopback(endpoint: &str) -> bool {
                 .is_some_and(|address| address.is_loopback()))
 }
 
-/// Bind one persistent NIP-59 gift wrap to its verified recipient inbox.
 pub fn plan_dm_publish(
     gift_wrap: SignedEvent,
     inbox: &VerifiedDmInbox,

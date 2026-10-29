@@ -1,7 +1,6 @@
 #!/bin/sh
 set -eu
 
-# The complete installed executable set must remain at or below 10 MiB.
 maximum_total_bytes=$((10 * 1024 * 1024))
 target_directory=${CARGO_TARGET_DIR:-target}
 release_directory=$target_directory/release

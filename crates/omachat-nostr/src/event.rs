@@ -1,5 +1,3 @@
-//! Canonical NIP-01 event identifiers and BIP-340 signatures.
-
 use k256::schnorr::{Signature, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -13,7 +11,6 @@ pub fn xonly_public_key(secret_key: &[u8; 32]) -> Result<[u8; 32], EventError> {
     Ok(signing_key.verifying_key().to_bytes().into())
 }
 
-/// Fields committed by a NIP-01 event identifier.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct UnsignedEvent {
     pub pubkey: String,
@@ -24,7 +21,6 @@ pub struct UnsignedEvent {
 }
 
 impl UnsignedEvent {
-    /// Construct an event and validate all fields covered by local limits.
     pub fn new(
         pubkey: String,
         created_at: u64,
@@ -57,13 +53,10 @@ impl UnsignedEvent {
         .map_err(EventError::Json)
     }
 
-    /// Compute the 32-byte NIP-01 event identifier.
     pub fn id(&self) -> Result<[u8; 32], EventError> {
         Ok(Sha256::digest(self.canonical_json()?).into())
     }
 
-    /// Sign this event identifier using BIP-340 and explicit auxiliary bytes.
-    ///
     /// Production callers must supply fresh CSPRNG output. Explicit input keeps
     /// conformance captures reproducible and avoids hidden ambient randomness.
     pub fn sign_with_aux(
@@ -146,7 +139,6 @@ pub struct SignedEvent {
 }
 
 impl SignedEvent {
-    /// Decode and authenticate one JSON event under explicit resource/time limits.
     pub fn from_json(bytes: &[u8], now: u64, limits: &EventLimits) -> Result<Self, EventError> {
         if bytes.len() > limits.max_serialized_bytes {
             return Err(EventError::SerializedTooLarge {
@@ -159,7 +151,6 @@ impl SignedEvent {
         Ok(event)
     }
 
-    /// Verify field limits, time policy, event ID, public key, and signature.
     pub fn verify(&self, now: u64, limits: &EventLimits) -> Result<(), EventError> {
         let serialized_bytes = serde_json::to_vec(self).map_err(EventError::Json)?.len();
         if serialized_bytes > limits.max_serialized_bytes {
@@ -194,7 +185,6 @@ impl SignedEvent {
             .map_err(|_| EventError::Signature)
     }
 
-    /// Return the fields committed by this event's identifier.
     #[must_use]
     pub fn unsigned(&self) -> UnsignedEvent {
         UnsignedEvent {
@@ -207,7 +197,6 @@ impl SignedEvent {
     }
 }
 
-/// Explicit local resource and timestamp policy for hostile relay input.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EventLimits {
     pub max_serialized_bytes: usize,
@@ -218,23 +207,26 @@ pub struct EventLimits {
     pub max_future_seconds: u64,
 }
 
+pub const DEFAULT_MAX_SERIALIZED_BYTES: usize = 256 * 1024;
+pub const DEFAULT_MAX_CONTENT_BYTES: usize = 64 * 1024;
+pub const DEFAULT_MAX_TAGS: usize = 64;
+pub const DEFAULT_MAX_TAG_FIELDS: usize = 16;
+pub const DEFAULT_MAX_TAG_FIELD_BYTES: usize = 1024;
+pub const DEFAULT_MAX_FUTURE_SECONDS: u64 = 15 * 60;
+
 impl Default for EventLimits {
     fn default() -> Self {
-        // Match the pinned Swift transport's hostile-input boundaries where
-        // it defines them; keep the 15-minute window aligned with its outer
-        // timestamp privacy range.
         Self {
-            max_serialized_bytes: 256 * 1024,
-            max_content_bytes: 64 * 1024,
-            max_tags: 64,
-            max_tag_fields: 16,
-            max_tag_field_bytes: 1024,
-            max_future_seconds: 15 * 60,
+            max_serialized_bytes: DEFAULT_MAX_SERIALIZED_BYTES,
+            max_content_bytes: DEFAULT_MAX_CONTENT_BYTES,
+            max_tags: DEFAULT_MAX_TAGS,
+            max_tag_fields: DEFAULT_MAX_TAG_FIELDS,
+            max_tag_field_bytes: DEFAULT_MAX_TAG_FIELD_BYTES,
+            max_future_seconds: DEFAULT_MAX_FUTURE_SECONDS,
         }
     }
 }
 
-/// Fail-closed event decoding and authentication errors.
 #[derive(Debug)]
 pub enum EventError {
     Json(serde_json::Error),

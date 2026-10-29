@@ -1,8 +1,3 @@
-//! Optional secp256k1 Nostr identity (NIP-19 `nsec`/`npub`, BIP-340 Schnorr).
-//!
-//! The secret is zeroized on drop and has no `Debug` output. Callers print it
-//! only from an explicit export.
-
 use bech32::{Bech32, Hrp, primitives::decode::CheckedHrpstring};
 use k256::schnorr::{Signature, SigningKey, VerifyingKey};
 use std::{error::Error, fmt};
@@ -49,13 +44,11 @@ impl NostrSecret {
         npub_from_public_key(&self.public_key()).expect("32-byte key encodes")
     }
 
-    /// NIP-19 `nsec`. This is the only string form of the secret.
     #[must_use]
     pub fn nsec(&self) -> String {
         encode_key("nsec", &self.secret).expect("32-byte secret encodes")
     }
 
-    /// Raw scalar. For sealed storage only; do not log or display it.
     #[must_use]
     pub fn raw_secret(&self) -> &[u8; KEY_BYTES] {
         &self.secret

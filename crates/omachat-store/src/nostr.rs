@@ -6,7 +6,6 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const NOSTR_RECORD: &str = "nostr-identity-v1";
 
-/// Sealed persistence for the optional Nostr secret. Absence is not an error.
 pub struct NostrVault;
 
 impl NostrVault {
@@ -24,7 +23,6 @@ impl NostrVault {
         }
     }
 
-    /// Writes a new secret. Refuses to replace one that is already sealed.
     pub fn save_new(store: &SealedStore, secret: &NostrSecret) -> Result<(), NostrStoreError> {
         if store.read(NOSTR_RECORD).is_ok() {
             return Err(NostrStoreError::AlreadyPresent);
@@ -44,9 +42,6 @@ impl NostrVault {
 }
 
 fn secret_bytes(secret: &NostrSecret) -> &[u8; 32] {
-    // The public API does not expose the raw scalar. Reconstructing from nsec
-    // would re-parse a string. Keep the bytes available only inside this crate
-    // via a dedicated accessor.
     secret.raw_secret()
 }
 

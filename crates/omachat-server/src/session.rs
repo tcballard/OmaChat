@@ -1,6 +1,3 @@
-//! One WebSocket connection: handshake, authentication, request loop and
-//! event delivery.
-
 use crate::{
     auth::{
         KEY_BYTES, ServerIdentity, decode_key, decode_signature, random_challenge,
@@ -35,15 +32,10 @@ use tokio_tungstenite::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionLimits {
-    /// WebSocket handshake deadline.
     pub admission_timeout: Duration,
-    /// Deadline for hello and authenticate after the handshake.
     pub unauthenticated_timeout: Duration,
-    /// Close a connection that sent nothing for this long.
     pub idle_timeout: Duration,
-    /// Sustained request rate per connection.
     pub requests_per_second: u32,
-    /// Burst allowance per connection.
     pub request_burst: u32,
 }
 
@@ -132,8 +124,8 @@ where
     )
     .await
     {
-        Ok(Ok(Some(authenticated))) => authenticated,
-        Ok(Ok(None)) => {
+        Ok(Ok(Handshake::Authenticated(authenticated))) => authenticated,
+        Ok(Ok(Handshake::Close)) => {
             let _ = socket.close(None).await;
             return Ok(());
         }
@@ -228,7 +220,17 @@ where
                 match message.map_err(SessionError::WebSocket)? {
                     Message::Text(text) => {
                         report.requests += 1;
-                        if !handle_request(socket, context, authenticated, &mut bucket, text.as_str()).await? {
+                        if matches!(
+                            handle_request(
+                                socket,
+                                context,
+                                authenticated,
+                                &mut bucket,
+                                text.as_str(),
+                            )
+                            .await?,
+                            RequestLoop::Close
+                        ) {
                             report.reason = CloseReason::ProtocolViolation;
                             return Ok(());
                         }
@@ -261,14 +263,23 @@ where
     }
 }
 
-/// Returns `Ok(false)` when the connection must close after the reply.
+enum RequestLoop {
+    Continue,
+    Close,
+}
+
+enum Handshake {
+    Authenticated(Authenticated),
+    Close,
+}
+
 async fn handle_request<S>(
     socket: &mut WebSocketStream<S>,
     context: &SessionContext,
     authenticated: &Authenticated,
     bucket: &mut TokenBucket,
     text: &str,
-) -> Result<bool, SessionError>
+) -> Result<RequestLoop, SessionError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -276,7 +287,7 @@ where
         Ok(request) => request,
         Err(error) => {
             send_text(socket, failure_frame("", &error)).await?;
-            return Ok(false);
+            return Ok(RequestLoop::Close);
         }
     };
     if request.version != PROTOCOL_VERSION {
@@ -291,7 +302,7 @@ where
             ),
         )
         .await?;
-        return Ok(true);
+        return Ok(RequestLoop::Continue);
     }
     if !bucket.take() {
         send_text(
@@ -302,7 +313,7 @@ where
             ),
         )
         .await?;
-        return Ok(true);
+        return Ok(RequestLoop::Continue);
     }
     let result = context
         .service
@@ -331,21 +342,19 @@ where
         Err(error) => failure_frame(&request.id, &error),
     };
     send_text(socket, frame).await?;
-    Ok(true)
+    Ok(RequestLoop::Continue)
 }
 
-/// Drive hello and authenticate. `Ok(None)` means the client was answered
-/// with an error and the connection should close.
 async fn authenticate<S>(
     socket: &mut WebSocketStream<S>,
     context: &SessionContext,
     report: &mut SessionReport,
-) -> Result<Option<Authenticated>, SessionError>
+) -> Result<Handshake, SessionError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let Some((hello_id, hello)) = next_request(socket, report).await? else {
-        return Ok(None);
+        return Ok(Handshake::Close);
     };
     let device_public_key = match hello {
         Command::Hello {
@@ -366,7 +375,7 @@ where
                 )
                 .await?;
                 report.reason = CloseReason::ProtocolViolation;
-                return Ok(None);
+                return Ok(Handshake::Close);
             }
             match decode_key(&device_public_key) {
                 Ok(key) => key,
@@ -383,7 +392,7 @@ where
                     )
                     .await?;
                     report.reason = CloseReason::ProtocolViolation;
-                    return Ok(None);
+                    return Ok(Handshake::Close);
                 }
             }
         }
@@ -400,7 +409,7 @@ where
             )
             .await?;
             report.reason = CloseReason::ProtocolViolation;
-            return Ok(None);
+            return Ok(Handshake::Close);
         }
     };
     let challenge = random_challenge().map_err(|_| SessionError::Randomness)?;
@@ -420,7 +429,7 @@ where
     .await?;
 
     let Some((auth_id, authenticate)) = next_request(socket, report).await? else {
-        return Ok(None);
+        return Ok(Handshake::Close);
     };
     let Command::Authenticate {
         signature,
@@ -439,7 +448,7 @@ where
         )
         .await?;
         report.reason = CloseReason::ProtocolViolation;
-        return Ok(None);
+        return Ok(Handshake::Close);
     };
     let verified = decode_signature(&signature).ok().and_then(|signature| {
         verify_device_signature(
@@ -463,7 +472,7 @@ where
         )
         .await?;
         report.reason = CloseReason::AuthenticationFailed;
-        return Ok(None);
+        return Ok(Handshake::Close);
     }
     match context
         .service
@@ -481,7 +490,7 @@ where
                 .ok_or(SessionError::MalformedRegistration)?
                 .to_owned();
             send_text(socket, success_frame(&auth_id, result)).await?;
-            Ok(Some(Authenticated {
+            Ok(Handshake::Authenticated(Authenticated {
                 account_id,
                 device_public_key,
             }))
@@ -489,7 +498,7 @@ where
         Err(error) => {
             send_text(socket, failure_frame(&auth_id, &error)).await?;
             report.reason = CloseReason::AuthenticationFailed;
-            Ok(None)
+            Ok(Handshake::Close)
         }
     }
 }

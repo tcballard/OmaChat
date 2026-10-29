@@ -1,5 +1,3 @@
-//! NIP-05 handle resolution (`name@domain` → secp256k1 public key).
-//!
 //! The URL is derived only from the handle. Callers cannot supply an arbitrary
 //! address. Plain HTTP is accepted only for a numeric-loopback base used by
 //! tests; public handles are always `https://<domain>/.well-known/nostr.json`.

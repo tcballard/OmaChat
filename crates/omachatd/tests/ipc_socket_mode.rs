@@ -1,8 +1,3 @@
-//! Finding #7: the socket must never be reachable at its final path in a
-//! world-accessible state. A permissive process umask simulates a manual
-//! (non-systemd) launch without the packaged unit's UMask=0077, which is
-//! exactly the case the old chmod-after-bind sequence left exposed.
-
 use omachat_proto::ipc::{
     Command, Request, Response, ResponseOutcome, VERSION, encode_line, negotiate,
 };
@@ -68,8 +63,6 @@ async fn socket_is_published_private_even_under_a_permissive_umask() {
         !temporary.path().join(".omachat.sock.staging").exists(),
         "staging directory must not be left behind"
     );
-    // The published path must still be the live listening socket: rename
-    // keeps the inode, so clients connect through it normally.
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let task = tokio::spawn(server.run(shutdown_receiver));
     let stream = UnixStream::connect(&socket).await.expect("connect");

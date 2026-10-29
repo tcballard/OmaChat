@@ -1,8 +1,3 @@
-//! Terminal model for Nostr direct messages, contacts, relays, and handle binding.
-//!
-//! The widget uses only the sixteen ANSI colors. Peer text is stripped of
-//! control characters before it is drawn.
-
 use omachat_proto::ipc::{Command, Event, Topic};
 use ratatui::{
     buffer::Buffer,
