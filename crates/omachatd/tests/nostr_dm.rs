@@ -2,8 +2,12 @@
 //! NIP-05 name resolves to a contact.
 
 use futures_util::{SinkExt, StreamExt};
+use omachat_crypto::NostrSecret;
 use omachat_proto::ipc::{Command, Request, ResponseOutcome, VERSION};
-use omachatd::{DaemonConfig, DaemonCore, EventHub, RequestHandler, StorageProviderConfig};
+use omachat_server::{HostLimits, ServerIdentity, ServiceConfig, Storage, run_host, spawn_service};
+use omachatd::{
+    DaemonConfig, DaemonCore, EventHub, HostedConfig, RequestHandler, StorageProviderConfig,
+};
 use serde_json::{Value, json};
 use std::{
     net::SocketAddr,
@@ -16,6 +20,7 @@ use tokio::{
     time::{sleep, timeout},
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use zeroize::Zeroizing;
 
 #[tokio::test]
 async fn gift_wrap_round_trip_and_nip05_contact() {
@@ -91,6 +96,144 @@ async fn gift_wrap_round_trip_and_nip05_contact() {
     let sent = command(&alice, Command::Messages).await;
     assert_eq!(sent["messages"][0]["delivery"], "stored");
     assert_eq!(sent["messages"][0]["outgoing"], true);
+}
+
+#[tokio::test]
+async fn claimed_handles_resolve_and_exchange_dms_through_the_real_server() {
+    let directory = tempdir().unwrap();
+    let storage =
+        Storage::open(&directory.path().join("server.db"), Zeroizing::new([42; 32])).unwrap();
+    let identity = Arc::new(ServerIdentity::from_seed(&[7; 32]));
+    let pin = identity.public_key();
+    let service = spawn_service(
+        storage,
+        ServiceConfig {
+            server_public_key: pin,
+            nip05_relays: Vec::new(),
+        },
+    )
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        run_host(listener, service, identity, HostLimits::default(), async {
+            let _ = stopped.await;
+        })
+        .await
+        .unwrap()
+    });
+    let relay = TestRelay::start().await;
+    let mut clients = Vec::new();
+    let mut transports = Vec::new();
+    let mut keys = Vec::new();
+    for name in ["alice", "bob"] {
+        let core = DaemonCore::open(
+            directory.path().join(name),
+            DaemonConfig {
+                storage_provider: StorageProviderConfig::File,
+                dm_relays: vec![format!("ws://{}", relay.address)],
+                hosted: Some(HostedConfig {
+                    url: format!("ws://{address}"),
+                    pinned_server_public_key: hex::encode(pin),
+                    display_name: Some(name.into()),
+                }),
+            },
+            EventHub::default(),
+        )
+        .await
+        .unwrap();
+        let transport = core.start_hosted().unwrap().unwrap();
+        transport
+            .handle()
+            .wait_connected(tokio::time::Instant::now() + Duration::from_secs(10))
+            .await
+            .unwrap();
+        let identity = if name == "bob" {
+            let imported = NostrSecret::generate().unwrap();
+            let result = command(
+                &core,
+                Command::IdentityImport {
+                    nsec: imported.nsec(),
+                },
+            )
+            .await;
+            assert_eq!(result["npub"], imported.npub());
+            result
+        } else {
+            command(&core, Command::ChatPrepare).await
+        };
+        command(
+            &core,
+            Command::HostedClaimHandle {
+                handle: name.into(),
+            },
+        )
+        .await;
+        command(&core, Command::HostedBindNostr).await;
+        core.set_loopback_nip05_for_tests(format!("http://{address}"))
+            .await
+            .unwrap();
+        keys.push(identity);
+        transports.push(transport);
+        clients.push(core);
+    }
+    for (sender, receiver, name, text) in [
+        (0, 1, "bob", "hello by handle"),
+        (1, 0, "alice", "reply by handle"),
+    ] {
+        let handle = format!("{name}@omachat.test");
+        let contact = command(
+            &clients[sender],
+            Command::ContactsAdd {
+                peer: handle.clone(),
+            },
+        )
+        .await;
+        assert_eq!(contact["contact"]["pubkey"], keys[receiver]["pubkey"]);
+        assert_eq!(contact["contact"]["nip05"], handle);
+        command(
+            &clients[sender],
+            Command::Send {
+                peer: handle,
+                text: text.into(),
+            },
+        )
+        .await;
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let rows = command(&clients[receiver], Command::Messages).await;
+                if rows["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["text"] == text && row["outgoing"] == false)
+                {
+                    break;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("recipient decrypts the message addressed by the published handle");
+    }
+    command(&clients[0], Command::HostedUnbindNostr).await;
+    let response = clients[1]
+        .handle(Request {
+            version: VERSION,
+            id: "unbound".into(),
+            command: Command::ContactsAdd {
+                peer: "alice@omachat.test".into(),
+            },
+        })
+        .await;
+    assert!(matches!(response, ResponseOutcome::Error { .. }));
+    for transport in transports {
+        transport.shutdown().await;
+    }
+    drop(clients);
+    let _ = stop.send(());
+    server.await.unwrap();
 }
 
 async fn open(path: &std::path::Path, relay: &str) -> DaemonCore {

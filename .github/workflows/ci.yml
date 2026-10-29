@@ -43,6 +43,18 @@ jobs:
       - name: Build binaries
         run: cargo build --workspace --bins --locked
 
+      - name: Set up Node for independent Nostr interoperability
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+
+      - name: Install pinned interoperability test dependencies
+        run: npm install --prefix scripts/e2e --ignore-scripts --no-audit --no-fund --package-lock=false
+
+      - name: End-to-end clients and independent Nostr interoperability
+        timeout-minutes: 5
+        run: node scripts/e2e/run.mjs
+
       - name: Verify server first-install secret permissions
         run: sudo bash scripts/test-hosted-setup.sh target/debug/omachat-serverd
 

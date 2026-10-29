@@ -213,7 +213,7 @@ impl UiModel {
             return;
         };
         let text = clean(payload["text"].as_str().unwrap_or(""));
-        let index = self.ensure_contact(conversation, conversation.trim_start_matches("dm:"));
+        let index = self.ensure_contact(conversation, conversation);
         let contact = &mut self.contacts[index];
         if let Some(existing) = contact.messages.iter_mut().find(|message| message.id == id) {
             if let Some(delivery) = payload["delivery"].as_str() {
@@ -400,5 +400,9 @@ mod tests {
         assert_eq!(model.contacts[0].title, "ada");
         assert_eq!(model.contacts[0].messages[0].text, "hi");
         assert_eq!(model.relays, vec!["wss://relay.example".to_owned()]);
+        model.apply_message(&serde_json::json!({
+            "id": "2", "conversation": "dm:aa", "text": "another message"
+        }));
+        assert_eq!(model.contacts[0].title, "ada");
     }
 }
