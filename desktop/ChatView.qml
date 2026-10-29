@@ -6,7 +6,6 @@ Rectangle {
     id: root
     required property var service
     color: "#17191e"
-    property string draft: ""
     property string peer: ""
     property string handle: ""
     property string relayText: service.relays.join("\n")
@@ -64,7 +63,7 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Label { text: service.notice || service.actionError; color: service.actionError ? "#f2b8b5" : "#9aa0a6"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            Label { text: service.actionError || service.notice; color: service.actionError ? "#f2b8b5" : "#9aa0a6"; wrapMode: Text.Wrap; Layout.fillWidth: true }
             ListView {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -75,7 +74,7 @@ Rectangle {
                     width: ListView.view.width
                     wrapMode: Text.Wrap
                     color: "#f3f4f6"
-                    text: (modelData.outgoing ? "you: " : (modelData.sender || "peer") + ": ") + modelData.text
+                    text: (modelData.outgoing ? "you: " : (modelData.sender || "peer") + ": ") + modelData.text + (modelData.outgoing ? " · accepted by relay" : "")
                 }
             }
             RowLayout {
@@ -85,9 +84,15 @@ Rectangle {
                     Layout.fillWidth: true
                     placeholderText: "Message"
                     color: "#f3f4f6"
-                    onAccepted: { service.send(text); text = "" }
+                    text: service.draft
+                    onTextEdited: service.setDraft(text)
+                    onAccepted: service.send(text)
                 }
-                Button { text: "Send"; onClicked: { service.send(composer.text); composer.text = "" } }
+                Button {
+                    text: service.sending ? "Sending…" : "Send"
+                    enabled: service.ready && !!service.selectedKey && !!service.draft.trim() && !service.sending
+                    onClicked: service.send(service.draft)
+                }
             }
         }
     }

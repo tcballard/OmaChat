@@ -5,3 +5,7 @@ __pycache__/
 /fuzz/artifacts/
 /fuzz/corpus/
 /fuzz/Cargo.lock
+
+/scripts/e2e/node_modules/
+/scripts/e2e/package-lock.json
+__pycache__/

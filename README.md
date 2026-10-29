@@ -67,8 +67,12 @@ binding. The desktop has the same actions, including a Copy button for the
 Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`,
 and `cargo test --workspace --locked` after building.
 Deployment, security review, account recovery and multi-device support remain outstanding.
-An Omacon community relay and BLE mesh are later phases and are not in this
-tree. See [ADR 0011](docs/adr/0011-nostr-messaging.md).
+A community Omacon relay is optional future infrastructure. BLE mesh remains
+the lowest-priority future work; neither is in this tree. See [ADR 0011](docs/adr/0011-nostr-messaging.md).
+
+The [Nostr acceptance gate](docs/nostr-e2e.md) exercises the full local flow and
+independent cryptographic interoperability. Public handles use the
+[domain deployment procedure](ops/server/README.md#publish-nip-05-on-your-domain).
 
 All implementation changes use pull requests. Pull requests are not merged without explicit owner approval.
 

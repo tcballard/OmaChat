@@ -160,7 +160,7 @@ async fn attached(
                             }
                             KeyCode::Backspace => { model.input.pop(); }
                             KeyCode::Enter => {
-                                let line = std::mem::take(&mut model.input);
+                                let line = model.input.clone();
                                 if !handle_line(&mut client, model, &line).await { return; }
                             }
                             _ => {}
@@ -198,14 +198,19 @@ async fn connect(
 }
 
 async fn handle_line(client: &mut Option<Client>, model: &mut UiModel, line: &str) -> bool {
+    let mut accepted = false;
     match parse_input(line, model.selected_peer()) {
         Ok(Some(Action::Quit)) => return false,
-        Ok(Some(Action::Help)) => model.status = HELP.into(),
+        Ok(Some(Action::Help)) => {
+            model.status = HELP.into();
+            accepted = true;
+        }
         Ok(Some(Action::Select(peer))) => {
             if let Some(index) = model.contacts.iter().position(|contact| {
                 contact.peer == peer || contact.title == peer || contact.peer.ends_with(&peer)
             }) {
                 model.selected = index;
+                accepted = true;
                 model.status = format!("selected {}", model.contacts[index].title);
             } else {
                 model.status = "no matching contact".into();
@@ -224,6 +229,7 @@ async fn handle_line(client: &mut Option<Client>, model: &mut UiModel, line: &st
             match outcome {
                 Ok(response) => match response.outcome {
                     ResponseOutcome::Ok { result } => {
+                        accepted = true;
                         if let Some(npub) = result["npub"].as_str() {
                             model.npub = npub.to_owned();
                         }
@@ -247,6 +253,9 @@ async fn handle_line(client: &mut Option<Client>, model: &mut UiModel, line: &st
         Ok(None) => {}
         Err(error) => model.status = error,
     }
+    if accepted && model.input == line {
+        model.input.clear();
+    }
     true
 }
 
@@ -255,7 +264,7 @@ fn summarize(result: &serde_json::Value) -> String {
         return format!("npub {npub}");
     }
     if let Some(text) = result["message"]["text"].as_str() {
-        return format!("sent: {text}");
+        return format!("accepted by relay: {text}");
     }
     if result["contacts"].is_array() {
         return format!(
@@ -378,5 +387,29 @@ fn restore_terminal() {
     if TERMINAL_ACTIVE.swap(false, Ordering::SeqCst) {
         let _ = execute!(io::stdout(), Show, LeaveAlternateScreen);
         let _ = disable_raw_mode();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejected_or_disconnected_input_keeps_the_draft() {
+        let mut model = UiModel::default();
+        let mut client = None;
+        model.input = "keep this message".into();
+        model.apply_snapshot(&serde_json::json!({
+            "contacts": [{"pubkey": "aa", "display": "Alice"}],
+            "messages": []
+        }));
+        assert!(handle_line(&mut client, &mut model, "keep this message").await);
+        assert_eq!(model.input, "keep this message");
+        model.input = "/unknown".into();
+        assert!(handle_line(&mut client, &mut model, "/unknown").await);
+        assert_eq!(model.input, "/unknown");
+        model.input = "/help".into();
+        assert!(handle_line(&mut client, &mut model, "/help").await);
+        assert!(model.input.is_empty());
     }
 }
