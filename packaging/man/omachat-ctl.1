@@ -8,7 +8,9 @@ omachat-ctl \- control the local identity daemon
 status [--json], fingerprint [--qr],
 identity show, identity generate, identity import NSEC, identity export,
 identity bind, identity unbind,
-hosted-claim-handle HANDLE, hosted-resolve-handle HANDLE.
+hosted-claim-handle HANDLE, hosted-resolve-handle HANDLE,
+chat-prepare, contacts-add PEER, contacts-list, contacts-remove NPUB,
+relays-show, relays-set URL..., send PEER TEXT, messages.
 Handle commands and identity show/generate/bind accept --json.
 identity export prints the nsec. Nothing else prints that secret.
 .SH PANIC

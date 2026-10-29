@@ -1,6 +1,6 @@
 #compdef omachat-ctl
 _arguments '--socket[daemon socket]:path:_files' \
-  '1:command:(status fingerprint identity hosted-claim-handle hosted-resolve-handle panic)' \
+  '1:command:(status fingerprint identity hosted-claim-handle hosted-resolve-handle chat-prepare contacts-add contacts-list contacts-remove relays-show relays-set send messages panic)' \
   '*::argument:->args'
 case $words[2] in
   status|hosted-conversations|hosted-open-dm|hosted-resolve-handle) _arguments '--json[emit compact JSON]' ;;

@@ -1,0 +1,26 @@
+.TH OMACHAT 1 "2026-10-28" "OmaChat"
+.SH NAME
+omachat \- terminal client for Nostr direct messages
+.SH SYNOPSIS
+.B omachat
+[--socket PATH]
+.SH DESCRIPTION
+Connects to the local
+.B omachatd
+socket and opens a conversation window.
+The first connection calls chat-prepare, which seals a nostr-identity-v1 key
+when none is stored.
+The npub is shown in the sidebar.
+This program never prints an nsec.
+.SH COMMANDS
+/help, /npub, /prepare,
+/contact add PEER, /contact remove NPUB, /contacts, /open PEER,
+/relays, /relays set URL...,
+/handle claim NAME, /handle bind, /handle unbind,
+/panic ERASE, /quit.
+PEER is an npub, a 64-character public key, or name@domain.
+A line that is not a slash command sends to the selected contact.
+.SH FILES
+Default socket: $XDG_RUNTIME_DIR/omachat/omachat.sock.
+.SH SEE ALSO
+omachatd(8), omachat-ctl(1), omachat-protocol(7)

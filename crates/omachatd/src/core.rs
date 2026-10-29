@@ -1,3 +1,4 @@
+use crate::nostr_chat::NostrChat;
 use crate::{
     CoreError, DaemonConfig,
     hosted_service::{
@@ -141,8 +142,9 @@ struct CoreInner {
     hosted_account: Mutex<Option<HostedAccount>>,
     config: Mutex<DaemonConfig>,
     events: EventHub,
-    sequence: AtomicU64,
+    sequence: Arc<AtomicU64>,
     confirmations: crate::confirmation::DestructiveConfirmations,
+    chat: NostrChat,
 }
 
 #[derive(Clone)]
@@ -176,6 +178,13 @@ impl DaemonCore {
                 .map_err(CoreError::Store)?,
         );
         let identity = IdentityVault::load_or_create(&store).map_err(CoreError::IdentityStore)?;
+        let sequence = Arc::new(AtomicU64::new(1));
+        let chat = NostrChat::spawn(
+            Arc::clone(&store),
+            events.clone(),
+            Arc::clone(&sequence),
+            config.dm_relays.clone(),
+        );
         Ok(Self {
             inner: Arc::new(CoreInner {
                 store,
@@ -187,10 +196,11 @@ impl DaemonCore {
                 hosted_account: Mutex::new(None),
                 config: Mutex::new(config),
                 events,
-                sequence: AtomicU64::new(1),
+                sequence,
                 confirmations: crate::confirmation::DestructiveConfirmations::new(
                     state_directory.as_ref(),
                 ),
+                chat,
             }),
         })
     }
@@ -221,6 +231,15 @@ impl DaemonCore {
     /// Fence process shutdown against panic erasure. If panic has already
     /// started, this waits for cleanup; otherwise it prevents a late panic
     /// request from starting while the runtime is being dismantled.
+    /// Test-only NIP-05 transport. `base` must be numeric-loopback `http://`.
+    pub async fn set_loopback_nip05_for_tests(&self, base: String) -> Result<(), CoreError> {
+        self.inner
+            .chat
+            .set_loopback_nip05(Some(base))
+            .await
+            .map_err(CoreError::Chat)
+    }
+
     pub async fn prepare_for_shutdown(&self) {
         if self.inner.panic.begin_process_shutdown() {
             self.inner.panic.wait_for_terminal().await;
@@ -291,8 +310,49 @@ impl DaemonCore {
             }
             Command::IdentityShow => self.identity_show(),
             Command::IdentityExport => self.identity_export(),
-            Command::IdentityGenerate => self.identity_generate(),
-            Command::IdentityImport { nsec } => self.identity_import(&nsec),
+            Command::IdentityGenerate => {
+                let value = self.identity_generate()?;
+                self.inner.chat.reload().await.map_err(CoreError::Chat)?;
+                Ok(value)
+            }
+            Command::IdentityImport { nsec } => {
+                let value = self.identity_import(&nsec)?;
+                self.inner.chat.reload().await.map_err(CoreError::Chat)?;
+                Ok(value)
+            }
+            Command::ChatPrepare => self.inner.chat.prepare().await.map_err(CoreError::Chat),
+            Command::ContactsAdd { peer } => self
+                .inner
+                .chat
+                .add_contact(&peer)
+                .await
+                .map_err(CoreError::Chat),
+            Command::ContactsRemove { npub } => self
+                .inner
+                .chat
+                .remove_contact(&npub)
+                .await
+                .map_err(CoreError::Chat),
+            Command::ContactsList => self
+                .inner
+                .chat
+                .list_contacts()
+                .await
+                .map_err(CoreError::Chat),
+            Command::RelaysShow => self.inner.chat.show_relays().await.map_err(CoreError::Chat),
+            Command::RelaysSet { relays } => self
+                .inner
+                .chat
+                .set_relays(relays)
+                .await
+                .map_err(CoreError::Chat),
+            Command::Send { peer, text } => self
+                .inner
+                .chat
+                .send(&peer, &text)
+                .await
+                .map_err(CoreError::Chat),
+            Command::Messages => self.inner.chat.messages().await.map_err(CoreError::Chat),
             Command::HostedBindNostr => self.hosted_bind_nostr().await,
             Command::HostedUnbindNostr => self.hosted_unbind_nostr().await,
             Command::HostedClaimHandle { handle } => self.hosted_claim_handle(&handle).await,
@@ -301,7 +361,10 @@ impl DaemonCore {
                     .await
             }
             Command::Subscribe { topics } => {
-                Ok(serde_json::json!({"topics": topics, "status": self.status_value()?}))
+                let mut snapshot = self.inner.chat.snapshot().await.map_err(CoreError::Chat)?;
+                snapshot["topics"] = serde_json::json!(topics);
+                snapshot["status"] = self.status_value()?;
+                Ok(snapshot)
             }
             Command::Panic { .. } | Command::Hello { .. } => Err(CoreError::InvalidCommand),
         }
@@ -314,8 +377,16 @@ impl DaemonCore {
             .as_ref()
             .expect("checked identity")
             .public_identity();
+        let nostr = match NostrVault::load(&self.inner.store).map_err(CoreError::NostrStore)? {
+            Some(secret) => serde_json::json!({
+                "present": true,
+                "npub": secret.npub(),
+                "pubkey": hex::encode(secret.public_key()),
+            }),
+            None => serde_json::json!({"present": false}),
+        };
         Ok(
-            serde_json::json!({"storage_provider": self.inner.store.status().provider, "fingerprint": public.fingerprint_hex, "device_public_key": hex::encode(public.signing_public_key), "hosted": self.hosted_status()}),
+            serde_json::json!({"storage_provider": self.inner.store.status().provider, "fingerprint": public.fingerprint_hex, "device_public_key": hex::encode(public.signing_public_key), "hosted": self.hosted_status(), "nostr": nostr, "dm_relays": self.inner.chat.relays()}),
         )
     }
     fn fingerprint_value(&self) -> Result<serde_json::Value, CoreError> {
@@ -391,6 +462,7 @@ impl DaemonCore {
     }
 
     async fn perform_panic_cleanup(&self) -> Result<serde_json::Value, CoreError> {
+        self.inner.chat.shutdown().await;
         let hosted = self
             .inner
             .hosted

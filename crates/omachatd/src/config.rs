@@ -71,6 +71,11 @@ impl HostedConfig {
 pub struct DaemonConfig {
     pub storage_provider: StorageProviderConfig,
     pub hosted: Option<HostedConfig>,
+    /// Nostr relay URLs used to send and receive gift-wrapped DMs.
+    /// `wss://` in production; numeric-loopback `ws://` is for tests.
+    /// At most four. A sealed relay list saved from the UI replaces this
+    /// initial list on later starts.
+    pub dm_relays: Vec<String>,
 }
 impl DaemonConfig {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, CoreError> {
@@ -82,6 +87,17 @@ impl DaemonConfig {
     pub(crate) fn validate(&self) -> Result<(), CoreError> {
         if let Some(hosted) = &self.hosted {
             hosted.validate()?;
+        }
+        if self.dm_relays.len() > 4 {
+            return Err(CoreError::InvalidConfig);
+        }
+        let mut seen = Vec::new();
+        for relay in &self.dm_relays {
+            let canonical = canonical_publication_url(relay)?;
+            if seen.iter().any(|existing| existing == &canonical) {
+                return Err(CoreError::InvalidConfig);
+            }
+            seen.push(canonical);
         }
         Ok(())
     }
@@ -160,7 +176,6 @@ mod retirement_tests {
     fn retired_settings_fail_closed() {
         for field in [
             "relays",
-            "dm_relays",
             "rooms",
             "geo_relays",
             "registry",

@@ -1,5 +1,5 @@
 complete -c omachat-ctl -l socket -r -d 'Daemon socket path'
-complete -c omachat-ctl -n '__fish_use_subcommand' -a 'status fingerprint identity hosted-claim-handle hosted-resolve-handle panic'
+complete -c omachat-ctl -n '__fish_use_subcommand' -a 'status fingerprint identity hosted-claim-handle hosted-resolve-handle chat-prepare contacts-add contacts-list contacts-remove relays-show relays-set send messages panic'
 complete -c omachat-ctl -n '__fish_seen_subcommand_from identity' -a 'show generate import export bind unbind'
 complete -c omachat-ctl -n '__fish_seen_subcommand_from status' -l json -d 'Emit compact JSON'
 complete -c omachat-ctl -n '__fish_seen_subcommand_from fingerprint' -l qr -d 'Render ANSI QR code'

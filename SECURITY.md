@@ -26,8 +26,21 @@ in-process keys and removes local key material. Cleanup failure is terminal.
 Erasure cannot retract server account records, logs, snapshots or backups, and
 is not a physical-overwrite guarantee on SSD or copy-on-write storage.
 
+Direct messages are NIP-17 gift wraps (NIP-44, NIP-59) published to the relays
+you configure. A relay can drop them, store them, or see metadata such as
+timing and size. Gift-wrap acceptance is not proof the recipient decrypted or
+read the message. The Nostr secret is the sealed `nostr-identity-v1` key, not
+a value derived from the device Ed25519 key. Opening the terminal or desktop
+creates that key when it is missing. `identity export` is the only command
+that prints the `nsec`. The desktop does not offer export.
+
+NIP-05 resolution fetches only `https://<domain>/.well-known/nostr.json` for
+the name you typed. It does not follow redirects. The handle server still
+stores the binding you publish; it does not store message bodies.
+
 The hosted chat product and its threat model are archived on branch
 `hosted-archive` at `825cf07123`. Current direction is
-[ADR 0010](docs/adr/0010-nostr-identity.md). Nostr direct messages, a community
-relay and BLE mesh are not implemented here. Deployment and an independent
-security review remain outstanding.
+[ADR 0010](docs/adr/0010-nostr-identity.md) and
+[ADR 0011](docs/adr/0011-nostr-messaging.md). A community relay and BLE mesh
+are not implemented here. Deployment and an independent security review
+remain outstanding.
