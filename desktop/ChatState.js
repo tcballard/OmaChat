@@ -10,6 +10,8 @@ function create() {
         selected: "",
         hosted: {},
         serial: 0,
+        drafts: {},
+        pendingSends: {},
     };
 }
 
@@ -53,4 +55,38 @@ function currentMessages(state) {
 
 function select(state, pubkey) {
     state.selected = pubkey;
+}
+
+function draft(state) {
+    return state.drafts[state.selected] || "";
+}
+
+function setDraft(state, text) {
+    if (state.selected) state.drafts[state.selected] = text;
+}
+
+function sending(state) {
+    return Object.keys(state.pendingSends).some(function(id) {
+        return state.pendingSends[id].peer === state.selected;
+    });
+}
+
+function beginSend(state, id, text) {
+    state.pendingSends[id] = {peer: state.selected, text: text};
+}
+
+function finishSend(state, response) {
+    var pending = state.pendingSends[response.id];
+    if (!pending) return;
+    delete state.pendingSends[response.id];
+    if (response.ok && state.drafts[pending.peer] === pending.text) {
+        state.drafts[pending.peer] = "";
+    }
+}
+
+function disconnect(state) {
+    state.ready = false;
+    var hadPending = Object.keys(state.pendingSends).length > 0;
+    state.pendingSends = {};
+    return hadPending;
 }

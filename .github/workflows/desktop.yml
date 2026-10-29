@@ -22,5 +22,6 @@ jobs:
           python3 -m unittest discover -s desktop/tests -p 'test_*.py' -v
           node desktop/tests/test_contact.js
           node desktop/tests/test_state.js
+          python3 -m unittest discover -s scripts/tests -v
           sh -n desktop/omachat-desktop
           python3 -m py_compile desktop/bridge.py

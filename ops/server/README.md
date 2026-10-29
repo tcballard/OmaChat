@@ -53,3 +53,58 @@ server refuses a file that is group- or world-readable. Losing `storage.key`
 makes the database fail its key check. Rotating it is not supported.
 
 See `docs/hosted-server.md` for the protocol.
+
+## Publish NIP-05 on your domain
+
+A community relay is optional. This service only owns handle bindings; clients
+continue using existing Nostr relays. Choose the domain and host before applying
+these steps.
+
+1. Point the chosen domain's DNS at the server. Allow inbound TCP 80 and 443 for
+   Caddy. Keep port 7448 on loopback.
+2. Complete the first-start procedure above. Obtain the server public key from
+   that host's journal through your trusted administration connection.
+3. Replace `chat.example.invalid` in `ops/server/Caddyfile` with the chosen domain.
+   Install that site block in your Caddy configuration, validate it with
+   `caddy validate --config /etc/caddy/Caddyfile`, then reload Caddy. Preserve any
+   other sites already configured there. The NIP-05 path must serve JSON and CORS
+   directly, without an authentication page or redirect.
+4. Add this `hosted` block to each client's existing
+   `$XDG_CONFIG_HOME/omachat/config.json` (normally `~/.config/omachat/config.json`),
+   preserving its other settings, then restart `omachatd`:
+
+   ```json
+   {
+     "hosted": {
+       "url": "wss://chat.example.invalid",
+       "pinned_server_public_key": "REPLACE_WITH_SERVER_PUBLIC_KEY"
+     },
+     "dm_relays": ["wss://YOUR_EXISTING_SHARED_RELAY"]
+   }
+   ```
+
+5. On the client, prepare the identity and bind the handle:
+
+   ```sh
+   omachat-ctl chat-prepare
+   omachat-ctl hosted-claim-handle alice
+   omachat-ctl identity bind
+   omachat-ctl identity show
+   ```
+
+6. From a separate machine, verify the `pubkey` field printed by `identity show`:
+
+   ```sh
+   python3 scripts/verify-nip05.py alice@chat.example.invalid YOUR_64_CHARACTER_HEX_PUBKEY
+   ```
+
+The verifier requires valid HTTPS, a direct HTTP 200 JSON response, matching
+public key and `Access-Control-Allow-Origin: *`. It refuses redirects and never
+needs an nsec. A local pre-deployment check can explicitly pass
+`--test-base-url http://127.0.0.1:7448`; that does not verify public DNS or TLS.
+
+Finally, add `alice@your-chosen-domain` from another OmaChat installation and
+exchange DMs in both directions. Both users need a shared Nostr relay that
+accepts kind-1059 gift wraps. Relay acceptance is not a read receipt. Addressing
+an existing contact by its npub/public key works independently of the handle
+service.

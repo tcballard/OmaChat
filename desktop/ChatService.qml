@@ -16,16 +16,19 @@ Item {
     readonly property string selectedKey: { revision; return state.selected || "" }
     readonly property string notice: { revision; return state.notice }
     readonly property var hosted: { revision; return state.hosted || {} }
+    readonly property string draft: { revision; return State.draft(state) }
+    readonly property bool sending: { revision; return State.sending(state) }
     property string actionError: ""
     property string socketPath: Quickshell.env("OMACHAT_SOCKET") || ((Quickshell.env("XDG_RUNTIME_DIR") || "") + "/omachat/omachat.sock")
 
     function bump() { revision++ }
     function request(method, params) {
-        if (!state.ready) return
+        if (!state.ready) return ""
         var id = "ui-" + (++state.serial)
         var value = {id: id, method: method}
         if (params !== undefined) value.params = params
         helper.write(JSON.stringify(value) + "\n")
+        return id
     }
     function copyNpub() {
         if (!state.npub) return
@@ -48,9 +51,13 @@ Item {
         request("contacts-add", {peer: parsed.key})
     }
     function select(pubkey) { State.select(state, pubkey); bump() }
+    function setDraft(text) { State.setDraft(state, text); bump() }
     function send(text) {
-        if (!state.selected || !text.trim()) return
-        request("send", {peer: state.selected, text: text})
+        if (!state.ready || !state.selected || !text.trim() || State.sending(state)) return
+        var id = request("send", {peer: state.selected, text: text})
+        State.beginSend(state, id, text)
+        actionError = ""
+        bump()
     }
     function saveRelays(text) {
         var relays = text.split("\n").map(function(line) { return line.trim() }).filter(function(line) { return line.length > 0 })
@@ -66,6 +73,7 @@ Item {
             else if (!value.ok) state.notice = value.error
         }
         else if (value.kind === "response") {
+            State.finishSend(state, value)
             if (!value.ok) actionError = value.error || "Request failed"
             else {
                 actionError = ""
@@ -80,7 +88,7 @@ Item {
             }
         }
         else if (value.kind === "disconnected") {
-            state.ready = false
+            if (State.disconnect(state)) actionError = "Send outcome unknown. Check the conversation before sending again. Your draft is kept."
             state.notice = value.error || "Disconnected; reconnecting"
         }
         bump()
@@ -99,7 +107,10 @@ Item {
                 catch (error) { service.state.notice = "Desktop adapter returned an invalid frame."; service.revision++; helper.running = false }
             }
         }
-        onRunningChanged: if (!running) retry.restart()
+        onRunningChanged: if (!running) {
+            service.receive({kind: "disconnected", error: "Disconnected; reconnecting"})
+            retry.restart()
+        }
     }
     Timer {
         id: retry
